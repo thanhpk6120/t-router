@@ -233,9 +233,22 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
       // fill-first (already sorted by priority in getProviderConnections)
       connection = availableConnections[0];
     }
+    // Resolve proxy configuration: connection-level first, then fallback to provider-level proxy pool & rotation
+    let proxyPayload = connection.providerSpecificData || {};
+    if (!proxyPayload.connectionProxyUrl && !proxyPayload.connectionProxyPoolId) {
+      const pStrategy = providerOverride.rotateStrategy || "none";
+      let pPoolId = providerOverride.proxyPoolId || null;
+      if (pStrategy !== "none") {
+        const allPools = await getProxyPools({ isActive: true });
+        const poolIds = resolveRotationPoolIds(allPools, providerOverride.proxyPoolIds);
+        pPoolId = pickProxyPoolId(poolIds, pStrategy, providerId);
+      }
+      if (pPoolId) {
+        proxyPayload = { ...proxyPayload, proxyPoolId: pPoolId };
+      }
+    }
 
-    const resolvedProxy = await resolveConnectionProxyConfig(connection.providerSpecificData || {});
-
+    const resolvedProxy = await resolveConnectionProxyConfig(proxyPayload);
     return {
       authType: connection.authType,
       apiKey: connection.apiKey,

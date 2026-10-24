@@ -1828,7 +1828,7 @@ export default function ProfilePage() {
               </div>
               <Toggle
                 checked={settings.fallbackStrategy === "balanced"}
-                onChange={() => updateFallbackStrategy("balanced")}
+                onChange={(val) => updateFallbackStrategy(val ? "balanced" : "round-robin")}
                 disabled={loading}
               />
             </div>
@@ -1842,7 +1842,7 @@ export default function ProfilePage() {
               </div>
               <Toggle
                 checked={settings.fallbackStrategy === "round-robin"}
-                onChange={() => updateFallbackStrategy("round-robin")}
+                onChange={(val) => updateFallbackStrategy(val ? "round-robin" : "balanced")}
                 disabled={loading}
               />
             </div>
@@ -1856,7 +1856,7 @@ export default function ProfilePage() {
               </div>
               <Toggle
                 checked={settings.fallbackStrategy === "fill-first"}
-                onChange={() => updateFallbackStrategy("fill-first")}
+                onChange={(val) => updateFallbackStrategy(val ? "fill-first" : "balanced")}
                 disabled={loading}
               />
             </div>

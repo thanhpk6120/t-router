@@ -2,10 +2,10 @@
 // Each accent only overrides the --color-brand-* scale (see globals.css);
 // "coral" is the original upstream palette (no data-accent attribute).
 export const ACCENTS = [
+  { id: "azure", name: "Azure", swatch: "#3B82F6" },
   { id: "aqua", name: "Aqua", swatch: "#00E5FF" },
   { id: "coral", name: "Coral", swatch: "#E56A4A" },
   { id: "violet", name: "Violet", swatch: "#8B5CF6" },
-  { id: "azure", name: "Azure", swatch: "#3B82F6" },
   { id: "emerald", name: "Emerald", swatch: "#10B981" },
   { id: "rose", name: "Rose", swatch: "#F43F5E" },
   { id: "amber", name: "Amber", swatch: "#F59E0B" },
@@ -13,10 +13,8 @@ export const ACCENTS = [
 ];
 
 export const ACCENT_STORAGE_KEY = "9rp-accent";
-export const DEFAULT_ACCENT = "aqua";
-// T Router signature: fresh installs open in violet (the Pro identity);
-// picking Coral restores the exact original upstream palette.
-export const PRO_DEFAULT_ACCENT = "aqua";
+export const DEFAULT_ACCENT = "azure";
+export const PRO_DEFAULT_ACCENT = "azure";
 
 export function isValidAccent(id) {
   return ACCENTS.some((a) => a.id === id);

@@ -13,7 +13,7 @@ const STRATEGIES = [
   { value: "random", label: "Random" },
 ];
 
-export default function NoAuthProxyCard({ providerId }) {
+export default function NoAuthProxyCard({ providerId, isNoAuth = false }) {
   const [proxyPools, setProxyPools] = useState([]);
   const [proxyPoolId, setProxyPoolId] = useState(NONE_PROXY_POOL_VALUE);
   const [rotateStrategy, setRotateStrategy] = useState("none");
@@ -100,12 +100,16 @@ export default function NoAuthProxyCard({ providerId }) {
   return (
     <Card>
       <div className="flex items-center gap-3 mb-4">
-        <div className="inline-flex items-center justify-center w-10 h-10 rounded-full bg-green-500/10 text-green-500">
-          <span className="material-symbols-outlined text-[20px]">lock_open</span>
+        <div className={`inline-flex items-center justify-center w-10 h-10 rounded-full ${isNoAuth ? "bg-green-500/10 text-green-500" : "bg-primary/10 text-primary"}`}>
+          <span className="material-symbols-outlined text-[20px]">{isNoAuth ? "lock_open" : "lan"}</span>
         </div>
         <div className="flex-1">
-          <p className="text-sm font-medium">No authentication required</p>
-          <p className="text-xs text-text-muted">This provider is ready to use. To bypass IP-based limits, route requests through your own proxy pool — your own IP credentials only, no proxies are included.</p>
+          <p className="text-sm font-medium">{isNoAuth ? "No authentication required" : "Proxy Pool & Rotation"}</p>
+          <p className="text-xs text-text-muted">
+            {isNoAuth
+              ? "This provider is ready to use. To bypass IP-based limits, route requests through your own proxy pool — your own IP credentials only, no proxies are included."
+              : "Route requests for this provider through a proxy pool or rotate across multiple proxies (round-robin / random) automatically."}
+          </p>
         </div>
         {savedFlash && <Badge variant="success" size="sm">Saved</Badge>}
       </div>
@@ -208,4 +212,5 @@ export default function NoAuthProxyCard({ providerId }) {
 
 NoAuthProxyCard.propTypes = {
   providerId: PropTypes.string.isRequired,
+  isNoAuth: PropTypes.bool,
 };

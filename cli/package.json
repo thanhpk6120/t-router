@@ -3,8 +3,8 @@
   "version": "0.5.109-pro.9-t.2",
   "description": "T Router CLI - Start and manage the T Router server",
   "bin": {
-    "t-router": "./cli.js",
-    "t-router-proxy": "./cli.js"
+    "t-router": "cli.js",
+    "t-router-proxy": "cli.js"
   },
   "license": "MIT",
   "publishConfig": {

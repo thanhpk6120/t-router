@@ -114,7 +114,7 @@ Yêu cầu thực hiện:
 2. Xác định các tính năng mới, cải tiến, bản sửa lỗi (bug fixes, provider updates) mà t-router chưa có.
 3. Nâng cấp và tích hợp các thay đổi mới vào t-router.
    RÀNG BUỘC BẮT BUỘC:
-   - Giữ nguyên màu chủ đạo Aqua (#00E5FF) và icon Aqua T.
+   - Giữ nguyên màu chủ đạo Azure (#3B82F6) và icon Azure T.
    - Giữ nguyên cấu hình Database Location là ~/.trouter/db/data.sqlite và dataDir dùng ~/.trouter.
    - Tuyệt đối không đưa các thông tin tác giả Gienetic, Telegram, Donate vào t-router.
    - Các chuỗi OAuth secret nếu có phải tách mảng hoặc decode để không kích hoạt GitHub Secret Scanning.

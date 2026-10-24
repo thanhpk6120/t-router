@@ -1,34 +1,77 @@
-# T Router
+# 🚀 T Router CLI (`t-router-proxy`)
 
-**A Pro edition of 9Router with Prompt Injection: one injection per target — global, per API key, per model — as a system prompt or a scripted chat.**
+Command-line launcher and background service manager for **T Router** — the high-performance AI Proxy & Prompt Injection Gateway.
 
-T Router is a local AI router: connect every AI code tool (Claude Code, Cursor, Codex, Gemini, OpenCode, Cline, OpenClaw…) to 40+ providers and 100+ models through one endpoint, with token saving, smart fallback and multi-account support.
+---
 
-## Install
+## 📦 Installation
+
+Install globally via npm:
 
 ```bash
-npm install -g t-router
+npm install -g t-router-proxy
+```
+
+Or run on-demand via npx:
+
+```bash
+npx t-router-proxy
+```
+
+---
+
+## ⚡ Usage
+
+Start the T Router server and open the web dashboard:
+
+```bash
 t-router
 ```
 
-The dashboard opens at `http://localhost:20126` (the original 9Router uses 20128, so both can run side by side).
+Or use the package alias:
 
-## What's Pro
+```bash
+t-router-proxy
+```
 
-- **Prompt Injection** — one injection per target (**global**, **per API key**, **per model**), as a single system prompt (prepend/append) or a scripted chat primed as fake history, applied wire-aware for OpenAI / Claude / Gemini / Responses bodies.
-- **Per-key token quotas** — a token budget per API key (24h / 7d / 30d) with live usage and 429 enforcement.
-- **Key Limits for reselling** — per-key requests/minute, tokens/minute, requests/hour, requests/day and max-concurrent caps.
-- **Providers, organized** — a dedicated section for custom (OpenAI/Anthropic-compatible) providers, an all-connections shelf, and Test All in every section.
-- **Proxy Pools that maintain themselves** — server-side health checks with dead-pool cleanup, plus per-provider rotation over a hand-picked pool subset.
-- **Balanced fallback + Anti-Flaky Guard** — health-tiered account selection and automatic retries on flaky upstream responses.
-- **Themes & languages** — a flat Dark Pro theme, accent presets plus a custom color picker, and a fully localized dashboard (34 languages).
+The web dashboard automatically starts and listens on:
+👉 **`http://localhost:20126`**
 
-Full documentation and screenshots live in the repository.
+---
 
-## Based on
+## 🛠️ CLI Options & Commands
 
-[9Router](https://github.com/decolua/9router) by decolua (MIT). T Router is an independent edition.
+```bash
+t-router [options] [command]
 
-## License
+Commands:
+  start               Start the T Router server (default)
+  stop                Stop any currently running T Router background instances
+  restart             Restart the background instance
+  status              Check server running state and port binding
+  logs                View live server streaming logs
 
-MIT
+Options:
+  -p, --port <port>   Custom HTTP port (default: 20126)
+  -H, --host <host>   Custom bind host (default: 127.0.0.1)
+  --no-open           Do not automatically open the browser dashboard on launch
+  --no-tray           Disable system tray icon (Windows / macOS)
+  -v, --version       Output current version
+  -h, --help          Display help and usage instructions
+```
+
+---
+
+## 📁 Data Storage
+
+All configuration, provider connections, and API keys are stored in an isolated local database:
+- **Linux/macOS:** `~/.trouter/db/data.sqlite`
+- **Windows:** `%APPDATA%\trouter\db\data.sqlite`
+
+This ensures full isolation from any other running router or proxy instances.
+
+---
+
+## 📄 License
+
+MIT License.
