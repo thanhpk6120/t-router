@@ -43,54 +43,77 @@ describe("connectionHealthTier", () => {
     const stale = { backoffLevel: 3, lastError: "boom", lastErrorAt: iso(NOW - 24 * 3600 * 1000) };
     expect(connectionHealthTier(stale, NOW, 0)).toBe(1);
   });
+
+  it("treats a missing record as suspect", () => {
+    expect(connectionHealthTier(null, NOW, SUSPECT_PROBATION_MS)).toBe(1);
+  });
 });
 
 describe("pickWindowedLru", () => {
-  it("never-used accounts sort before any used timestamp", () => {
-    const fleet = [
-      { id: "used", priority: 1, lastUsedAt: iso(NOW - 1000) },
-      { id: "never", priority: 2, lastUsedAt: null },
-    ];
-    // With rng returning 0, pickWindowedLru always returns the first element.
-    const pick = pickWindowedLru(fleet, 1, () => 0);
-    expect(pick.id).toBe("never");
+  const fleet = [
+    { id: "used-recent", priority: 1, lastUsedAt: iso(NOW - 1000) },
+    { id: "never-a", priority: 5, lastUsedAt: null },
+    { id: "never-b", priority: 3, lastUsedAt: null },
+    { id: "used-old", priority: 2, lastUsedAt: iso(NOW - 3600 * 1000) },
+  ];
+
+  it("returns null for an empty fleet", () => {
+    expect(pickWindowedLru([], BALANCED_WINDOW_SIZE, () => 0)).toBeNull();
+    expect(pickWindowedLru(null, BALANCED_WINDOW_SIZE, () => 0)).toBeNull();
   });
 
-  it("never-used accounts break ties by priority number ascending", () => {
-    const fleet = [
-      { id: "low", priority: 5, lastUsedAt: null },
-      { id: "high", priority: 1, lastUsedAt: null },
-    ];
-    const pick = pickWindowedLru(fleet, 1, () => 0);
-    expect(pick.id).toBe("high");
+  it("prefers never-used accounts, lowest priority number first", () => {
+    expect(pickWindowedLru(fleet, 4, () => 0).id).toBe("never-b");
   });
 
-  it("used accounts sort by lastUsedAt ascending (oldest first)", () => {
-    const fleet = [
-      { id: "fresh", priority: 1, lastUsedAt: iso(NOW - 1000) },
-      { id: "old", priority: 1, lastUsedAt: iso(NOW - 5000) },
-    ];
-    const pick = pickWindowedLru(fleet, 1, () => 0);
-    expect(pick.id).toBe("old");
+  it("only picks inside the window", () => {
+    const windowIds = new Set(["never-b", "never-a"]);
+    for (let i = 0; i < 20; i++) {
+      const pick = pickWindowedLru(fleet, 2, () => i / 20);
+      expect(windowIds.has(pick.id)).toBe(true);
+    }
   });
 
-  it("respects the window size ceiling", () => {
-    const fleet = [
-      { id: "a", priority: 1, lastUsedAt: null },
-      { id: "b", priority: 2, lastUsedAt: null },
-      { id: "c", priority: 3, lastUsedAt: null },
-    ];
-    // Window of 2 means candidate 'c' can never be picked, even with max rng.
-    const pick = pickWindowedLru(fleet, 2, () => 0.999);
-    expect(pick.id).toBe("b");
+  it("with a full-size window can reach the least-recently-used end", () => {
+    expect(pickWindowedLru(fleet, 4, () => 0.999).id).toBe("used-recent");
   });
 
-  it("returns null on an empty fleet", () => {
-    expect(pickWindowedLru([])).toBe(null);
-    expect(pickWindowedLru(null)).toBe(null);
+  it("works for a single-account fleet", () => {
+    expect(pickWindowedLru([{ id: "only" }], BALANCED_WINDOW_SIZE, () => 0.5).id).toBe("only");
   });
+});
 
-  it("in-memory overlay overrides the stored timestamp immediately", () => {
+describe("pickWindowedLru single-pass equivalence", () => {
+  // Reference implementation of the old full-sort pick, for window-set
+  // comparison only: same ordering rules, different mechanism.
+  const oldWindow = (fleet, windowSize) => {
+    const sorted = [...fleet].sort((a, b) => {
+      if (!a.lastUsedAt && !b.lastUsedAt) return (a.priority || 999) - (b.priority || 999);
+      if (!a.lastUsedAt) return -1;
+      if (!b.lastUsedAt) return 1;
+      return new Date(a.lastUsedAt) - new Date(b.lastUsedAt);
+    });
+    return new Set(sorted.slice(0, windowSize).map((c) => c.id));
+  };
+
+  it("picks from exactly the same window as the old sort", () => {
+    const fleet = [];
+    for (let i = 0; i < 200; i++) {
+      fleet.push({
+        id: `c${i}`,
+        priority: 999,
+        lastUsedAt: i % 7 === 0 ? null : iso(NOW - i * 60 * 1000),
+      });
+    }
+    for (let trial = 0; trial < 50; trial++) {
+      const pick = pickWindowedLru(fleet, 32, () => trial / 50);
+      expect(oldWindow(fleet, 32).has(pick.id)).toBe(true);
+    }
+  });
+});
+
+describe("pickWindowedLru overlay", () => {
+  it("a stamped key leaves the window for the next pick", () => {
     lastUsedOverlay.clear();
     const fleet = [
       { id: "a", priority: 999, lastUsedAt: iso(NOW - 3000) },

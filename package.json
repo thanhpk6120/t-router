@@ -1,7 +1,7 @@
 {
   "name": "t-router",
-  "version": "0.5.109-pro.10-t.2",
-  "description": "T Router \u2014 AI router with a Prompt Inject engine (per-model / per-key / global system prompts), based on 9Router by decolua",
+  "version": "0.5.109-pro.10-t.3",
+  "description": "T Router — AI router with a Prompt Inject engine (per-model / per-key / global system prompts), based on 9Router by decolua",
   "author": "",
   "private": true,
   "scripts": {
