@@ -333,9 +333,18 @@ export default function ConnectionsCard({ providerId, isOAuth, loginProviderId =
       const res = await fetch("/api/settings", { cache: "no-store" });
       const data = res.ok ? await res.json() : {};
       const current = data.providerStrategies || {};
-      const override = {};
-      if (strategy) override.fallbackStrategy = strategy;
-      if (strategy === "round-robin" && stickyLimit !== "") override.stickyRoundRobinLimit = Number(stickyLimit) || 3;
+      // Build override preserving existing proxyPoolId and rotation settings
+      const override = { ...(current[providerId] || {}) };
+      if (strategy) {
+        override.fallbackStrategy = strategy;
+      } else {
+        delete override.fallbackStrategy;
+      }
+      if (strategy === "round-robin" && stickyLimit !== "") {
+        override.stickyRoundRobinLimit = Number(stickyLimit) || 3;
+      } else {
+        delete override.stickyRoundRobinLimit;
+      }
       const updated = { ...current };
       if (Object.keys(override).length === 0) delete updated[providerId];
       else updated[providerId] = override;

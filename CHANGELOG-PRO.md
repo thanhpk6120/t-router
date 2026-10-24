@@ -4,19 +4,6 @@ Pro releases are tagged `v<upstream>-pro.<n>` (e.g. `v0.5.104-pro.2`) and
 published as GitHub releases in this repo. The dashboard's update checker
 follows these releases.
 
-## v0.5.109-pro.10-t.2
-
-- **Windowed-LRU In-Memory Overlay**: Optimized `pickWindowedLru` account rotation to $O(n)$ with in-memory overlay and async DB flush, reducing latency on large fleets (~18k keys from ~200ms to ~6ms).
-- **Provider/Model Direct Prompt Injection**: Streamlined prompt injection architecture to attach directly to `provider/model` with optional labels; added quick-copy functionality (`copyToProviders`) across providers serving the same bare model.
-- **Injection Picker Filters & Data Normalization**: Added filters to `ModelSelectModal` to exclude combos and injected models during injection setup; auto-normalizes and expands injection keys on import.
-- **T Router Aqua Brand & Custom Isolated DB**: Maintained full Aqua theme (`#00E5FF`), default port 20126, and isolated storage at `~/.trouter/db/data.sqlite`.
-
-## v0.5.109-pro.9-t.1
-
-- **Rebranding & Aqua Theme**: Renamed product to T Router; changed primary brand theme to Aqua (`#00E5FF`) and updated application & browser tab icons.
-- **Isolated Data Directory**: Isolated runtime data to `~/.trouter/db/data.sqlite`.
-- **Removed Author Credits & Socials**: Removed all external author references, GitHub, and Telegram links.
-
 ## v0.5.109-pro.9
 
 - **Providers page, final layout**: the page now reads top to bottom as Custom Providers (the OpenAI/Anthropic-compatible creation section), the All Connection Providers shelf, a dedicated **Provider Custom** section holding the custom providers you added, then OAuth, Free Tier and API Key providers. Every section carries its own **Test All** — the Provider Custom section included — so batch-testing parity holds across the whole page.

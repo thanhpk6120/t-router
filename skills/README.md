@@ -1,43 +1,28 @@
-# 9Router — Agent Skills
+# T Router — Agent Skills
 
-Drop-in skills for any AI agent (Claude, Cursor, ChatGPT, custom SDK). Just **copy a link** below and paste it to your AI — it will fetch the skill and use 9Router for you.
+Drop-in skills for any AI agent (Claude, Cursor, ChatGPT, custom SDK). Use these skills to connect your AI tooling directly to T Router.
 
-> Tip: start with the **9router** entry skill — it covers setup and links to all capability skills.
+> Tip: start with the **t-router** entry skill — it covers setup and links to all capability skills.
 
 ## Skills
 
-| Capability | Copy link below and paste to your AI |
+| Capability | Scope |
 |---|---|
-| **Entry / Setup** (start here) | https://raw.githubusercontent.com/decolua/9router/refs/heads/master/skills/9router/SKILL.md |
-| Chat / code-gen | https://raw.githubusercontent.com/decolua/9router/refs/heads/master/skills/9router-chat/SKILL.md |
-| Image generation | https://raw.githubusercontent.com/decolua/9router/refs/heads/master/skills/9router-image/SKILL.md |
-| Video generation (xAI Grok Imagine) | https://raw.githubusercontent.com/decolua/9router/refs/heads/master/skills/9router-video/SKILL.md |
-| Text-to-speech | https://raw.githubusercontent.com/decolua/9router/refs/heads/master/skills/9router-tts/SKILL.md |
-| Speech-to-text | https://raw.githubusercontent.com/decolua/9router/refs/heads/master/skills/9router-stt/SKILL.md |
-| Embeddings | https://raw.githubusercontent.com/decolua/9router/refs/heads/master/skills/9router-embeddings/SKILL.md |
-| Web search | https://raw.githubusercontent.com/decolua/9router/refs/heads/master/skills/9router-web-search/SKILL.md |
-| Web fetch (URL → markdown) | https://raw.githubusercontent.com/decolua/9router/refs/heads/master/skills/9router-web-fetch/SKILL.md |
-
-## How to use
-
-Paste to your AI (Claude, Cursor, ChatGPT, …):
-
-```
-Read this skill and use it: https://raw.githubusercontent.com/decolua/9router/refs/heads/master/skills/9router/SKILL.md
-```
-
-Then ask normally — *"generate an image of a cat"*, *"transcribe this URL"*, etc.
+| **Entry / Setup** (start here) | Setup and endpoints on `http://localhost:20126` |
+| Chat / code-gen | Standard `/v1/chat/completions` and `/v1/messages` |
+| Image generation | Image models (FLUX, Midjourney, DALL-E) |
+| Video generation | xAI Grok Imagine and video pipelines |
+| Text-to-speech | STT & TTS endpoints |
+| Speech-to-text | Local & cloud transcription |
+| Embeddings | Vector `/v1/embeddings` |
+| Web search | Live web search connectors |
+| Web fetch (URL → markdown) | Web content extractor |
 
 ## Configure your shell once
 
 ```bash
-export NINEROUTER_URL="http://localhost:20126"   # local default, or your VPS / tunnel URL
-export NINEROUTER_KEY="sk-..."                   # from Dashboard → Keys (only if requireApiKey=true)
+export TROUTER_URL="http://localhost:20126"       # local default (port 20126)
+export TROUTER_KEY="sk_trouter"                   # from Dashboard → Keys
 ```
 
-Verify: `curl $NINEROUTER_URL/api/health` → `{"ok":true}`.
-
-## Links
-
-- Source: https://github.com/decolua/9router
-- Dashboard: https://9router.com
+Verify: `curl $TROUTER_URL/api/health` → `{"ok":true}`.

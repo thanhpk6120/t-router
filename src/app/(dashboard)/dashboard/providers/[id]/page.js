@@ -424,11 +424,17 @@ export default function ProviderDetailPage() {
       const settingsData = settingsRes.ok ? await settingsRes.json() : {};
       const current = settingsData.providerStrategies || {};
 
-      // Build override: null strategy means remove override, use global
-      const override = {};
-      if (strategy) override.fallbackStrategy = strategy;
+      // Build override preserving existing proxyPoolId and rotation settings
+      const override = { ...(current[providerId] || {}) };
+      if (strategy) {
+        override.fallbackStrategy = strategy;
+      } else {
+        delete override.fallbackStrategy;
+      }
       if (strategy === "round-robin" && stickyLimit !== "") {
         override.stickyRoundRobinLimit = Number(stickyLimit) || 3;
+      } else {
+        delete override.stickyRoundRobinLimit;
       }
 
       const updated = { ...current };

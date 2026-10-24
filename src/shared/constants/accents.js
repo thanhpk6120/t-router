@@ -3,7 +3,6 @@
 // "coral" is the original upstream palette (no data-accent attribute).
 export const ACCENTS = [
   { id: "azure", name: "Azure", swatch: "#3B82F6" },
-  { id: "aqua", name: "Aqua", swatch: "#00E5FF" },
   { id: "coral", name: "Coral", swatch: "#E56A4A" },
   { id: "violet", name: "Violet", swatch: "#8B5CF6" },
   { id: "emerald", name: "Emerald", swatch: "#10B981" },

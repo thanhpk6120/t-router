@@ -7,7 +7,7 @@
   "scripts": {
     "dev": "next dev --port 20126",
     "dev:webpack": "next dev --webpack --port 20126",
-    "build": "node --max-old-space-size=8192 node_modules/next/dist/bin/next build --webpack",
+    "build": "next build --webpack",
     "postbuild": "node scripts/copy-standalone-assets.mjs",
     "postbuild:bun": "node scripts/copy-standalone-assets.mjs",
     "start": "node custom-server.js --port 20126",

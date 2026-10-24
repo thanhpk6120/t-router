@@ -156,10 +156,11 @@ export default function MediaProviderDetailPage() {
         </div>
       )}
 
+      {/* Proxy Pool & Rotation */}
+      <NoAuthProxyCard providerId={id} isNoAuth={!isCustom && !!provider.noAuth} />
+
       {/* Connections */}
-      {!isCustom && provider.noAuth ? (
-        <NoAuthProxyCard providerId={id} />
-      ) : kind === "stt" && OAUTH_PROVIDERS[id] ? (
+      {!isCustom && provider.noAuth ? null : kind === "stt" && OAUTH_PROVIDERS[id] ? (
         <Card>
           <p className="text-sm text-text-muted mb-3">This service shares your existing OAuth connections.</p>
           <Link href={`/dashboard/providers/${id}`} className="text-primary hover:underline">Manage OAuth connections →</Link>

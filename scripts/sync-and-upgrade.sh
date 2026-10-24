@@ -130,11 +130,25 @@ if [ "$OLD_HEAD" != "$NEW_HEAD" ]; then
     " || true
   fi
 
-  # 7. Zero-Downtime Test Build
+  # 7. Zero-Downtime Test Build & Verification on Port 20127
   # Test build with strict memory cap and low CPU priority; does NOT disrupt active t-router.service on port 20126
   log "Running test build with resource limits (nice 19, ionice 3, memory 2048M)..."
   $NICE_CMD node --max-old-space-size=2048 "$DIR_TROUTER/cli/scripts/build-cli.js" 2>&1 | tee -a "$LOG_FILE"
 
+  # Zero-downtime test instance on port 20127 to verify runtime before approval
+  log "Starting temporary test instance on port 20127..."
+  PORT=20127 node "$DIR_TROUTER/cli/app/custom-server.js" --port 20127 > /dev/null 2>&1 &
+  TEST_PID=$!
+  sleep 4
+  TEST_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:20127/ || echo "000")
+  kill $TEST_PID 2>/dev/null || true
+  wait $TEST_PID 2>/dev/null || true
+
+  if [ "$TEST_CODE" != "200" ] && [ "$TEST_CODE" != "307" ] && [ "$TEST_CODE" != "308" ]; then
+    log "WARNING: Port 20127 test check returned status $TEST_CODE"
+  else
+    log "Port 20127 runtime test passed with HTTP $TEST_CODE! Port 20126 remains untouched and zero-downtime."
+  fi
   # 8. Push merged code to GitHub
   log "Pushing merged code to GitHub origin main..."
   git -C "$DIR_TROUTER" push origin main

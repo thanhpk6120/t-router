@@ -176,7 +176,7 @@ function buildCliPackage() {
       cwd: appDir,
       env: {
         ...process.env,
-        NODE_OPTIONS: "--max-old-space-size=8192",
+        NODE_OPTIONS: process.env.NODE_OPTIONS || "--max-old-space-size=2048",
         HOME: buildHomeDir,
         USERPROFILE: buildHomeDir,
         APPDATA: path.join(buildHomeDir, "AppData", "Roaming"),
