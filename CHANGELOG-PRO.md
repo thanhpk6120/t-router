@@ -4,11 +4,12 @@ Pro releases are tagged `v<upstream>-pro.<n>` (e.g. `v0.5.104-pro.2`) and
 published as GitHub releases in this repo. The dashboard's update checker
 follows these releases.
 
-## v0.5.109-pro.9-t.2
+## v0.5.109-pro.10-t.2
 
-- **CLI Tools Integration Standard**: Updated all CLI tool connection configurations (Codex, JCode, OpenClaw, OpenCode, Copilot, Droid, Hermes, OMP, Crush, etc.) to use `trouter` / `T-Router` and `sk_trouter` with full backward compatibility.
-- **Runtime Directory Cleanup**: Migrated all remaining SQLite/tray runtime caches from `~/.9router/` to `~/.trouter/`.
-- **NPM Package**: Configured package name as `t-router-proxy` with `t-router` binary.
+- **Windowed-LRU In-Memory Overlay**: Optimized `pickWindowedLru` account rotation to $O(n)$ with in-memory overlay and async DB flush, reducing latency on large fleets (~18k keys from ~200ms to ~6ms).
+- **Provider/Model Direct Prompt Injection**: Streamlined prompt injection architecture to attach directly to `provider/model` with optional labels; added quick-copy functionality (`copyToProviders`) across providers serving the same bare model.
+- **Injection Picker Filters & Data Normalization**: Added filters to `ModelSelectModal` to exclude combos and injected models during injection setup; auto-normalizes and expands injection keys on import.
+- **T Router Aqua Brand & Custom Isolated DB**: Maintained full Aqua theme (`#00E5FF`), default port 20126, and isolated storage at `~/.trouter/db/data.sqlite`.
 
 ## v0.5.109-pro.9-t.1
 
