@@ -67,7 +67,7 @@ export async function GET() {
         openAiBaseUrl: globalState?.openAiBaseUrl,
         openAiModelId: globalState?.openAiModelId,
       },
-      has9Router: has9RouterConfig(globalState),
+      hasTRouter: has9RouterConfig(globalState), has9Router: has9RouterConfig(globalState),
       globalStatePath: getGlobalStatePath(),
     });
   } catch (error) {

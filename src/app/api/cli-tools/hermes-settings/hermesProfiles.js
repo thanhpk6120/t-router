@@ -101,7 +101,7 @@ const buildEntry = async (name, dir, isDefault) => {
     baseUrl: model?.base_url || null,
     // Local-endpoint detection only (same rule as the settings GET) — a tunnel endpoint
     // reports false here and shows up as "other" in the UI, exactly like the default profile.
-    has9Router: has9RouterConfig(model) || has9RouterConfig(delegation) || Object.values(auxiliary).some(has9RouterConfig),
+    hasTRouter: has9RouterConfig(model) || has9RouterConfig(delegation) || Object.values(auxiliary).some(has9RouterConfig), has9Router: has9RouterConfig(model) || has9RouterConfig(delegation) || Object.values(auxiliary).some(has9RouterConfig),
   };
 };
 

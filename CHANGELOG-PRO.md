@@ -4,6 +4,12 @@ Pro releases are tagged `v<upstream>-pro.<n>` (e.g. `v0.5.104-pro.2`) and
 published as GitHub releases in this repo. The dashboard's update checker
 follows these releases.
 
+## v0.5.109-pro.9-t.2
+
+- **CLI Tools Integration Standard**: Updated all CLI tool connection configurations (Codex, JCode, OpenClaw, OpenCode, Copilot, Droid, Hermes, OMP, Crush, etc.) to use `trouter` / `T-Router` and `sk_trouter` with full backward compatibility.
+- **Runtime Directory Cleanup**: Migrated all remaining SQLite/tray runtime caches from `~/.9router/` to `~/.trouter/`.
+- **NPM Package**: Configured package name as `t-router-proxy` with `t-router` binary.
+
 ## v0.5.109-pro.9-t.1
 
 - **Rebranding & Aqua Theme**: Renamed product to T Router; changed primary brand theme to Aqua (`#00E5FF`) and updated application & browser tab icons.

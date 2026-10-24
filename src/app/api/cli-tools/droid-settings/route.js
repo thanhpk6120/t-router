@@ -70,7 +70,7 @@ export async function GET() {
     return NextResponse.json({
       installed: true,
       settings,
-      hasTRouter: hasTRouterConfig(settings),
+      hasTRouter: hasTRouterConfig(settings), has9Router: hasTRouterConfig(settings),
       settingsPath: getDroidSettingsPath(),
     });
   } catch (error) {

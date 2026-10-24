@@ -105,7 +105,7 @@ export async function GET() {
       installed: true,
       settings,
       agents: enrichedAgents,
-      hasTRouter: hasTRouterConfig(settings),
+      hasTRouter: hasTRouterConfig(settings), has9Router: hasTRouterConfig(settings),
       settingsPath: getOpenClawSettingsPath(),
     });
   } catch (error) {

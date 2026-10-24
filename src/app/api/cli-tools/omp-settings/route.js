@@ -75,11 +75,12 @@ export async function GET() {
     }
 
     const ymlContent = await readModelsYml();
-    const hasT-Router = hasTRouterInYml(ymlContent);
+    const hasTRouter = hasTRouterInYml(ymlContent);
 
     return NextResponse.json({
       installed: true,
-      hasT-Router,
+      hasTRouter,
+      hasTRouter: hasTRouter, has9Router: hasTRouter,
       configPath: getOmpModelsYmlPath(),
     });
   } catch (err) {

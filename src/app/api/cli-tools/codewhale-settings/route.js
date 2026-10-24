@@ -63,7 +63,7 @@ export async function GET() {
     return NextResponse.json({
       installed: true,
       config,
-      has9Router: has9RouterConfig(content),
+      hasTRouter: has9RouterConfig(content), has9Router: has9RouterConfig(content),
       configPath: getCodewhaleConfigPath(),
     });
   } catch (err) {

@@ -107,7 +107,7 @@ export async function GET() {
     return NextResponse.json({
       installed: true,
       settings: settings,
-      has9Router: has9Router,
+      hasTRouter: has9Router, has9Router: has9Router,
       exaMcpEnabled: !!claudeJson?.mcpServers?.exa,
       settingsPath: getClaudeSettingsPath(),
     });

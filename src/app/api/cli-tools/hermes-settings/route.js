@@ -20,12 +20,12 @@ import {
   removeDelegationBlock,
   removeAuxRole,
   upsertEnvVar,
-  hasT-RouterConfig,
+  hasTRouterConfig,
   isCustomBlock,
   parseSttBlock,
-  isT-RouterStt,
-  upsertSttT-Router,
-  removeSttT-Router,
+  isTRouterStt,
+  upsertSttTRouter,
+  removeSttTRouter,
 } from "./hermesYaml.js";
 import { resolveHermesHome, listProfiles, dirExists } from "./hermesProfiles.js";
 
@@ -125,8 +125,10 @@ export async function GET(request) {
       installed: true,
       profile: { name: home.name, dir: home.dir, isDefault: home.isDefault },
       settings: { model, delegation, auxiliary, stt },
-      hasT-Router: hasT-RouterConfig(model) || hasT-RouterConfig(delegation) || Object.values(auxiliary).some(hasT-RouterConfig),
-      hasTRouterStt: isT-RouterStt(stt),
+      hasTRouter: hasTRouterConfig(model) || hasTRouterConfig(delegation) || Object.values(auxiliary).some(hasTRouterConfig),
+      has9Router: hasTRouterConfig(model) || hasTRouterConfig(delegation) || Object.values(auxiliary).some(hasTRouterConfig),
+      hasTRouterStt: isTRouterStt(stt),
+      has9RouterStt: isTRouterStt(stt),
       configPath: home.configPath,
     });
   } catch (error) {
@@ -242,11 +244,11 @@ export async function POST(request) {
     }
     if (audio) {
       if (audioEnabled) {
-        newYaml = upsertSttT-Router(newYaml, audioModel, normalizedBaseUrl);
-      } else if (isT-RouterStt(parseSttBlock(newYaml))) {
+        newYaml = upsertSttTRouter(newYaml, audioModel, normalizedBaseUrl);
+      } else if (isTRouterStt(parseSttBlock(newYaml))) {
         // Never remove stt wiring this endpoint did not write — a user's own STT
         // provider choice survives an audio-disabled Apply.
-        newYaml = removeSttT-Router(newYaml);
+        newYaml = removeSttTRouter(newYaml);
       }
     }
     await writeHomeConfig(home, newYaml);
@@ -258,7 +260,8 @@ export async function POST(request) {
       success: true,
       message: home.isDefault ? "Hermes settings applied successfully!" : `Hermes settings applied to profile "${home.name}"!`,
       profile: { name: home.name, dir: home.dir, isDefault: home.isDefault },
-      sttT-Router: isT-RouterStt(parseSttBlock(newYaml)),
+      sttTRouter: isTRouterStt(parseSttBlock(newYaml)),
+      stt9Router: isTRouterStt(parseSttBlock(newYaml)),
       configPath: home.configPath,
     });
   } catch (error) {
@@ -323,8 +326,8 @@ export async function DELETE(request) {
     }
 
     const sttCfg = parseSttBlock(yaml);
-    if (sttCfg && isT-RouterStt(sttCfg)) {
-      yaml = removeSttT-Router(yaml);
+    if (sttCfg && isTRouterStt(sttCfg)) {
+      yaml = removeSttTRouter(yaml);
       removed.stt = true;
       // User settings living inside the block (language, local, ...) survive the key
       // removal — report the remainder as kept, like any other preserved section.

@@ -68,7 +68,7 @@ export async function GET() {
     return NextResponse.json({
       installed: true,
       config,
-      hasTRouter: hasTRouterConfig(config),
+      hasTRouter: hasTRouterConfig(config), has9Router: hasTRouterConfig(config),
       configPath: getCrushConfigPath(),
     });
   } catch (err) {

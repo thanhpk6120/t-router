@@ -95,13 +95,13 @@ export default function OpenCodeToolCard({ tool, isExpanded, onToggle, baseUrl, 
     }
   };
 
-  const currentBaseUrl = status?.config?.provider?.["9router"]?.options?.baseURL || "";
+  const currentBaseUrl = status?.config?.provider?.["trouter"]?.options?.baseURL || status?.config?.provider?.["9router"]?.options?.baseURL || "";
 
   const getConfigStatus = () => {
     if (!status?.installed) return null;
     if (!status.config) return "not_configured";
-    if (!status.hasTRouter) return "not_configured";
-    const url = status.config?.provider?.["9router"]?.options?.baseURL || "";
+    if (!status.hasTRouter && !status.has9Router) return "not_configured";
+    const url = status.config?.provider?.["trouter"]?.options?.baseURL || status.config?.provider?.["9router"]?.options?.baseURL || "";
     return matchKnownEndpoint(url, { tunnelPublicUrl, tailscaleUrl }) ? "configured" : "other";
   };
 
@@ -307,12 +307,12 @@ export default function OpenCodeToolCard({ tool, isExpanded, onToggle, baseUrl, 
                 </div>
 
                 {/* Current configured */}
-                {status?.config?.provider?.["9router"]?.options?.baseURL && (
+                {(status?.config?.provider?.["trouter"]?.options?.baseURL || status?.config?.provider?.["9router"]?.options?.baseURL) && (
                   <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-[8rem_auto_1fr_auto] sm:items-center sm:gap-2">
                     <span className="text-xs font-semibold text-text-main sm:text-right sm:text-sm">Current</span>
                     <span className="material-symbols-outlined hidden text-text-muted text-[14px] sm:inline">arrow_forward</span>
                     <span className="min-w-0 truncate rounded bg-surface/40 px-2 py-2 text-xs text-text-muted sm:py-1.5">
-                      {status.config.provider["trouter"].options.baseURL}
+                      {currentBaseUrl}
                     </span>
                   </div>
                 )}

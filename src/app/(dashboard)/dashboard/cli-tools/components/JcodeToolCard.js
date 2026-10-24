@@ -36,12 +36,12 @@ export default function JcodeToolCard({
   const [customBaseUrl, setCustomBaseUrl] = useState("");
   const hasInitializedModel = useRef(false);
 
-  const currentBaseUrl = jcodeStatus?.config?.providers?.["9router"]?.base_url || "";
+  const currentBaseUrl = jcodeStatus?.config?.providers?.["trouter"]?.base_url || jcodeStatus?.config?.providers?.["9router"]?.base_url || "";
 
   const getConfigStatus = () => {
     if (!jcodeStatus?.installed) return null;
-    if (!jcodeStatus?.hasTRouter) return "not_configured";
-    const currentProvider = jcodeStatus.config?.providers?.["9router"];
+    if (!jcodeStatus?.hasTRouter && !jcodeStatus?.has9Router) return "not_configured";
+    const currentProvider = jcodeStatus.config?.providers?.["trouter"] || jcodeStatus.config?.providers?.["9router"];
     if (!currentProvider) return "not_configured";
     return matchKnownEndpoint(currentProvider.base_url, { tunnelPublicUrl, tailscaleUrl }) ? "configured" : "other";
   };

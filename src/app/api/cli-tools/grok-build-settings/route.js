@@ -88,7 +88,7 @@ export async function GET() {
     return NextResponse.json({
       installed: true,
       settings,
-      has9Router: has9RouterConfig(settings),
+      hasTRouter: has9RouterConfig(settings), has9Router: has9RouterConfig(settings),
       configPath: getGrokConfigPath(),
     });
   } catch (error) {
