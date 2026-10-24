@@ -1,4 +1,13 @@
-const esbuild = require("esbuild");
+let esbuild;
+try {
+  esbuild = require("esbuild");
+} catch {
+  try {
+    esbuild = require(path.resolve(__dirname, "..", "..", "node_modules", "esbuild"));
+  } catch {
+    esbuild = null;
+  }
+}
 const fs = require("fs");
 const path = require("path");
 
@@ -36,6 +45,10 @@ async function buildEntry(entry) {
   const steps = [];
 
   if (BUILD_CONFIG.bundle) {
+    if (!esbuild) {
+      console.error("❌ esbuild is not installed. Please install esbuild (npm i -D esbuild).");
+      process.exit(1);
+    }
     await esbuild.build({
       entryPoints: [path.join(mitmSrc, entry)],
       bundle: true,

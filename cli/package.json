@@ -5,6 +5,15 @@
   "bin": {
     "t-router": "./cli.js"
   },
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public",
+    "tag": "latest"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/thanhpk6120/t-router.git"
+  },
   "files": [
     "cli.js",
     "src",
@@ -44,7 +53,6 @@
     "ai",
     "api"
   ],
-  "license": "MIT",
   "devDependencies": {
     "esbuild": "^0.25.12",
     "nodemon": "^3.1.14"
