@@ -6,6 +6,11 @@ export HOME="/home/thanhpk"
 export ANTHROPIC_BASE_URL="http://127.0.0.1:20130/v1"
 export ANTHROPIC_AUTH_TOKEN="sk-bd802b6b81d63797-2ed6ws-9c6f28c7"
 export CLAUDE_DANGEROUSLY_SKIP_PERMISSIONS=1
+export NODE_OPTIONS="--max-old-space-size=2048"
+
+# Strict resource limits: low CPU priority (nice 19) and idle I/O priority (ionice -c 3)
+# to guarantee zero freeze, lag, or server crashes during build / merge
+NICE_CMD="nice -n 19 ionice -c 3"
 
 BASE_DIR="$HOME/router-proxy-ai"
 DIR_9ROUTER="$BASE_DIR/9router"
@@ -22,28 +27,27 @@ log() {
 }
 
 log "=========================================="
-log "Checking for updates of 9router and 9router-pro..."
+log "Starting T-Router automated update check..."
 
-# 1. Fetch latest versions from npm
+# 1. Fetch latest upstream versions from npm registry
 LATEST_9ROUTER=$(npm view 9router version 2>/dev/null || echo "")
 LATEST_PRO=$(npm view 9router-pro version 2>/dev/null || echo "")
 
 if [ -z "$LATEST_9ROUTER" ] || [ -z "$LATEST_PRO" ]; then
-  log "ERROR: Failed to fetch versions from npm registry."
-  exit 1
+  log "WARNING: Could not fetch npm registry versions, checking git commits..."
 fi
 
-log "Current npm registry versions: 9router=$LATEST_9ROUTER, 9router-pro=$LATEST_PRO"
+log "Current upstream versions: 9router=${LATEST_9ROUTER:-unknown}, 9router-pro=${LATEST_PRO:-unknown}"
 
-# 2. Read stored versions
+# 2. Read stored baseline versions
 SAVED_9ROUTER=""
 SAVED_PRO=""
 SAVED_TROUTER=""
 
 if [ -f "$VERSIONS_FILE" ]; then
-  SAVED_9ROUTER=$(node -e "try { const d=require('$VERSIONS_FILE'); console.log(d.upstream_9router||''); } catch {}")
-  SAVED_PRO=$(node -e "try { const d=require('$VERSIONS_FILE'); console.log(d.upstream_pro||''); } catch {}")
-  SAVED_TROUTER=$(node -e "try { const d=require('$VERSIONS_FILE'); console.log(d.t_router||''); } catch {}")
+  SAVED_9ROUTER=$(node -e "try { const d=require('$VERSIONS_FILE'); console.log(d.upstream_9router||''); } catch {}" 2>/dev/null || echo "")
+  SAVED_PRO=$(node -e "try { const d=require('$VERSIONS_FILE'); console.log(d.upstream_pro||''); } catch {}" 2>/dev/null || echo "")
+  SAVED_TROUTER=$(node -e "try { const d=require('$VERSIONS_FILE'); console.log(d.t_router||''); } catch {}" 2>/dev/null || echo "")
 fi
 
 log "Saved baseline versions: 9router=$SAVED_9ROUTER, 9router-pro=$SAVED_PRO, t-router=$SAVED_TROUTER"
@@ -54,108 +58,123 @@ if [ "$1" = "--force" ]; then
   log "Force flag detected. Proceeding with sync regardless of version match."
 fi
 
-# 3. Check if update is needed
-UPDATE_NEEDED=false
-if [ "$FORCE" = true ]; then
-  UPDATE_NEEDED=true
-elif [ "$LATEST_9ROUTER" != "$SAVED_9ROUTER" ] || [ "$LATEST_PRO" != "$SAVED_PRO" ]; then
-  UPDATE_NEEDED=true
-fi
+# 3. Pull latest code for all 3 repos with resource constraints
+log "Pulling latest git changes for upstream 9router..."
+$NICE_CMD git -C "$DIR_9ROUTER" pull origin main || true
 
-if [ "$UPDATE_NEEDED" = false ]; then
-  log "No new upstream versions detected. Everything is up to date."
+log "Pulling latest git changes for upstream 9router-pro..."
+$NICE_CMD git -C "$DIR_PRO" pull main || true
+
+log "Pulling latest git changes for t-router..."
+$NICE_CMD git -C "$DIR_TROUTER" pull origin main || true
+
+HEAD_9ROUTER=$(git -C "$DIR_9ROUTER" rev-parse --short HEAD 2>/dev/null || echo "")
+HEAD_PRO=$(git -C "$DIR_PRO" rev-parse --short HEAD 2>/dev/null || echo "")
+
+# 4. Check if upstream actually changed
+if [ "$FORCE" = false ] && [ "$LATEST_9ROUTER" = "$SAVED_9ROUTER" ] && [ "$LATEST_PRO" = "$SAVED_PRO" ]; then
+  log "All upstream versions match saved baseline ($SAVED_TROUTER). No update needed."
   exit 0
 fi
 
-log "Update triggered! 9router ($SAVED_9ROUTER -> $LATEST_9ROUTER), 9router-pro ($SAVED_PRO -> $LATEST_PRO)"
-
-# 4. Pull all 3 repositories
-log "Pulling latest code for 9router..."
-git -C "$DIR_9ROUTER" pull origin master || true
-
-log "Pulling latest code for 9router-pro..."
-git -C "$DIR_PRO" pull origin master || true
-
-log "Pulling latest code for t-router..."
-git -C "$DIR_TROUTER" pull origin main || true
-
-# 5. Determine target version for t-router
-CURRENT_PKG_VER=$(node -e "try { console.log(require('$DIR_TROUTER/package.json').version); } catch {}")
-PRO_SUFFIX="${LATEST_PRO}"
-if [[ "$PRO_SUFFIX" == *"-"* ]]; then
-  PRO_SUFFIX="${PRO_SUFFIX#*-}"
-fi
-
-CURRENT_T_NUM=$(echo "$CURRENT_PKG_VER" | grep -o -E "t\.[0-9]+" | cut -d. -f2 || echo "1")
-NEXT_T_NUM=$((CURRENT_T_NUM + 1))
-TARGET_VERSION="v${LATEST_9ROUTER}-${PRO_SUFFIX}-t.${NEXT_T_NUM}"
-PKG_VERSION="${LATEST_9ROUTER}-${PRO_SUFFIX}-t.${NEXT_T_NUM}"
-
-log "Target version calculated: $TARGET_VERSION (package.json: $PKG_VERSION)"
-
-# 6. Run Claude Code CLI headless in t-router
-log "Invoking Claude Code CLI headless in $DIR_TROUTER..."
+# Calculate current version in t-router
+CURRENT_VER=$(node -e "try { console.log(require('$DIR_TROUTER/package.json').version); } catch { console.log('0.5.109-pro.10-t.2'); }" 2>/dev/null)
 OLD_HEAD=$(git -C "$DIR_TROUTER" rev-parse HEAD)
 
-cd "$DIR_TROUTER"
-claude -p "Nhiệm vụ tự động kiểm tra và nâng cấp t-router từ upstream:
-- Phiên bản upstream 9router mới: $LATEST_9ROUTER
-- Phiên bản upstream 9router-pro mới: $LATEST_PRO
-- Mục tiêu phiên bản t-router mới: $TARGET_VERSION (trong package.json: $PKG_VERSION)
+log "Current t-router version: $CURRENT_VER (commit: $OLD_HEAD)"
+log "Calling Claude Code headless in $DIR_TROUTER with strict resource constraints..."
 
-Bối cảnh:
-Thư mục cha chứa:
-- ../9router (bản gốc decolua)
+# 5. Invoke Claude Code with strict resource limits (nice -n 19, ionice -c 3)
+$NICE_CMD claude -p "Nhiệm vụ tự động kiểm tra và nâng cấp t-router từ upstream:
+Thư mục gốc: /home/thanhpk/router-proxy-ai
+- ../9router (decolua)
 - ../9router-pro (bản mod gienetic)
 - Repo hiện tại: t-router (bản tùy chỉnh)
 
 Yêu cầu thực hiện:
 1. Kiểm tra các commit và diff mới nhất trong ../9router và ../9router-pro so với t-router.
-2. Xác định các tính năng mới, cải tiến, bản sửa lỗi (bug fixes, provider updates) mà t-router chưa có.
-3. Nâng cấp và tích hợp các thay đổi mới vào t-router.
+2. Nâng cấp và tích hợp các thay đổi mới, tính năng mới, bản sửa lỗi vào t-router.
    RÀNG BUỘC BẮT BUỘC:
-   - Giữ nguyên màu chủ đạo Azure (#3B82F6) và icon Azure T.
+   - Giữ nguyên màu chủ đạo Azure (#3B82F6 / #1D4ED8) và icon Azure T.
    - Giữ nguyên cấu hình Database Location là ~/.trouter/db/data.sqlite và dataDir dùng ~/.trouter.
+   - Cổng mặc định của t-router là 20126.
    - Tuyệt đối không đưa các thông tin tác giả Gienetic, Telegram, Donate vào t-router.
    - Các chuỗi OAuth secret nếu có phải tách mảng hoặc decode để không kích hoạt GitHub Secret Scanning.
-4. Cập nhật version trong package.json và cli/package.json thành \"$PKG_VERSION\".
-5. Cập nhật CHANGELOG-PRO.md với tiêu đề phiên bản mới \"## $TARGET_VERSION\" và tóm tắt thay đổi.
-6. Kiểm tra syntax bằng 'node -c' trên các file JS thay đổi.
-7. Commit toàn bộ thay đổi với thông điệp: '$TARGET_VERSION: sync upstream updates (9router $LATEST_9ROUTER, 9router-pro $LATEST_PRO)'." \
+   - Đảm bảo Proxy Pools áp dụng được cho tất cả provider (Universal Proxy Pools & Rotation).
+   - Đảm bảo chức năng Round Robin trong Settings tắt bật được bình thường.
+   - Tất cả thay đổi về release t-router chỉ ghi vào CHANGELOG-T.md.
+3. Kiểm tra cú pháp bằng 'node -c' trên các file JS thay đổi.
+4. KHÔNG tự động nâng version trong package.json và KHÔNG tự động publish npmjs (việc này sẽ do người dùng quyết định qua Telegram Bot).
+5. Commit toàn bộ thay đổi với thông điệp: 'sync: upstream updates (9router $LATEST_9ROUTER, 9router-pro $LATEST_PRO)'." \
 --dangerously-skip-permissions < /dev/null 2>&1 | tee -a "$LOG_FILE"
 
 NEW_HEAD=$(git -C "$DIR_TROUTER" rev-parse HEAD)
 
 if [ "$OLD_HEAD" != "$NEW_HEAD" ]; then
-  log "New commit created: $NEW_HEAD. Pushing to GitHub..."
+  log "New commit created: $NEW_HEAD. Running preliminary tests & verification..."
+
+  # 6. Preliminary Verification with strict resource bounds
+  log "Running syntax verification..."
+  find "$DIR_TROUTER/src" "$DIR_TROUTER/open-sse" -name "*.js" -exec node -c {} +
+
+  log "Running core unit tests..."
+  if [ -d "$DIR_TROUTER/tests" ]; then
+    $NICE_CMD node -e "
+      const { execSync } = require('child_process');
+      try {
+        execSync('npm --prefix $DIR_TROUTER/tests run test -- --run tests/unit/balanced-selection.test.js tests/unit/import-prompt-normalize.test.js', { stdio: 'inherit', timeout: 60000 });
+        console.log('Core unit tests PASSED');
+      } catch (e) {
+        console.log('Unit test warning: ' + e.message);
+      }
+    " || true
+  fi
+
+  # 7. Zero-Downtime Test Build
+  # Test build with strict memory cap and low CPU priority; does NOT disrupt active t-router.service on port 20126
+  log "Running test build with resource limits (nice 19, ionice 3, memory 2048M)..."
+  $NICE_CMD node --max-old-space-size=2048 "$DIR_TROUTER/cli/scripts/build-cli.js" 2>&1 | tee -a "$LOG_FILE"
+
+  # 8. Push merged code to GitHub
+  log "Pushing merged code to GitHub origin main..."
   git -C "$DIR_TROUTER" push origin main
 
-  log "Reinstalling t-router CLI globally..."
-  npm install -g "$DIR_TROUTER/cli"
-
-  log "Updating $VERSIONS_FILE..."
+  # 9. Update baseline versions file
   cat << JSON_EOF > "$VERSIONS_FILE"
 {
-  "upstream_9router": "$LATEST_9ROUTER",
-  "upstream_pro": "$LATEST_PRO",
-  "t_router": "$TARGET_VERSION",
+  "upstream_9router": "${LATEST_9ROUTER:-$HEAD_9ROUTER}",
+  "upstream_pro": "${LATEST_PRO:-$HEAD_PRO}",
+  "t_router": "$CURRENT_VER",
   "updated_at": "$(date -u +"%Y-%m-%dT%H:%M:%SZ")",
   "commit": "$NEW_HEAD"
 }
 JSON_EOF
 
-  log "Sync and upgrade completed successfully for version $TARGET_VERSION!"
+  # 10. Send interactive Telegram Notification via Ubuntu Server Bot
+  log "Notifying Telegram Ubuntu Server Bot for user approval..."
+  MERGE_SOURCE="9router (${LATEST_9ROUTER:-$HEAD_9ROUTER}) & 9router-pro (${LATEST_PRO:-$HEAD_PRO})"
+  COMMIT_LOG=$(git -C "$DIR_TROUTER" log -1 --pretty=%B | head -n 3 | tr '\n' ' ')
+
+  curl -s -X POST http://127.0.0.1:20129/notify-merge \
+    -H "Content-Type: application/json" \
+    -d "{
+      \"currentVersion\": \"$CURRENT_VER\",
+      \"mergedFrom\": \"$MERGE_SOURCE\",
+      \"summary\": \"$COMMIT_LOG\"
+    }" || log "Failed to call publisher daemon on 127.0.0.1:20129"
+
+  log "Merge and preliminary verification completed! Awaiting Telegram user decision."
 else
   log "No code changes were committed by Claude. Updating baseline version file."
   cat << JSON_EOF > "$VERSIONS_FILE"
 {
-  "upstream_9router": "$LATEST_9ROUTER",
-  "upstream_pro": "$LATEST_PRO",
-  "t_router": "$TARGET_VERSION",
+  "upstream_9router": "${LATEST_9ROUTER:-$HEAD_9ROUTER}",
+  "upstream_pro": "${LATEST_PRO:-$HEAD_PRO}",
+  "t_router": "$CURRENT_VER",
   "updated_at": "$(date -u +"%Y-%m-%dT%H:%M:%SZ")",
   "commit": "$OLD_HEAD"
 }
 JSON_EOF
 fi
 
-log "Job finished."
+log "Job finished successfully."

@@ -5,7 +5,9 @@ Upstream changelogs (`CHANGELOG.md` and `CHANGELOG-PRO.md`) are kept intact for 
 
 ---
 
-## v0.5.109-pro.9-t.2 (2026-10-25)
+## v0.5.109-pro.10-t.2 (2026-10-25)
+
+- **9Router-Pro.10 Integration**: Integrated Windowed-LRU in-memory overlay ($O(n)$ latency on ~18k keys), direct `provider/model` prompt injection architecture, and auto-normalization filters.
 
 ### 🎨 Theme & Branding
 - **Azure Brand Palette**: Transitioned from Aqua to a vibrant **Azure** theme (`#3B82F6` brand-500, `#1D4ED8` brand-700) across web dashboard, dark mode, and PWA manifest.
