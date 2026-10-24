@@ -42,7 +42,7 @@ function rewriteFile(file, content) {
 // One-time backup of the user's pre-9router file, then write.
 function writeFile(file, content) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
-  const backup = `${file}.bak-9router`;
+  const backup = `${file}.bak-trouter`;
   if (fs.existsSync(file) && !fs.existsSync(backup)) {
     fs.copyFileSync(file, backup);
     fs.chmodSync(backup, SECRET_MODE);
@@ -119,7 +119,7 @@ const codex = {
     if (!isStr(data?.config)) return null;
     const { parseTOML } = await toml();
     const cfg = parseTOML(data.config) || {};
-    return cfg.model_provider === "9router" && isStr(cfg.model) ? cfg.model : null;
+    return cfg.model_provider === "trouter" || cfg.model_provider === "9router" && isStr(cfg.model) ? cfg.model : null;
   },
   async apply({ baseUrl, apiKey, model }) {
     const { parseTOML, stringifyTOML } = await toml();
@@ -127,11 +127,11 @@ const codex = {
     let cfg = {};
     try { cfg = parseTOML(fs.readFileSync(file, "utf8")) || {}; } catch (err) { if (err.code !== "ENOENT") throw err; }
     cfg.model = model;
-    cfg.model_provider = "9router";
+    cfg.model_provider = "trouter";
     cfg.model_providers = cfg.model_providers || {};
     // Custom providers ignore auth.json — key must travel as a static header.
-    cfg.model_providers["9router"] = {
-      name: "9Router",
+    cfg.model_providers["trouter"] = {
+      name: "T-Router",
       base_url: v1(baseUrl),
       wire_api: "responses",
       http_headers: { Authorization: `Bearer ${apiKey}` },
@@ -151,7 +151,7 @@ const codex = {
       if (err.code === "ENOENT") return {};
       throw new Error(`Cannot parse ${codexPath()}: ${err.message}`);
     }
-    const p = cfg.model_providers?.["9router"];
+    const p = cfg.model_providers?.["trouter"] || cfg.model_providers?.["trouter"] || providers?.["9router"];
     const auth = p?.http_headers?.Authorization;
     return {
       baseUrl: p?.base_url,
@@ -161,7 +161,7 @@ const codex = {
         ...(isStr(cfg.agents?.default_subagent_model) ? { subagent: cfg.agents.default_subagent_model } : {}),
       },
       // Codex only routes through 9router when this provider is the active one.
-      active: cfg.model_provider === "9router",
+      active: cfg.model_provider === "trouter" || cfg.model_provider === "9router",
     };
   },
   async reset() {
@@ -169,8 +169,8 @@ const codex = {
     const file = codexPath();
     let cfg;
     try { cfg = parseTOML(fs.readFileSync(file, "utf8")) || {}; } catch (err) { if (err.code === "ENOENT") return []; throw err; }
-    if (cfg.model_provider === "9router") { delete cfg.model; delete cfg.model_provider; }
-    if (cfg.model_providers) delete cfg.model_providers["9router"];
+    if (cfg.model_provider === "trouter" || cfg.model_provider === "9router") { delete cfg.model; delete cfg.model_provider; }
+    if (cfg.model_providers) delete cfg.model_providers["trouter"];
     if (cfg.agents) { delete cfg.agents.default_subagent_model; delete cfg.agents.subagent; }
     for (const k of ["model_providers", "agents"]) {
       if (cfg[k] && Object.keys(cfg[k]).length === 0) delete cfg[k];
@@ -201,12 +201,12 @@ const opencode = {
     p.models = p.models || {};
     p.models[model] = { name: model, modalities: { input: ["text", "image"], output: ["text"] } };
     cfg.provider["9router"] = p;
-    cfg.model = `9router/${model}`;
+    cfg.model = `trouter/${model}`;
     cfg.agent = cfg.agent || {};
     cfg.agent.explorer = {
       description: "Fast explorer subagent for codebase exploration",
       mode: "subagent",
-      model: `9router/${model}`,
+      model: `trouter/${model}`,
     };
     writeJson(file, cfg);
     return [file];
@@ -238,7 +238,7 @@ const opencode = {
 
 // ── Factory Droid ───────────────────────────────────────────────────────────
 const droidPath = () => path.join(home(), ".factory", "settings.json");
-const isDroid9r = (m) => m.id?.startsWith("custom:9Router");
+const isDroid9r = (m) => m.id?.startsWith("custom:TRouter");
 
 const droid = {
   id: "droid",
@@ -256,7 +256,7 @@ const droid = {
     cfg.customModels = [
       {
         model,
-        id: "custom:9Router-0",
+        id: "custom:TRouter-0",
         index: 0,
         baseUrl: v1(baseUrl),
         apiKey,
@@ -301,14 +301,14 @@ const crush = {
   paths: () => [crushPath()],
   route: "crush-settings",
   serverModel(data) {
-    const m = data?.config?.providers?.["9router"]?.models?.[0]?.id;
+    const m = data?.config?.providers?.["trouter"] || providers?.["9router"]?.models?.[0]?.id;
     return isStr(m) ? m : null;
   },
   async apply({ baseUrl, apiKey, model }) {
     const file = crushPath();
     const cfg = readJson(file) || {};
     cfg.providers = cfg.providers || {};
-    cfg.providers["9router"] = {
+    cfg.providers["trouter"] = {
       type: "openai-compat",
       base_url: v1(baseUrl),
       api_key: apiKey,
@@ -318,15 +318,15 @@ const crush = {
     return [file];
   },
   async show() {
-    const p = readJson(crushPath())?.providers?.["9router"];
+    const p = readJson(crushPath())?.providers?.["trouter"] || providers?.["9router"];
     const ids = (p?.models || []).map((m) => m.id).filter(isStr);
     return { baseUrl: p?.base_url, apiKey: p?.api_key, models: ids.length ? { main: ids[0] } : {} };
   },
   async reset() {
     const file = crushPath();
     const cfg = readJson(file);
-    if (!cfg?.providers?.["9router"]) return [];
-    delete cfg.providers["9router"];
+    if (!cfg?.providers?.["trouter"] || providers?.["9router"]) return [];
+    delete cfg.providers["trouter"];
     if (Object.keys(cfg.providers).length === 0) delete cfg.providers;
     rewriteFile(file, JSON.stringify(cfg, null, 2));
     return [file];
@@ -439,7 +439,7 @@ const pi = {
   paths: () => [piPath()],
   route: "pi-settings",
   serverModel(data) {
-    const m = data?.config?.providers?.["9router"]?.models?.[0];
+    const m = data?.config?.providers?.["trouter"] || providers?.["9router"]?.models?.[0];
     const id = typeof m === "string" ? m : m?.id;
     return isStr(id) ? id : null;
   },
@@ -447,8 +447,8 @@ const pi = {
     const file = piPath();
     const cfg = readJson(file) || {};
     cfg.providers = cfg.providers || {};
-    cfg.providers["9router"] = {
-      ...(cfg.providers["9router"] || {}),
+    cfg.providers["trouter"] = {
+      ...(cfg.providers["trouter"] || {}),
       baseUrl: v1(baseUrl),
       apiKey,
       api: "openai-completions",
@@ -458,7 +458,7 @@ const pi = {
     return [file];
   },
   async show() {
-    const p = readJson(piPath())?.providers?.["9router"];
+    const p = readJson(piPath())?.providers?.["trouter"] || providers?.["9router"];
     const ids = (p?.models || []).map((m) => (typeof m === "string" ? m : m?.id)).filter(isStr);
     return {
       baseUrl: p?.baseUrl,
@@ -469,8 +469,8 @@ const pi = {
   async reset() {
     const file = piPath();
     const cfg = readJson(file);
-    if (!cfg?.providers?.["9router"]) return [];
-    delete cfg.providers["9router"];
+    if (!cfg?.providers?.["trouter"] || providers?.["9router"]) return [];
+    delete cfg.providers["trouter"];
     if (Object.keys(cfg.providers).length === 0) delete cfg.providers;
     rewriteFile(file, JSON.stringify(cfg, null, 2));
     return [file];
@@ -504,7 +504,7 @@ const omp = {
     const file = ompPath();
     const cfg = (await readYaml(file)) || {};
     cfg.providers = cfg.providers || {};
-    cfg.providers["9router"] = {
+    cfg.providers["trouter"] = {
       baseUrl: v1(baseUrl),
       apiKey,
       api: "openai-completions",
@@ -516,7 +516,7 @@ const omp = {
     return [file];
   },
   async show() {
-    const p = (await readYaml(ompPath()))?.providers?.["9router"];
+    const p = (await readYaml(ompPath()))?.providers?.["trouter"] || providers?.["9router"];
     return {
       baseUrl: p?.baseUrl,
       apiKey: p?.apiKey,
@@ -527,8 +527,8 @@ const omp = {
     const { stringifyYAML } = await toml();
     const file = ompPath();
     const cfg = await readYaml(file);
-    if (!cfg?.providers?.["9router"]) return [];
-    delete cfg.providers["9router"];
+    if (!cfg?.providers?.["trouter"] || providers?.["9router"]) return [];
+    delete cfg.providers["trouter"];
     if (Object.keys(cfg.providers).length === 0) delete cfg.providers;
     rewriteFile(file, Object.keys(cfg).length ? stringifyYAML(cfg) : "");
     return [file];

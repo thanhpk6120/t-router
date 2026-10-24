@@ -112,8 +112,8 @@ export default function GenericCliToolCard({
     const cfg = status.config;
     if (typeof cfg.baseUrl === "string") return cfg.baseUrl;
     if (typeof cfg.openai?.base_url === "string") return cfg.openai.base_url;
-    if (typeof cfg.providers?.["9router"]?.base_url === "string") return cfg.providers["9router"].base_url;
-    if (typeof cfg.providers?.["9router"]?.baseUrl === "string") return cfg.providers["9router"].baseUrl;
+    if (typeof cfg.providers?.["9router"]?.base_url === "string") return cfg.providers["trouter"].base_url;
+    if (typeof cfg.providers?.["9router"]?.baseUrl === "string") return cfg.providers["trouter"].baseUrl;
     return "";
   };
 
@@ -121,7 +121,7 @@ export default function GenericCliToolCard({
 
   const getConfigStatus = () => {
     if (!status?.installed) return null;
-    if (!status.has9Router) return "not_configured";
+    if (!status.hasTRouter) return "not_configured";
     if (currentBaseUrl && matchKnownEndpoint(currentBaseUrl, { tunnelPublicUrl, tailscaleUrl })) {
       return "configured";
     }
@@ -136,7 +136,7 @@ export default function GenericCliToolCard({
     try {
       const keyToUse = (selectedApiKey && selectedApiKey.trim())
         ? selectedApiKey
-        : (!cloudEnabled ? "sk_9router" : selectedApiKey);
+        : (!cloudEnabled ? "sk_trouter" : selectedApiKey);
 
       const payload = {
         baseUrl: getEffectiveBaseUrl(),
@@ -239,7 +239,7 @@ export default function GenericCliToolCard({
 
   const getManualConfigContent = () => {
     const effectiveUrl = getEffectiveBaseUrl();
-    const key = selectedApiKey || "sk_9router";
+    const key = selectedApiKey || "sk_trouter";
     const mod = selectedModel || "provider/model-id";
 
     switch (tool.id) {
@@ -301,7 +301,7 @@ export default function GenericCliToolCard({
         return [
           {
             filename: "~/.forge/config.toml",
-            content: `# Forge config — managed by 9Router\n\n[openai]\napi_key = "${key}"\nbase_url = "${effectiveUrl}"\nmodel = "${mod}"`,
+            content: `# Forge config — managed by T-Router\n\n[openai]\napi_key = "${key}"\nbase_url = "${effectiveUrl}"\nmodel = "${mod}"`,
           },
         ];
       case "smelt":
@@ -315,7 +315,7 @@ export default function GenericCliToolCard({
         return [
           {
             filename: "~/.codewhale/config.toml",
-            content: `# CodeWhale config — managed by 9Router\n\n[openai]\nbase_url = "${effectiveUrl}"\napi_key = "${key}"\nmodel = "${mod}"`,
+            content: `# CodeWhale config — managed by T-Router\n\n[openai]\nbase_url = "${effectiveUrl}"\napi_key = "${key}"\nmodel = "${mod}"`,
           },
         ];
       default:
@@ -592,7 +592,7 @@ export default function GenericCliToolCard({
                   >
                     {applying ? "Applying..." : "Apply Settings"}
                   </Button>
-                  {status?.has9Router && (
+                  {status?.hasTRouter && (
                     <Button
                       variant="outline"
                       size="sm"

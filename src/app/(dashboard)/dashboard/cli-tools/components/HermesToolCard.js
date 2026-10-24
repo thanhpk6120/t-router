@@ -64,7 +64,7 @@ export default function HermesToolCard({
 
   // Same three-state rule as the header badge, evaluated per profile from the list payload.
   const profileStatus = (p) => {
-    if (p.has9Router || (p.baseUrl && matchKnownEndpoint(p.baseUrl, { tunnelPublicUrl, tailscaleUrl }))) return "configured";
+    if (p.hasTRouter || (p.baseUrl && matchKnownEndpoint(p.baseUrl, { tunnelPublicUrl, tailscaleUrl }))) return "configured";
     if (p.baseUrl) return "other";
     return "not_configured";
   };
@@ -130,8 +130,8 @@ export default function HermesToolCard({
         if (rcfg?.model) initial[role] = rcfg.model;
       }
       setRoleModels(initial);
-      setAudioEnabled(!!hermesStatus.has9RouterStt);
-      setSttModel(hermesStatus.has9RouterStt ? hermesStatus.settings?.stt?.model || "" : "");
+      setAudioEnabled(!!hermesStatus.hasTRouterStt);
+      setSttModel(hermesStatus.hasTRouterStt ? hermesStatus.settings?.stt?.model || "" : "");
     }
   }, [hermesStatus]);
 
@@ -195,7 +195,7 @@ export default function HermesToolCard({
   const getKeyToUse = () =>
     selectedApiKey?.trim()
       || (apiKeys?.length > 0 ? apiKeys[0].key : null)
-      || (!cloudEnabled ? "sk_9router" : null);
+      || (!cloudEnabled ? "sk_trouter" : null);
 
   const profileLabel = (name) => (name === "default" ? "default profile" : `profile "${name}"`);
 
@@ -340,7 +340,7 @@ export default function HermesToolCard({
   const getManualConfigs = () => {
     const keyToUse = (selectedApiKey && selectedApiKey.trim())
       ? selectedApiKey
-      : (!cloudEnabled ? "sk_9router" : "<API_KEY_FROM_DASHBOARD>");
+      : (!cloudEnabled ? "sk_trouter" : "<API_KEY_FROM_DASHBOARD>");
 
     const base = getEffectiveBaseUrl();
     const homeDir = activeProfile === "default" ? "~/.hermes" : `~/.hermes/profiles/${activeProfile}`;
@@ -597,7 +597,7 @@ export default function HermesToolCard({
                     <span className="material-symbols-outlined text-[14px] mr-1">groups</span>Apply to All Profiles
                   </Button>
                 )}
-                <Button variant="outline" size="sm" onClick={handleReset} disabled={!hermesStatus?.has9Router && !hermesStatus?.has9RouterStt} loading={restoring} className="w-full sm:w-auto">
+                <Button variant="outline" size="sm" onClick={handleReset} disabled={!hermesStatus?.hasTRouter && !hermesStatus?.hasTRouterStt} loading={restoring} className="w-full sm:w-auto">
                   <span className="material-symbols-outlined text-[14px] mr-1">restore</span>Reset
                 </Button>
                 <Button variant="ghost" size="sm" onClick={() => setShowManualConfigModal(true)} className="w-full sm:w-auto">

@@ -31,26 +31,26 @@ const readConfig = async () => {
   }
 };
 
-const has9RouterConfig = (config) => {
+const hasTRouterConfig = (config) => {
   if (!Array.isArray(config)) return false;
-  return config.some((entry) => entry.name === "9Router");
+  return config.some((entry) => entry.name === "T-Router" || entry.name === "T-Router");
 };
 
-const get9RouterEntry = (config) => {
+const getTRouterEntry = (config) => {
   if (!Array.isArray(config)) return null;
-  return config.find((entry) => entry.name === "9Router") || null;
+  return config.find((entry) => entry.name === "T-Router" || entry.name === "T-Router") || null;
 };
 
 // GET - Read current copilot config
 export async function GET() {
   try {
     const config = await readConfig();
-    const entry = get9RouterEntry(config);
+    const entry = getTRouterEntry(config);
 
     return NextResponse.json({
       installed: true,
       config,
-      has9Router: has9RouterConfig(config),
+      hasTRouter: hasTRouterConfig(config),
       configPath: getConfigPath(),
       currentModel: entry?.models?.[0]?.id || null,
       currentUrl: entry?.models?.[0]?.url || null,
@@ -61,7 +61,7 @@ export async function GET() {
   }
 }
 
-// POST - Apply 9Router config to chatLanguageModels.json
+// POST - Apply T-Router config to chatLanguageModels.json
 export async function POST(request) {
   try {
     const { baseUrl, apiKey, models } = await request.json();
@@ -85,7 +85,7 @@ export async function POST(request) {
     const keyToUse = await resolveCliApiKey(apiKey);
 
     const newEntry = {
-      name: "9Router",
+      name: "T-Router",
       vendor: "azure",
       apiKey: keyToUse,
       models: models.map((id) => ({
@@ -99,8 +99,8 @@ export async function POST(request) {
       })),
     };
 
-    // Replace existing 9Router entry or append
-    const idx = config.findIndex((e) => e.name === "9Router");
+    // Replace existing T-Router entry or append
+    const idx = config.findIndex((e) => e.name === "T-Router" || entry.name === "T-Router");
     if (idx >= 0) {
       config[idx] = newEntry;
     } else {
@@ -120,7 +120,7 @@ export async function POST(request) {
   }
 }
 
-// DELETE - Remove 9Router entry from chatLanguageModels.json
+// DELETE - Remove T-Router entry from chatLanguageModels.json
 export async function DELETE() {
   try {
     const configPath = getConfigPath();
@@ -137,12 +137,12 @@ export async function DELETE() {
       throw error;
     }
 
-    config = config.filter((e) => e.name !== "9Router");
+    config = config.filter((e) => e.name !== "T-Router" && e.name !== "T-Router");
     await fs.writeFile(configPath, JSON.stringify(config, null, 2));
 
     return NextResponse.json({
       success: true,
-      message: "9Router removed from Copilot config",
+      message: "T-Router removed from Copilot config",
     });
   } catch (error) {
     console.log("Error resetting copilot settings:", error);

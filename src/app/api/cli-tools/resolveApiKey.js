@@ -4,7 +4,7 @@
  * CLI tool cards send an empty string when no key is explicitly selected
  * (e.g. the existing config already has a provider block but the frontend
  * can't read the stored Authorization header back). The routes previously
- * fell back to the literal placeholder "sk_9router", which causes 401
+ * fell back to the literal placeholder "sk_trouter", which causes 401
  * "Invalid API key" for any deployment with requireApiKey=true (#4399).
  *
  * Resolution order:
@@ -13,7 +13,7 @@
  *   3. Empty string — the route writes no Authorization header value,
  *      which is fine for requireApiKey=false deployments.
  *
- * The placeholder "sk_9router" is NEVER written; it was never a real key.
+ * The placeholder "sk_trouter" is NEVER written; it was never a real key.
  */
 
 import { getApiKeys } from "@/lib/db";
@@ -23,7 +23,7 @@ import { getApiKeys } from "@/lib/db";
  * @returns {Promise<string>}
  */
 export async function resolveCliApiKey(callerKey) {
-  if (callerKey && callerKey.trim() && callerKey.trim() !== "sk_9router") {
+  if (callerKey && callerKey.trim() && callerKey.trim() !== "sk_trouter" && callerKey.trim() !== "sk_trouter") {
     return callerKey.trim();
   }
   try {
