@@ -22,6 +22,9 @@ LOG_FILE="$LOG_DIR/sync.log"
 
 mkdir -p "$LOG_DIR"
 
+exec 200>"$BASE_DIR/.sync.lock"
+flock -n 200 || { echo "Another sync instance is already running. Exiting."; exit 0; }
+
 log() {
   echo "[$(date "+%Y-%m-%d %H:%M:%S")] $*" | tee -a "$LOG_FILE"
 }
@@ -60,10 +63,10 @@ fi
 
 # 3. Pull latest code for all 3 repos with resource constraints
 log "Pulling latest git changes for upstream 9router..."
-$NICE_CMD git -C "$DIR_9ROUTER" pull origin main || true
+$NICE_CMD git -C "$DIR_9ROUTER" pull origin master || true
 
 log "Pulling latest git changes for upstream 9router-pro..."
-$NICE_CMD git -C "$DIR_PRO" pull main || true
+$NICE_CMD git -C "$DIR_PRO" pull origin master || true
 
 log "Pulling latest git changes for t-router..."
 $NICE_CMD git -C "$DIR_TROUTER" pull origin main || true
@@ -119,15 +122,8 @@ if [ "$OLD_HEAD" != "$NEW_HEAD" ]; then
 
   log "Running core unit tests..."
   if [ -d "$DIR_TROUTER/tests" ]; then
-    $NICE_CMD node -e "
-      const { execSync } = require('child_process');
-      try {
-        execSync('npm --prefix $DIR_TROUTER/tests run test -- --run tests/unit/balanced-selection.test.js tests/unit/import-prompt-normalize.test.js', { stdio: 'inherit', timeout: 60000 });
-        console.log('Core unit tests PASSED');
-      } catch (e) {
-        console.log('Unit test warning: ' + e.message);
-      }
-    " || true
+    $NICE_CMD npm --prefix "$DIR_TROUTER/tests" run test -- --run unit/balanced-selection.test.js unit/import-prompt-normalize.test.js
+    log "Core unit tests PASSED"
   fi
 
   # 7. Zero-Downtime Test Build & Verification on Port 20127
@@ -135,20 +131,22 @@ if [ "$OLD_HEAD" != "$NEW_HEAD" ]; then
   log "Running test build with resource limits (nice 19, ionice 3, memory 2048M)..."
   $NICE_CMD node --max-old-space-size=2048 "$DIR_TROUTER/cli/scripts/build-cli.js" 2>&1 | tee -a "$LOG_FILE"
 
-  # Zero-downtime test instance on port 20127 to verify runtime before approval
-  log "Starting temporary test instance on port 20127..."
-  PORT=20127 node "$DIR_TROUTER/cli/app/custom-server.js" --port 20127 > /dev/null 2>&1 &
+  # Zero-downtime test instance on port 20127 with isolated temporary DATA_DIR
+  log "Starting temporary test instance on port 20127 with isolated DATA_DIR..."
+  TEMP_DATA_DIR=$(mktemp -d /tmp/trouter-test-XXXXXX)
+  PORT=20127 DATA_DIR="$TEMP_DATA_DIR" node "$DIR_TROUTER/cli/app/custom-server.js" --port 20127 > /dev/null 2>&1 &
   TEST_PID=$!
   sleep 4
   TEST_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:20127/ || echo "000")
   kill $TEST_PID 2>/dev/null || true
   wait $TEST_PID 2>/dev/null || true
+  rm -rf "$TEMP_DATA_DIR"
 
   if [ "$TEST_CODE" != "200" ] && [ "$TEST_CODE" != "307" ] && [ "$TEST_CODE" != "308" ]; then
-    log "WARNING: Port 20127 test check returned status $TEST_CODE"
-  else
-    log "Port 20127 runtime test passed with HTTP $TEST_CODE! Port 20126 remains untouched and zero-downtime."
+    log "ERROR: Port 20127 test check failed with status $TEST_CODE"
+    exit 1
   fi
+  log "Port 20127 runtime test passed with HTTP $TEST_CODE! Port 20126 remains untouched and zero-downtime."
   # 8. Push merged code to GitHub
   log "Pushing merged code to GitHub origin main..."
   git -C "$DIR_TROUTER" push origin main
@@ -169,14 +167,17 @@ JSON_EOF
   MERGE_SOURCE="9router (${LATEST_9ROUTER:-$HEAD_9ROUTER}) & 9router-pro (${LATEST_PRO:-$HEAD_PRO})"
   COMMIT_LOG=$(git -C "$DIR_TROUTER" log -1 --pretty=%B | head -n 3 | tr '\n' ' ')
 
+  JSON_PAYLOAD=$(CURRENT_VER="$CURRENT_VER" MERGE_SOURCE="$MERGE_SOURCE" COMMIT_LOG="$COMMIT_LOG" node -e '
+    console.log(JSON.stringify({
+      currentVersion: process.env.CURRENT_VER || "",
+      mergedFrom: process.env.MERGE_SOURCE || "",
+      summary: process.env.COMMIT_LOG || ""
+    }));
+  ')
+
   curl -s -X POST http://127.0.0.1:20129/notify-merge \
     -H "Content-Type: application/json" \
-    -d "{
-      \"currentVersion\": \"$CURRENT_VER\",
-      \"mergedFrom\": \"$MERGE_SOURCE\",
-      \"summary\": \"$COMMIT_LOG\"
-    }" || log "Failed to call publisher daemon on 127.0.0.1:20129"
-
+    -d "$JSON_PAYLOAD" || log "Failed to call publisher daemon on 127.0.0.1:20129"
   log "Merge and preliminary verification completed! Awaiting Telegram user decision."
 else
   log "No code changes were committed by Claude. Updating baseline version file."

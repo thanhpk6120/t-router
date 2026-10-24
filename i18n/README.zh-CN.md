@@ -1,7 +1,7 @@
 <div align="center">
   <img src="../images/9router.png?1" alt="9Router Dashboard" width="800"/>
   
-  # 9Router - 免费 AI 路由器
+  # T Router - 免费 AI 路由器
   
   **永不停歇的编程体验。智能回退，自动路由到免费和廉价的 AI 模型。**
   
@@ -11,8 +11,8 @@
     <img src="../public/providers/openclaw.png" alt="OpenClaw" width="80"/>
   </p>
   
-  [![npm](https://img.shields.io/npm/v/9router.svg)](https://www.npmjs.com/package/9router)
-  [![Downloads](https://img.shields.io/npm/dm/9router.svg)](https://www.npmjs.com/package/9router)
+  [![npm](https://img.shields.io/npm/v/t-router-proxy.svg)](https://www.npmjs.com/package/t-router-proxy)
+  [![Downloads](https://img.shields.io/npm/dm/t-router-proxy.svg)](https://www.npmjs.com/package/t-router-proxy)
   [![License](https://img.shields.io/npm/l/9router.svg)](https://github.com/decolua/9router/blob/main/LICENSE)
   
   [🚀 快速开始](#-quick-start) • [💡 特性](#-key-features) • [📖 设置](#-setup) • [🌐 网站](https://9router.com)
@@ -45,7 +45,7 @@
 │  Your CLI   │  (Claude Code, Codex, OpenClaw, Cursor, Cline, Antigravity...)
 │   Tool      │
 └──────┬──────┘
-       │ http://localhost:20128/v1
+       │ http://localhost:20126/v1
        ↓
 ┌─────────────────────────────────────────────┐
 │           9Router (Smart Router)            │
@@ -75,7 +75,7 @@ npm install -g 9router
 9router
 ```
 
-🎉 仪表板将在 `http://localhost:20128` 打开
+🎉 仪表板将在 `http://localhost:20126` 打开
 
 **2. 连接免费提供商（无需注册）：**
 
@@ -85,7 +85,7 @@ npm install -g 9router
 
 ```
 Claude Code/Codex/Gemini CLI/OpenClaw/Cursor/Cline 设置:
-  Endpoint: http://localhost:20128/v1
+  Endpoint: http://localhost:20126/v1
   API Key: [从仪表板复制]
   Model: if/kimi-k2-thinking
 ```
@@ -99,19 +99,19 @@ Claude Code/Codex/Gemini CLI/OpenClaw/Cursor/Cline 设置:
 ```bash
 cp .env.example .env
 npm install
-PORT=20128 NEXT_PUBLIC_BASE_URL=http://localhost:20128 npm run dev
+PORT=20128 NEXT_PUBLIC_BASE_URL=http://localhost:20126 npm run dev
 ```
 
 生产模式：
 
 ```bash
 npm run build
-PORT=20128 HOSTNAME=0.0.0.0 NEXT_PUBLIC_BASE_URL=http://localhost:20128 npm run start
+PORT=20128 HOSTNAME=0.0.0.0 NEXT_PUBLIC_BASE_URL=http://localhost:20126 npm run start
 ```
 
 默认 URL：
-- 仪表板：`http://localhost:20128/dashboard`
-- OpenAI 兼容 API：`http://localhost:20128/v1`
+- 仪表板：`http://localhost:20126/dashboard`
+- OpenAI 兼容 API：`http://localhost:20126/v1`
 
 ---
 
@@ -862,7 +862,7 @@ Cost: $0 forever!
 
 ```
 Settings → Models → Advanced:
-  OpenAI API Base URL: http://localhost:20128/v1
+  OpenAI API Base URL: http://localhost:20126/v1
   OpenAI API Key: [from 9router dashboard]
   Model: cc/claude-opus-4-6
 ```
@@ -875,7 +875,7 @@ Settings → Models → Advanced:
 
 ```json
 {
-  "anthropic_api_base": "http://localhost:20128/v1",
+  "anthropic_api_base": "http://localhost:20126/v1",
   "anthropic_api_key": "your-9router-api-key"
 }
 ```
@@ -883,7 +883,7 @@ Settings → Models → Advanced:
 ### Codex CLI
 
 ```bash
-export OPENAI_BASE_URL="http://localhost:20128"
+export OPENAI_BASE_URL="http://localhost:20126"
 export OPENAI_API_KEY="your-9router-api-key"
 
 codex "your prompt"
@@ -932,7 +932,7 @@ Dashboard → CLI Tools →Claw → Select Model → Apply
 
 ```
 Provider: OpenAI Compatible
-Base URL: http://localhost:20128/v1
+Base URL: http://localhost:20126/v1
 API Key: [from dashboard]
 Model: cc/claudeus-4-6
 ```
@@ -958,7 +958,7 @@ export DATA_DIR="/var/lib/9router"
 export PORT="20128"
 export HOSTNAME="0.0.0.0"
 export NODE_ENV="production"
-export NEXT_PUBLIC_BASE_URLhttp://localhost:20128"
+export NEXT_PUBLIC_BASE_URLhttp://localhost:20126"
 export NEXT_PUBLIC_CLOUD_URL="https://9router.com"
 export API_KEY_SECRET="endpoint-proxy-api-key-secret"
 export MACHINE_ID_SALT="endpoint-proxy-salt"
@@ -1022,7 +1022,7 @@ docker stop 9router && docker rm 9router
 | `PORT` | 框架默认值 | 服务端口（示例中为 `20128`） |
 | `HOSTNAME` | 框架默认值 | 绑定主机（Docker 默认为 `0.0.0.0`） |
 | `NODE_ENV` | 运行时默认值 | 部署时设置 `production` |
-| `BASE_URL` |http://localhost:20128` | 云同步作业使用的服务器端内部基础 URL |
+| `BASE_URL` |http://localhost:20126` | 云同步作业使用的服务器端内部基础 URL |
 | `CLOUD_URL` | `https://9router.com` | 服务器端云同步端点基础 URL |
 | `NEXT_PUBLIC_BASE_URL` | `http://localhost:3000` | 向后兼容/公共基础 URL（服务器运行时优先使用 `BASE_URL`） |
 | `NEXT_PUBLIC_CLOUD_URL` | `https://9router.com` | 向后兼容/公共云 URL（服务器运行时优先使用 `CLOUD_URL`） |
@@ -1114,10 +1114,10 @@ docker stop 9router && docker rm 9router
 - 对非关键任务使用免费层（Gemini CLI, iFlow）
 
 **仪表板在错误的端口打开**
-- 设置 `PORT=20128` 和 `NEXT_PUBLIC_BASE_URL=http://localhost:20128`
+- 设置 `PORT=20128` 和 `NEXT_PUBLIC_BASE_URL=http://localhost:20126`
 
 **云端同步错误**
-- 验证 `BASE_URL` 指向您正在运行的实例（例如：`http://localhost:20128`）
+- 验证 `BASE_URL` 指向您正在运行的实例（例如：`http://localhost:20126`）
 - 验证 `CLOUD_URL` 指向您预期的云端端点（例如：`https://9router.com`）
 - 尽可能保持 `NEXT_PUBLIC_*` 值与服务器端值一致。
 
@@ -1172,7 +1172,7 @@ Content-Type: application/json
 ### 列出模型
 
 ```bash
-GET http://localhost:20128/v1/models
+GET http://localhost:20126/v1/models
 Authorization: Bearer your-api-key
 
 → Returns all models + combos in OpenAI format

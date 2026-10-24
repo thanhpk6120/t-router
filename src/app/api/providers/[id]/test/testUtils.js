@@ -1,5 +1,5 @@
-import { getProviderConnectionById, updateProviderConnection, getSettings } from "@/lib/localDb";
-import { resolveConnectionProxyConfig, resolveAutoTestProxy } from "@/lib/network/connectionProxy";
+import { getProviderConnectionById, updateProviderConnection, getSettings, getProxyPools } from "@/lib/localDb";
+import { resolveConnectionProxyConfig, resolveAutoTestProxy, resolveRotationPoolIds, pickProxyPoolId } from "@/lib/network/connectionProxy";
 import { testProxyUrl } from "@/lib/network/proxyTest";
 import { isOpenAICompatibleProvider, isAnthropicCompatibleProvider, AI_PROVIDERS } from "@/shared/constants/providers";
 import { getDefaultModel } from "open-sse/config/providerModels.js";
@@ -983,7 +983,20 @@ export async function testSingleConnection(id) {
   if (!effectiveProxy.connectionProxyEnabled && !effectiveProxy.vercelRelayUrl && !explicitlyNoProxy) {
     try {
       const settings = await getSettings();
-      if (settings?.autoProxyForTests === true) {
+      const providerOverride = (settings?.providerStrategies || {})[connection.provider] || {};
+      const pStrategy = providerOverride.rotateStrategy || "none";
+      let pPoolId = providerOverride.proxyPoolId || null;
+      if (pStrategy !== "none") {
+        const allPools = await getProxyPools({ isActive: true });
+        const poolIds = resolveRotationPoolIds(allPools, providerOverride.proxyPoolIds);
+        pPoolId = pickProxyPoolId(poolIds, pStrategy, connection.provider);
+      }
+      if (pPoolId) {
+        const resolved = await resolveConnectionProxyConfig({ proxyPoolId: pPoolId });
+        if (resolved && (resolved.connectionProxyEnabled || resolved.vercelRelayUrl)) {
+          effectiveProxy = resolved;
+        }
+      } else if (settings?.autoProxyForTests === true) {
         const auto = await resolveAutoTestProxy();
         if (auto) effectiveProxy = auto;
       }

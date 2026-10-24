@@ -3,7 +3,7 @@
 <div align="center">
   <img src="../images/9router.png?1" alt="แดชบอร์ด 9Router" width="800"/>
   
-  # 9Router - Free AI Router
+  # T Router - Free AI Router
   
   **ไม่ต้องหยุดเขียนโค้ด ประหยัดโทเค็น 20-40% ด้วย RTK + สลับอัตโนมัติไปยังโมเดล AI ฟรีและราคาถูก**
   
@@ -13,8 +13,8 @@
     <img src="../public/providers/openclaw.png" alt="OpenClaw" width="80"/>
   </p>
   
-  [![npm](https://img.shields.io/npm/v/9router.svg)](https://www.npmjs.com/package/9router)
-  [![Downloads](https://img.shields.io/npm/dm/9router.svg)](https://www.npmjs.com/package/9router)
+  [![npm](https://img.shields.io/npm/v/t-router-proxy.svg)](https://www.npmjs.com/package/t-router-proxy)
+  [![Downloads](https://img.shields.io/npm/dm/t-router-proxy.svg)](https://www.npmjs.com/package/t-router-proxy)
   [![License](https://img.shields.io/npm/l/9router.svg)](https://github.com/decolua/9router/blob/main/LICENSE)
   
   [🚀 เริ่มต้นใช้งาน](#-quick-start) • [💡 ฟีเจอร์](#-key-features) • [📖 การตั้งค่า](#-setup-guide) • [🌐 เว็บไซต์](https://9router.com)
@@ -48,7 +48,7 @@
 │  Your CLI   │  (Claude Code, Codex, OpenClaw, Cursor, Cline...)
 │   Tool      │
 └──────┬──────┘
-       │ http://localhost:20128/v1
+       │ http://localhost:20126/v1
        ↓
 ┌─────────────────────────────────────────────┐
 │           9Router (Smart Router)            │
@@ -78,7 +78,7 @@ npm install -g 9router
 9router
 ```
 
-🎉 เปิดแดชบอร์ดที่ `http://localhost:20128`
+🎉 เปิดแดชบอร์ดที่ `http://localhost:20126`
 
 **2. เชื่อมต่อผู้ให้บริการฟรี (ไม่ต้องสมัคร):**
 
@@ -88,7 +88,7 @@ npm install -g 9router
 
 ```
 ตั้งค่า Claude Code/Codex/OpenClaw/Cursor/Cline:
-  Endpoint: http://localhost:20128/v1
+  Endpoint: http://localhost:20126/v1
   API Key: [คัดลอกจากแดชบอร์ด]
   Model: kr/claude-sonnet-4.5
 ```
@@ -102,19 +102,19 @@ Repo นี้เป็น private package (`9router-app`) ดังนั้น
 ```bash
 cp .env.example .env
 npm install
-PORT=20128 NEXT_PUBLIC_BASE_URL=http://localhost:20128 npm run dev
+PORT=20128 NEXT_PUBLIC_BASE_URL=http://localhost:20126 npm run dev
 ```
 
 โหมด Production:
 
 ```bash
 npm run build
-PORT=20128 HOSTNAME=0.0.0.0 NEXT_PUBLIC_BASE_URL=http://localhost:20128 npm run start
+PORT=20128 HOSTNAME=0.0.0.0 NEXT_PUBLIC_BASE_URL=http://localhost:20126 npm run start
 ```
 
 URL ค่าเริ่มต้น:
-- แดชบอร์ด: `http://localhost:20128/dashboard`
-- OpenAI-compatible API: `http://localhost:20128/v1`
+- แดชบอร์ด: `http://localhost:20126/dashboard`
+- OpenAI-compatible API: `http://localhost:20126/v1`
 
 ---
 
@@ -645,7 +645,7 @@ Combo: "openclaw-free"
 - ใช้ชั้นฟรี (Kiro, OpenCode Free, Vertex) สำหรับงานที่ไม่สำคัญ
 
 **แดชบอร์ดเปิดผิดพอร์ต**
-- ตั้ง `PORT=20128` และ `NEXT_PUBLIC_BASE_URL=http://localhost:20128`
+- ตั้ง `PORT=20128` และ `NEXT_PUBLIC_BASE_URL=http://localhost:20126`
 
 **ล็อกอินครั้งแรกไม่ทำงาน**
 - ตรวจสอบ `INITIAL_PASSWORD` ใน `.env`
@@ -672,7 +672,7 @@ Combo: "openclaw-free"
 ### Chat Completions
 
 ```bash
-POST http://localhost:20128/v1/chat/completions
+POST http://localhost:20126/v1/chat/completions
 Authorization: Bearer your-api-key
 Content-Type: application/json
 
@@ -688,7 +688,7 @@ Content-Type: application/json
 ### List Models
 
 ```bash
-GET http://localhost:20128/v1/models
+GET http://localhost:20126/v1/models
 Authorization: Bearer your-api-key
 
 → คืนค่าโมเดลทั้งหมด + combo ในรูปแบบ OpenAI

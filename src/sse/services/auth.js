@@ -285,7 +285,7 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
     }
     // Resolve proxy configuration: connection-level first, then fallback to provider-level proxy pool & rotation
     let proxyPayload = connection.providerSpecificData || {};
-    if (!proxyPayload.connectionProxyUrl && !proxyPayload.connectionProxyPoolId) {
+    if (!proxyPayload.connectionProxyUrl && !proxyPayload.proxyPoolId && !proxyPayload.connectionProxyPoolId) {
       const pStrategy = providerOverride.rotateStrategy || "none";
       let pPoolId = providerOverride.proxyPoolId || null;
       if (pStrategy !== "none") {

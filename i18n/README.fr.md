@@ -1,14 +1,14 @@
 <div align="center">
   <img src="../images/9router.png?1" alt="Tableau de bord 9Router" width="800"/>
   
-  # 9Router - Routeur IA GRATUIT et économiseur de tokens
+  # T Router - Routeur IA GRATUIT et économiseur de tokens
   
   **N'arrêtez jamais de coder. Économisez 20 à 40 % de tokens avec RTK + bascule automatique vers des modèles d'IA GRATUITS et bon marché.**
   
   **Connectez tous vos outils de codage IA (Claude Code, Cursor, Antigravity, Copilot, Codex, Gemini, OpenCode, Cline, OpenClaw...) à plus de 40 fournisseurs d'IA et plus de 100 modèles.**
   
-  [![npm](https://img.shields.io/npm/v/9router.svg)](https://www.npmjs.com/package/9router)
-  [![Downloads](https://img.shields.io/npm/dm/9router.svg)](https://www.npmjs.com/package/9router)
+  [![npm](https://img.shields.io/npm/v/t-router-proxy.svg)](https://www.npmjs.com/package/t-router-proxy)
+  [![Downloads](https://img.shields.io/npm/dm/t-router-proxy.svg)](https://www.npmjs.com/package/t-router-proxy)
   [![Docker Pulls](https://img.shields.io/docker/pulls/decolua/9router.svg?logo=docker&label=Docker%20pulls)](https://hub.docker.com/r/decolua/9router)
   [![GHCR](https://img.shields.io/badge/GHCR-decolua%2F9router-blue?logo=github)](https://github.com/decolua/9router/pkgs/container/9router)
   [![License](https://img.shields.io/npm/l/9router.svg)](https://github.com/decolua/9router/blob/main/LICENSE)
@@ -50,7 +50,7 @@
 │  Your CLI   │  (Claude Code, Codex, OpenClaw, Cursor, Cline...)
 │   Tool      │
 └──────┬──────┘
-       │ http://localhost:20128/v1
+       │ http://localhost:20126/v1
        ↓
 ┌─────────────────────────────────────────────┐
 │           9Router (Smart Router)            │
@@ -80,7 +80,7 @@ npm install -g 9router
 9router
 ```
 
-🎉 Le tableau de bord s'ouvre sur `http://localhost:20128`
+🎉 Le tableau de bord s'ouvre sur `http://localhost:20126`
 
 **2. Connectez un fournisseur GRATUIT (aucune inscription requise) :**
 
@@ -90,7 +90,7 @@ Tableau de bord → Providers → Connectez **Kiro AI** (Claude gratuit et illim
 
 ```
 Paramètres de Claude Code/Codex/OpenClaw/Cursor/Cline :
-  Endpoint : http://localhost:20128/v1
+  Endpoint : http://localhost:20126/v1
   API Key : [copiez depuis le tableau de bord]
   Model : kr/claude-sonnet-4.5
 ```
@@ -104,20 +104,20 @@ Le paquet de ce dépôt est privé (`9router-app`), donc l'exécution depuis le 
 ```bash
 cp .env.example .env
 npm install
-PORT=20128 NEXT_PUBLIC_BASE_URL=http://localhost:20128 npm run dev
+PORT=20128 NEXT_PUBLIC_BASE_URL=http://localhost:20126 npm run dev
 ```
 
 Mode production :
 
 ```bash
 npm run build
-PORT=20128 HOSTNAME=0.0.0.0 NEXT_PUBLIC_BASE_URL=http://localhost:20128 npm run start
+PORT=20128 HOSTNAME=0.0.0.0 NEXT_PUBLIC_BASE_URL=http://localhost:20126 npm run start
 ```
 
 URL par défaut :
 
-- Tableau de bord : `http://localhost:20128/dashboard`
-- API compatible OpenAI : `http://localhost:20128/v1`
+- Tableau de bord : `http://localhost:20126/dashboard`
+- API compatible OpenAI : `http://localhost:20126/v1`
 
 ---
 
@@ -1043,7 +1043,7 @@ Coût : 0 $ pour toujours (+ 20 à 40 % d'économie de tokens via RTK) !
 
 ```
 Settings → Models → Advanced :
-  OpenAI API Base URL : http://localhost:20128/v1
+  OpenAI API Base URL : http://localhost:20126/v1
   OpenAI API Key : [depuis le tableau de bord 9router]
   Model : cc/claude-opus-4-7
 ```
@@ -1056,7 +1056,7 @@ Modifiez `~/.claude/config.json` :
 
 ```json
 {
-  "anthropic_api_base": "http://localhost:20128/v1",
+  "anthropic_api_base": "http://localhost:20126/v1",
   "anthropic_api_key": "votre-clé-api-9router"
 }
 ```
@@ -1064,7 +1064,7 @@ Modifiez `~/.claude/config.json` :
 ### Codex CLI
 
 ```bash
-export OPENAI_BASE_URL="http://localhost:20128"
+export OPENAI_BASE_URL="http://localhost:20126"
 export OPENAI_API_KEY="votre-clé-api-9router"
 
 codex "votre prompt"
@@ -1113,7 +1113,7 @@ Tableau de bord → CLI Tools → OpenClaw → Sélectionnez le modèle → Appl
 
 ```
 Provider : OpenAI Compatible
-Base URL : http://localhost:20128/v1
+Base URL : http://localhost:20126/v1
 API Key : [depuis le tableau de bord]
 Model : cc/claude-opus-4-7
 ```
@@ -1139,7 +1139,7 @@ export DATA_DIR="/var/lib/9router"
 export PORT="20128"
 export HOSTNAME="0.0.0.0"
 export NODE_ENV="production"
-export NEXT_PUBLIC_BASE_URL="http://localhost:20128"
+export NEXT_PUBLIC_BASE_URL="http://localhost:20126"
 export NEXT_PUBLIC_CLOUD_URL="https://9router.com"
 export API_KEY_SECRET="endpoint-proxy-api-key-secret"
 export MACHINE_ID_SALT="endpoint-proxy-salt"
@@ -1172,7 +1172,7 @@ docker run -d \
   decolua/9router:latest
 ```
 
-→ Ouvrez http://localhost:20128
+→ Ouvrez http://localhost:20126
 
 **Compiler depuis le code source (dev) :**
 
@@ -1210,7 +1210,7 @@ docker pull decolua/9router:latest   # mise à jour vers la dernière version
 | `PORT`                                               | défaut du framework                         | Port du service (`20128` dans les exemples)                                                   |
 | `HOSTNAME`                                           | défaut du framework                         | Hôte de liaison (Docker utilise `0.0.0.0` par défaut)                                         |
 | `NODE_ENV`                                           | défaut du runtime                           | Définissez `production` pour le déploiement                                                   |
-| `BASE_URL`                                           | `http://localhost:20128`                    | URL de base interne côté serveur utilisée par les tâches de synchronisation cloud             |
+| `BASE_URL`                                           | `http://localhost:20126`                    | URL de base interne côté serveur utilisée par les tâches de synchronisation cloud             |
 | `CLOUD_URL`                                          | `https://9router.com`                       | URL de base de l'endpoint de synchronisation cloud côté serveur                               |
 | `NEXT_PUBLIC_BASE_URL`                               | `http://localhost:3000`                     | URL de base publique/rétrocompatible (préférez `BASE_URL` pour le runtime serveur)            |
 | `NEXT_PUBLIC_CLOUD_URL`                              | `https://9router.com`                       | URL cloud publique/rétrocompatible (préférez `CLOUD_URL` pour le runtime serveur)             |
@@ -1343,7 +1343,7 @@ Remarques :
 
 **Le tableau de bord s'ouvre sur le mauvais port**
 
-- Définissez `PORT=20128` et `NEXT_PUBLIC_BASE_URL=http://localhost:20128`
+- Définissez `PORT=20128` et `NEXT_PUBLIC_BASE_URL=http://localhost:20126`
 
 **La première connexion ne fonctionne pas**
 
@@ -1372,7 +1372,7 @@ Remarques :
 ### Chat Completions
 
 ```bash
-POST http://localhost:20128/v1/chat/completions
+POST http://localhost:20126/v1/chat/completions
 Authorization: Bearer votre-clé-api
 Content-Type: application/json
 
@@ -1388,7 +1388,7 @@ Content-Type: application/json
 ### Lister les modèles
 
 ```bash
-GET http://localhost:20128/v1/models
+GET http://localhost:20126/v1/models
 Authorization: Bearer votre-clé-api
 
 → Renvoie tous les modèles et combos au format OpenAI

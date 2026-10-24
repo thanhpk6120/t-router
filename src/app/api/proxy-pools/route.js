@@ -9,10 +9,35 @@ function toBoolean(value) {
 
 const VALID_PROXY_TYPES = ["http", "vercel", "cloudflare", "deno", "netlify"];
 
+export function parseProxyShorthand(raw) {
+  let str = (raw || "").trim();
+  if (!str || str.toLowerCase() === "direct") return str;
+  if (str.includes("://")) return str;
+
+  let protocol = "http";
+  if (str.toLowerCase().startsWith("socks5:") || str.toLowerCase().startsWith("socks5h:")) {
+    const parts = str.split(":");
+    protocol = parts[0].toLowerCase();
+    str = parts.slice(1).join(":");
+  }
+
+  const parts = str.split(":");
+  if (parts.length === 2) {
+    return `${protocol}://${parts[0]}:${parts[1]}`;
+  }
+  if (parts.length === 4) {
+    const [host, port, user, pass] = parts;
+    return `${protocol}://${encodeURIComponent(user)}:${encodeURIComponent(pass)}@${host}:${port}`;
+  }
+  return str;
+}
+
 function normalizeProxyPoolInput(body = {}) {
   const name = typeof body?.name === "string" ? body.name.trim() : "";
-  const proxyUrl = typeof body?.proxyUrl === "string" ? body.proxyUrl.trim() : "";
+  let proxyUrl = typeof body?.proxyUrl === "string" ? body.proxyUrl.trim() : "";
+  proxyUrl = parseProxyShorthand(proxyUrl);
   const noProxy = typeof body?.noProxy === "string" ? body.noProxy.trim() : "";
+  const rotateLink = typeof body?.rotateLink === "string" ? body.rotateLink.trim() : "";
   const isActive = body?.isActive === undefined ? true : body.isActive === true;
   const strictProxy = body?.strictProxy === true;
   const type = VALID_PROXY_TYPES.includes(body?.type) ? body.type : "http";
@@ -25,7 +50,7 @@ function normalizeProxyPoolInput(body = {}) {
     return { error: "Proxy URL is required" };
   }
 
-  return { name, proxyUrl, noProxy, isActive, strictProxy, type };
+  return { name, proxyUrl, noProxy, rotateLink, isActive, strictProxy, type };
 }
 
 function buildUsageMap(connections = []) {

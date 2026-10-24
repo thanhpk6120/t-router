@@ -1,14 +1,14 @@
 <div align="center">
   <img src="./images/9router.png?1" alt="داشبورد 9Router" width="800"/>
   
-  # 9Router - مسیریاب رایگان هوش مصنوعی و ذخیره‌ساز توکن
+  # T Router - مسیریاب رایگان هوش مصنوعی و ذخیره‌ساز توکن
   
   **هرگز کدنویسی را متوقف نکنید. با RTK بین ۲۰ تا ۴۰٪ در توکن‌ها صرفه‌جویی کنید + بازگشت خودکار به مدل‌های رایگان و ارزان هوش مصنوعی.**
   
   **همه ابزارهای کدنویسی مبتنی بر هوش مصنوعی (Claude Code، Cursor، Antigravity، Copilot، Codex، Gemini، OpenCode، Cline، OpenClaw...) را به بیش از ۴۰ ارائه‌دهنده و ۱۰۰+ مدل متصل کنید.**
   
-  [![npm](https://img.shields.io/npm/v/9router.svg)](https://www.npmjs.com/package/9router)
-  [![Downloads](https://img.shields.io/npm/dm/9router.svg)](https://www.npmjs.com/package/9router)
+  [![npm](https://img.shields.io/npm/v/t-router-proxy.svg)](https://www.npmjs.com/package/t-router-proxy)
+  [![Downloads](https://img.shields.io/npm/dm/t-router-proxy.svg)](https://www.npmjs.com/package/t-router-proxy)
   [![Docker Pulls](https://img.shields.io/docker/pulls/decolua/9router.svg?logo=docker&label=Docker%20pulls)](https://hub.docker.com/r/decolua/9router)
   [![GHCR](https://img.shields.io/badge/GHCR-decolua%2F9router-blue?logo=github)](https://github.com/decolua/9router/pkgs/container/9router)
   [![License](https://img.shields.io/npm/l/9router.svg)](https://github.com/decolua/9router/blob/main/LICENSE)
@@ -50,7 +50,7 @@
 │  ابزار خط   │  (Claude Code, Codex, OpenClaw, Cursor, Cline...)
 │  فرمان شما  │
 └──────┬──────┘
-       │ http://localhost:20128/v1
+       │ http://localhost:20126/v1
        ↓
 ┌─────────────────────────────────────────────┐
 │           9Router (مسیریاب هوشمند)          │
@@ -80,7 +80,7 @@ npm install -g 9router
 9router
 ```
 
-🎉 داشبورد در آدرس `http://localhost:20128` باز می‌شود
+🎉 داشبورد در آدرس `http://localhost:20126` باز می‌شود
 
 **۲. اتصال یک ارائه‌دهنده رایگان (بدون نیاز به ثبت‌نام):**
 
@@ -90,7 +90,7 @@ npm install -g 9router
 
 ```
 تنظیمات Claude Code/Codex/OpenClaw/Cursor/Cline:
-  آدرس端点: http://localhost:20128/v1
+  آدرس端点: http://localhost:20126/v1
   کلید API: [کپی از داشبورد]
   مدل: kr/claude-sonnet-4.5
 ```
@@ -104,20 +104,20 @@ npm install -g 9router
 ```bash
 cp .env.example .env
 npm install
-PORT=20128 NEXT_PUBLIC_BASE_URL=http://localhost:20128 npm run dev
+PORT=20128 NEXT_PUBLIC_BASE_URL=http://localhost:20126 npm run dev
 ```
 
 حالت تولید:
 
 ```bash
 npm run build
-PORT=20128 HOSTNAME=0.0.0.0 NEXT_PUBLIC_BASE_URL=http://localhost:20128 npm run start
+PORT=20128 HOSTNAME=0.0.0.0 NEXT_PUBLIC_BASE_URL=http://localhost:20126 npm run start
 ```
 
 آدرس‌های پیش‌فرض:
 
-- داشبورد: `http://localhost:20128/dashboard`
-- API سازگار با OpenAI: `http://localhost:20128/v1`
+- داشبورد: `http://localhost:20126/dashboard`
+- API سازگار با OpenAI: `http://localhost:20126/v1`
 
 ---
 
@@ -1041,7 +1041,7 @@ Vertex Partner (Anthropic / DeepSeek / GLM / Qwen از طریق Vertex):
 
 ```
 تنظیمات → مدل‌ها → پیشرفته:
-  آدرس پایه API OpenAI: http://localhost:20128/v1
+  آدرس پایه API OpenAI: http://localhost:20126/v1
   کلید API OpenAI: [از داشبورد 9router]
   مدل: cc/claude-opus-4-7
 ```
@@ -1054,7 +1054,7 @@ Vertex Partner (Anthropic / DeepSeek / GLM / Qwen از طریق Vertex):
 
 ```json
 {
-  "anthropic_api_base": "http://localhost:20128/v1",
+  "anthropic_api_base": "http://localhost:20126/v1",
   "anthropic_api_key": "your-9router-api-key"
 }
 ```
@@ -1062,7 +1062,7 @@ Vertex Partner (Anthropic / DeepSeek / GLM / Qwen از طریق Vertex):
 ### Codex CLI
 
 ```bash
-export OPENAI_BASE_URL="http://localhost:20128"
+export OPENAI_BASE_URL="http://localhost:20126"
 export OPENAI_API_KEY="your-9router-api-key"
 
 codex "your prompt"
@@ -1111,7 +1111,7 @@ codex "your prompt"
 
 ```
 ارائه‌دهنده: سازگار با OpenAI
-آدرس پایه: http://localhost:20128/v1
+آدرس پایه: http://localhost:20126/v1
 کلید API: [از داشبورد]
 مدل: cc/claude-opus-4-7
 ```
@@ -1137,7 +1137,7 @@ export DATA_DIR="/var/lib/9router"
 export PORT="20128"
 export HOSTNAME="0.0.0.0"
 export NODE_ENV="production"
-export NEXT_PUBLIC_BASE_URL="http://localhost:20128"
+export NEXT_PUBLIC_BASE_URL="http://localhost:20126"
 export NEXT_PUBLIC_CLOUD_URL="https://9router.com"
 export API_KEY_SECRET="endpoint-proxy-api-key-secret"
 export MACHINE_ID_SALT="endpoint-proxy-salt"
@@ -1170,7 +1170,7 @@ docker run -d \
   decolua/9router:latest
 ```
 
-→ باز کردن http://localhost:20128
+→ باز کردن http://localhost:20126
 
 **ساخت از سورس (توسعه):**
 
@@ -1208,7 +1208,7 @@ docker pull decolua/9router:latest   # به‌روزرسانی به آخرین �
 | `PORT`                                               | پیش‌فرض فریم‌ورک                        | پورت سرویس (`۲۰۱۲۸` در مثال‌ها)                                                  |
 | `HOSTNAME`                                           | پیش‌فرض فریم‌ورک                        | هاست بایند (داکر پیش‌فرض `۰.۰.۰.۰` است)                                            |
 | `NODE_ENV`                                           | پیش‌فرض زمان اجرا                          | برای استقرار `production` را تنظیم کنید                                                         |
-| `BASE_URL`                                           | `http://localhost:20128`                 | آدرس پایه داخلی سمت سرور که توسط کارهای همگام‌سازی ابری استفاده می‌شود                               |
+| `BASE_URL`                                           | `http://localhost:20126`                 | آدرس پایه داخلی سمت سرور که توسط کارهای همگام‌سازی ابری استفاده می‌شود                               |
 | `CLOUD_URL`                                          | `https://9router.com`                    | آدرس پایه نقطه پایانی همگام‌سازی ابری سمت سرور                                            |
 | `NEXT_PUBLIC_BASE_URL`                               | `http://localhost:3000`                  | آدرس پایه عمومی/سازگار با گذشته (برای زمان اجرای سرور `BASE_URL` را ترجیح دهید)          |
 | `NEXT_PUBLIC_CLOUD_URL`                              | `https://9router.com`                    | آدرس ابری عمومی/سازگار با گذشته (برای زمان اجرای سرور `CLOUD_URL` را ترجیح دهید)        |
@@ -1341,7 +1341,7 @@ docker pull decolua/9router:latest   # به‌روزرسانی به آخرین �
 
 **داشبورد در پورت اشتباه باز می‌شود**
 
-- `PORT=20128` و `NEXT_PUBLIC_BASE_URL=http://localhost:20128` را تنظیم کنید
+- `PORT=20128` و `NEXT_PUBLIC_BASE_URL=http://localhost:20126` را تنظیم کنید
 
 **اولین ورود کار نمی‌کند**
 
@@ -1370,7 +1370,7 @@ docker pull decolua/9router:latest   # به‌روزرسانی به آخرین �
 ### تکمیل‌های چت
 
 ```bash
-POST http://localhost:20128/v1/chat/completions
+POST http://localhost:20126/v1/chat/completions
 Authorization: Bearer your-api-key
 Content-Type: application/json
 
@@ -1386,7 +1386,7 @@ Content-Type: application/json
 ### لیست مدل‌ها
 
 ```bash
-GET http://localhost:20128/v1/models
+GET http://localhost:20126/v1/models
 Authorization: Bearer your-api-key
 
 → همه مدل‌ها + ترکیب‌ها را در قالب OpenAI برمی‌گرداند

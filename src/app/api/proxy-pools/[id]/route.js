@@ -5,6 +5,7 @@ import {
   getProxyPoolById,
   updateProxyPool,
 } from "@/models";
+import { parseProxyShorthand } from "../route.js";
 
 function normalizeProxyPoolUpdate(body = {}) {
   const updates = {};
@@ -18,7 +19,8 @@ function normalizeProxyPoolUpdate(body = {}) {
   }
 
   if (Object.prototype.hasOwnProperty.call(body, "proxyUrl")) {
-    const proxyUrl = typeof body?.proxyUrl === "string" ? body.proxyUrl.trim() : "";
+    let proxyUrl = typeof body?.proxyUrl === "string" ? body.proxyUrl.trim() : "";
+    proxyUrl = parseProxyShorthand(proxyUrl);
     if (!proxyUrl) {
       return { error: "Proxy URL is required" };
     }
@@ -27,6 +29,10 @@ function normalizeProxyPoolUpdate(body = {}) {
 
   if (Object.prototype.hasOwnProperty.call(body, "noProxy")) {
     updates.noProxy = typeof body?.noProxy === "string" ? body.noProxy.trim() : "";
+  }
+
+  if (Object.prototype.hasOwnProperty.call(body, "rotateLink")) {
+    updates.rotateLink = typeof body?.rotateLink === "string" ? body.rotateLink.trim() : "";
   }
 
   if (Object.prototype.hasOwnProperty.call(body, "isActive")) {
