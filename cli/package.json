@@ -1,5 +1,5 @@
 {
-  "name": "t-router",
+  "name": "@thanhpk6120/t-router",
   "version": "0.5.109-pro.9-t.1",
   "description": "T Router CLI - Start and manage the T Router server",
   "bin": {
