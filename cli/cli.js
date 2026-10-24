@@ -67,7 +67,7 @@ const { ensureSqliteRuntime, buildEnvWithRuntime } = require("./hooks/sqliteRunt
 const { ensureTrayRuntime } = require("./hooks/trayRuntime");
 const args = process.argv.slice(2);
 
-// Subcommands (`9router xai video …`) run against an already-running gateway
+// Subcommands (`t-router xai video …`) run against an already-running gateway
 // and bypass the launcher flow (no runtime self-heal, no server spawn).
 if (args[0] === "xai" && args[1] === "video") {
   const { run } = require("./src/cli/commands/xaiVideo");
@@ -80,9 +80,9 @@ if (args[0] === "xai" && args[1] === "video") {
   return;
 }
 
-// `9router connect <url>` configures local CLI tools against a remote server, and
-// `9router show` prints what they're currently set to — no local server, no
-// runtime deps. Usable via `npx 9router …`.
+// `t-router connect <url>` configures local CLI tools against a remote server, and
+// `t-router show` prints what they're currently set to — no local server, no
+// runtime deps. Usable via `npx t-router …`.
 if (args[0] === "connect" || args[0] === "show") {
   const { run } = require(args[0] === "show" ? "./src/cli/commands/show" : "./src/cli/commands/connect");
   run(args.slice(1))
@@ -94,7 +94,7 @@ if (args[0] === "connect" || args[0] === "show") {
   return;
 }
 
-// Self-heal SQLite runtime deps (sql.js + better-sqlite3) into ~/.9router/runtime
+// Self-heal SQLite runtime deps (sql.js + better-sqlite3) into ~/.trouter/runtime
 // so the server can resolve them via NODE_PATH. Best-effort — sql.js is required,
 // better-sqlite3 is optional. Logs to stderr only on failure.
 try { ensureSqliteRuntime({ silent: true }); } catch {}
@@ -126,7 +126,7 @@ function getDisplayHost() {
 const MAX_PORT_ATTEMPTS = 10;
 // Identifiers for killAllAppProcesses - only kill 9router specifically
 const PROCESS_IDENTIFIERS = [
-  '9router'  // Only package name - avoid killing other apps
+  't-router'  // Only package name - avoid killing other apps
 ];
 
 // Parse arguments
@@ -168,10 +168,10 @@ Options:
   -v, --version       Show version
 
 Commands:
-  connect <server-url> Configure Claude Code for a remote 9router server
-                      (npx 9router connect http://host:20126 — no install needed)
-  show [tool…]        Show each CLI tool's current 9router config and models
-                      (e.g. 9router show claude)
+  connect <server-url> Configure Claude Code for a remote t-router server
+                      (npx t-router connect http://host:20126 — no install needed)
+  show [tool…]        Show each CLI tool's current t-router config and models
+                      (e.g. t-router show claude)
   xai video --prompt "..." --output video.mp4
                       Generate a Grok Imagine video via the running gateway
                       (see: ${APP_NAME} xai video --help)
@@ -206,8 +206,8 @@ function compareVersions(a, b) {
 // Get app data dir (matches app/src/lib/dataDir.js convention)
 function getAppDataDir() {
   return process.platform === "win32"
-    ? path.join(process.env.APPDATA || "", "9router")
-    : path.join(os.homedir(), ".9router");
+    ? path.join(process.env.APPDATA || "", "trouter")
+    : path.join(os.homedir(), ".trouter");
 }
 
 // Kill PID from file (best-effort, removes file after)
@@ -792,7 +792,7 @@ function startServer(updatePromise) {
             process.on("SIGHUP", () => {});
 
             console.log(`\n⏳ Switching to tray mode... (icon already visible in menu bar)`);
-            console.log(`🔔 9Router is running in tray (PID: ${process.pid})`);
+            console.log(`🔔 T Router is running in tray (PID: ${process.pid})`);
             console.log(`   Server: http://${displayHost}:${port}`);
             console.log(`\n💡 You can close this terminal. Right-click tray icon to quit.\n`);
 
@@ -811,7 +811,7 @@ function startServer(updatePromise) {
           });
           bgProcess.unref();
 
-          console.log(`🔔 9Router is now running in background (PID: ${bgProcess.pid})`);
+          console.log(`🔔 T Router is now running in background (PID: ${bgProcess.pid})`);
           console.log(`   Server: http://${displayHost}:${port}`);
           console.log(`\n💡 You can close this terminal. Right-click tray icon to quit.\n`);
 
@@ -856,7 +856,7 @@ function startServer(updatePromise) {
     if (restartCount >= MAX_RESTARTS) {
       console.error(`\n⚠️  Server crashed ${MAX_RESTARTS} times. Disabling MIT and restarting...`);
       try {
-        const dbPath = path.join(os.homedir(), process.platform === "win32" ? path.join("AppData", "Roaming", "9router", "db.json") : path.join(".9router", "db.json"));
+        const dbPath = path.join(os.homedir(), process.platform === "win32" ? path.join("AppData", "Roaming", "trouter", "db.json") : path.join(".trouter", "db.json"));
         if (fs.existsSync(dbPath)) {
           const db = JSON.parse(fs.readFileSync(dbPath, "utf-8"));
           if (db.settings) db.settings.mitmEnabled = false;

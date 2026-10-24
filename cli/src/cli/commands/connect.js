@@ -1,8 +1,8 @@
 /**
- * `9router connect <server-url>` — point local CLI tools (Claude Code, Codex, …) at a
- * REMOTE 9router server. Nothing runs locally: we log in with the dashboard
+ * `t-router connect <server-url>` — point local CLI tools (Claude Code, Codex, …) at a
+ * REMOTE t-router server. Nothing runs locally: we log in with the dashboard
  * password, reuse/create an API key for this machine, then write the tool's
- * settings files (see connectTools.js). Works via `npx 9router connect …` with no global install.
+ * settings files (see connectTools.js). Works via `npx t-router connect …` with no global install.
  *
  * The password and API key are never printed (key is masked).
  */
@@ -13,13 +13,13 @@ const path = require("path");
 const { TOOL_IDS, CLAUDE_MODELS, resolveTools } = require("./connectTools");
 
 const HELP = `
-Usage: 9router connect <server-url> [options]
+Usage: t-router connect <server-url> [options]
 
-Configure CLI tools on THIS machine to use a remote 9router server.
+Configure CLI tools on THIS machine to use a remote t-router server.
 No local server is started. Run without installing:
 
-  npx 9router connect http://<server-host>:20126
-  npx 9router connect http://<server-host>:20126 --tools claude,codex,opencode
+  npx t-router connect http://<server-host>:20126
+  npx t-router connect http://<server-host>:20126 --tools claude,codex,opencode
 
 Options:
   --tools <list>         Comma-separated tools to configure (prompted if omitted
@@ -28,7 +28,7 @@ Options:
   --password <pw>        Dashboard password (or env NINE_ROUTER_PASSWORD;
                          prompted if omitted — preferred, keeps it out of shell history)
   --save                 After a successful login, save the password for this server
-                         to ~/.9router/connect.env (plain text, mode 600) so later
+                         to ~/.trouter/connect.env (plain text, mode 600) so later
                          runs skip the prompt. Delete that file to forget it.
   --key-name <name>      API key name to reuse/create (default: cli-<hostname>)
   --api-key <key>        Use this API key, skip login + key lookup
@@ -45,8 +45,8 @@ Models come from the server's own CLI-tools config (set on its dashboard).
 Nothing is hardcoded: a Claude tier the server leaves unset is left unset,
 and a non-Claude tool with no model anywhere is skipped. Flags override:
 
-  npx 9router connect http://<server-host>:20126 --tools claude --sonnet cc/claude-sonnet-5-5
-  npx 9router connect http://<server-host>:20126 --tools codex,opencode --model ocg/deepseek-flash
+  npx t-router connect http://<server-host>:20126 --tools claude --sonnet cc/claude-sonnet-5-5
+  npx t-router connect http://<server-host>:20126 --tools codex,opencode --model ocg/deepseek-flash
 `;
 
 function parseArgs(argv) {
@@ -97,8 +97,8 @@ function maskKey(key) {
 function savedEnvPath() {
   if (process.env.DATA_DIR) return path.join(process.env.DATA_DIR, "connect.env");
   const base = process.platform === "win32"
-    ? path.join(process.env.APPDATA || path.join(os.homedir(), "AppData", "Roaming"), "9router")
-    : path.join(os.homedir(), ".9router");
+    ? path.join(process.env.APPDATA || path.join(os.homedir(), "AppData", "Roaming"), "trouter")
+    : path.join(os.homedir(), ".trouter");
   return path.join(base, "connect.env");
 }
 
@@ -395,7 +395,7 @@ async function runConnect(argv) {
   }
   for (const [id, m] of Object.entries(toolModels)) if (m) console.log(`   ${id} model: ${m}`);
   if (tools.some((t) => t.id === "omp")) console.log("   omp models: every server model, listed under 9router in /model");
-  console.log(`   Restart the tools to apply. Undo: npx 9router connect --reset --tools ${tools.map((t) => t.id).join(",")}`);
+  console.log(`   Restart the tools to apply. Undo: npx t-router connect --reset --tools ${tools.map((t) => t.id).join(",")}`);
 
   if (opts.printEnv) {
     console.log("\nOpenAI-compatible CLIs (codex, opencode, aider, …):");

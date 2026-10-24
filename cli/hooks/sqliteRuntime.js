@@ -16,10 +16,16 @@ const BETTER_SQLITE3_VERSION = USE_NAPI_BUILD ? "13.0.3" : "12.6.2";
 const SQL_JS_VERSION = "1.14.1";
 
 function getDataDir() {
-  if (process.env.DATA_DIR) return process.env.DATA_DIR;
+  if (process.env.DATA_DIR) {
+    let p = process.env.DATA_DIR;
+    if (p.startsWith("~/") || p.startsWith("~\\") || p === "~") {
+      p = path.join(os.homedir(), p.slice(1));
+    }
+    return p;
+  }
   return process.platform === "win32"
-    ? path.join(process.env.APPDATA || os.homedir(), "9router")
-    : path.join(os.homedir(), ".9router");
+    ? path.join(process.env.APPDATA || os.homedir(), "trouter")
+    : path.join(os.homedir(), ".trouter");
 }
 
 function getRuntimeDir() {
@@ -38,10 +44,10 @@ function ensureRuntimeDir() {
   const pkgPath = path.join(dir, "package.json");
   if (!fs.existsSync(pkgPath)) {
     fs.writeFileSync(pkgPath, JSON.stringify({
-      name: "9router-runtime",
+      name: "t-router-runtime",
       version: "1.0.0",
       private: true,
-      description: "User-writable runtime deps for 9router (better-sqlite3 native binary)",
+      description: "User-writable runtime deps for t-router (better-sqlite3 native binary)",
     }, null, 2));
   }
   return dir;

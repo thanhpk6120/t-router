@@ -3,8 +3,8 @@ const path = require("path");
 const os = require("os");
 const { execSync } = require("child_process");
 
-const APP_NAME = "9router";
-const APP_LABEL = "com.9router.autostart";
+const APP_NAME = "t-router";
+const APP_LABEL = "com.t-router.autostart";
 
 /**
  * Resolve the absolute path to this package's cli.js.
@@ -12,7 +12,7 @@ const APP_LABEL = "com.9router.autostart";
  * Order of preference:
  *   1. Explicit `cliPath` argument — cleanest, used when called from running
  *      cli.js with `__filename`.
- *   2. `process.argv[1]` if it's our cli.js — true when 9router is currently
+ *   2. `process.argv[1]` if it's our cli.js — true when t-router is currently
  *      running and the tray menu fires this code path.
  *   3. Compute relative to this file's own location. autostart.js lives at
  *      `<pkg>/src/cli/tray/autostart.js`, so cli.js is three levels up.
@@ -182,9 +182,9 @@ function enableMacOS(cliPath) {
     <key>KeepAlive</key>
     <false/>
     <key>StandardOutPath</key>
-    <string>/tmp/9router.log</string>
+    <string>/tmp/t-router.log</string>
     <key>StandardErrorPath</key>
-    <string>/tmp/9router.error.log</string>
+    <string>/tmp/t-router.error.log</string>
 </dict>
 </plist>`;
 
@@ -247,7 +247,7 @@ function enableWindows(cliPath) {
   if (!routerScript) return false;
 
   // Run node + cli.js directly, hidden window. Avoids the fragile
-  // `9router.cmd` lookup that depended on the npm prefix path.
+  // `t-router.cmd` lookup that depended on the npm prefix path.
   const vbsContent = `Set WshShell = CreateObject("WScript.Shell")
 WshShell.Run """${nodePath}"" ""${routerScript}"" --tray --skip-update", 0, False
 `;
@@ -280,8 +280,8 @@ function enableLinux(cliPath) {
 
   const desktopContent = `[Desktop Entry]
 Type=Application
-Name=9Router
-Comment=9Router API Proxy
+Name=T Router
+Comment=T Router API Proxy
 Exec=${nodePath} ${routerScript} --tray --skip-update
 Hidden=false
 NoDisplay=false

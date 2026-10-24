@@ -11,7 +11,7 @@ Run 9Router in a container. Published image: [`decolua/9router`](https://hub.doc
 ```bash
 docker run -d \
   -p 20126:20126 \
-  -v "$HOME/.9router:/app/data" \
+  -v "$HOME/.trouter:/app/data" \
   -e DATA_DIR=/app/data \
   --name 9router \
   decolua/9router:latest
@@ -31,11 +31,11 @@ docker rm -f 9router          # remove
 ## Data persistence
 
 ```bash
--v "$HOME/.9router:/app/data" \
+-v "$HOME/.trouter:/app/data" \
 -e DATA_DIR=/app/data
 ```
 
-Without `DATA_DIR`, the app falls back to `~/.9router/` (macOS/Linux) or `%APPDATA%\9router\` (Windows). In the container, `DATA_DIR=/app/data` makes the bind mount work.
+Without `DATA_DIR`, the app falls back to `~/.trouter/` (macOS/Linux) or `%APPDATA%\trouter\` (Windows). In the container, `DATA_DIR=/app/data` makes the bind mount work.
 
 Data layout under `$DATA_DIR/`:
 
@@ -47,7 +47,7 @@ $DATA_DIR/
 └── ...                   # certs, logs, runtime configs
 ```
 
-Host path: `$HOME/.9router/db/data.sqlite`
+Host path: `$HOME/.trouter/db/data.sqlite`
 Container path: `/app/data/db/data.sqlite`
 
 ## Optional env vars
@@ -55,7 +55,7 @@ Container path: `/app/data/db/data.sqlite`
 ```bash
 docker run -d \
   -p 20126:20126 \
-  -v "$HOME/.9router:/app/data" \
+  -v "$HOME/.trouter:/app/data" \
   -e DATA_DIR=/app/data \
   -e PORT=20126 \
   -e HOSTNAME=0.0.0.0 \
@@ -75,7 +75,7 @@ services:
     ports:
       - "20126:20126"
     volumes:
-      - "$HOME/.9router:/app/data"
+      - "$HOME/.trouter:/app/data"
     environment:
       DATA_DIR: /app/data
       HEADROOM_URL: http://headroom:8787
@@ -116,7 +116,7 @@ docker pull decolua/9router:0.5.81
 docker build -t 9router .
 
 docker run --rm -p 20126:20126 \
-  -v "$HOME/.9router:/app/data" \
+  -v "$HOME/.trouter:/app/data" \
   -e DATA_DIR=/app/data \
   9router
 ```

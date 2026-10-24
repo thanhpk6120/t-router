@@ -1,5 +1,5 @@
 /**
- * `9router show [tools…]` — print the 9router settings currently written in
+ * `t-router show [tools…]` — print the t-router settings currently written in
  * each CLI tool's LOCAL config: base URL, (masked) API key and models.
  *
  * Read-only and offline: never contacts a server and never prints a full key.
@@ -9,14 +9,14 @@ const { TOOLS, TOOL_IDS, resolveTools } = require("./connectTools");
 const { __test__: { maskKey } } = require("./connect");
 
 const HELP = `
-Usage: 9router show [tool…] [options]
+Usage: t-router show [tool…] [options]
 
-Show the 9router settings each CLI tool on THIS machine is currently using.
+Show the t-router settings each CLI tool on THIS machine is currently using.
 Read-only: reads local config files, contacts no server.
 
-  9router show                 # every supported tool
-  9router show claude          # one tool
-  9router show claude codex    # several (or: --tools claude,codex)
+  t-router show                 # every supported tool
+  t-router show claude          # one tool
+  t-router show claude codex    # several (or: --tools claude,codex)
 
 Tools: ${TOOL_IDS.join(", ")}, all
 
