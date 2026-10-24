@@ -46,7 +46,7 @@ const readModelsYml = async () => {
 
 const has9RouterInYml = (content) => {
   if (!content) return false;
-  return content.includes("9router:") || content.includes("localhost:20127");
+  return content.includes("9router:") || content.includes("localhost:20126");
 };
 
 // Build standard T routervider block for models.yml

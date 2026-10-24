@@ -29,7 +29,7 @@ about two minutes, and your client API keys keep working unchanged.
 ## Step 2 — Install T Router
 
 Follow the **Quick Start (Pro)** in the [README](./README.md) (from source or
-Docker). The original listens on port 20128 by default and Pro on **20127**,
+Docker). The original listens on port 20128 by default and Pro on **20126**,
 so both can run side by side on the same machine while you verify — they are
 separate apps with separate data. When you are ready to switch, point your
 clients at Pro and stop the original.

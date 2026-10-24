@@ -11,7 +11,7 @@ npm install -g t-router
 t-router
 ```
 
-The dashboard opens at `http://localhost:20127` (the original 9Router uses 20128, so both can run side by side).
+The dashboard opens at `http://localhost:20126` (the original 9Router uses 20128, so both can run side by side).
 
 ## What's Pro
 

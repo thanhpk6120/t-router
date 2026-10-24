@@ -32,7 +32,7 @@ const checkCodewhaleInstalled = async () => {
 
 const has9RouterConfig = (content) => {
   if (!content) return false;
-  return content.includes("managed by 9Router") || content.includes("localhost:20127");
+  return content.includes("managed by 9Router") || content.includes("localhost:20126");
 };
 
 const readConfig = async () => {

@@ -47,7 +47,7 @@ follows these releases.
 
 ## v0.5.104-pro.5.1
 
-- **Default port is now 20127**: Pro's default port moves from the inherited 20128 to **20127**, matching what `npm run start` already used. The Docker image and compose file, the CLI's default target, the dashboard's default self-addresses (CLI Tools cards, MITM, tunnels, SAML), the updater's app port, `.env.example`, and the README/CLAUDE/DOCKER docs all agree now. Existing installs are unaffected — an explicit `PORT` always wins; only new installs see the new default. The original 9Router stays on 20128, so the two can run side by side on one machine (see MIGRATION.md). Translated docs (gitbook, i18n READMEs) still show the old port in places and will catch up.
+- **Default port is now 20126**: Pro's default port moves from the inherited 20128 to **20126**, matching what `npm run start` already used. The Docker image and compose file, the CLI's default target, the dashboard's default self-addresses (CLI Tools cards, MITM, tunnels, SAML), the updater's app port, `.env.example`, and the README/CLAUDE/DOCKER docs all agree now. Existing installs are unaffected — an explicit `PORT` always wins; only new installs see the new default. The original 9Router stays on 20128, so the two can run side by side on one machine (see MIGRATION.md). Translated docs (gitbook, i18n READMEs) still show the old port in places and will catch up.
 - **README refreshed**: the screenshots are regenerated from the current build — the redesigned Prompt Injection page (Templates / Injections / Tester) and the current Providers page, captured on a clean demo install.
 
 ## v0.5.104-pro.5

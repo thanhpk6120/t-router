@@ -392,7 +392,7 @@ flowchart LR
     end
 
     subgraph ContainerOrProcess[9Router Runtime]
-        Next[Next.js Server\nPORT=20127]
+        Next[Next.js Server\nPORT=20126]
         Core[SSE Core + Executors]
         MainDB[(db.json)]
         UsageDB[(usage.json/log.txt)]
@@ -554,4 +554,4 @@ Environment variables actively used by code:
 - Start service and verify:
 - `GET /api/settings`
 - `GET /api/v1/models`
-- CLI target base URL should be `http://<host>:20127/v1` when `PORT=20127`
+- CLI target base URL should be `http://<host>:20126/v1` when `PORT=20126`

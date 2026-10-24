@@ -167,7 +167,7 @@ describe("peer header trust", () => {
   it("accepts the legacy Host fallback only in development", async () => {
     process.env.NODE_ENV = "development";
 
-    const response = await proxy(request("/api/v1/models", { host: "localhost:20127" }));
+    const response = await proxy(request("/api/v1/models", { host: "localhost:20126" }));
 
     expect(response).toBe(mocks.nextResponse);
   });
