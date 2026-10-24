@@ -53,7 +53,7 @@ const parseToml = (content) => {
 };
 
 // Build TOML config for T-Router (openai provider mode)
-const buildT-RouterConfig = (baseUrl, apiKey, model) => {
+const buildTRouterConfig = (baseUrl, apiKey, model) => {
     const normalizedBaseUrl = baseUrl.endsWith("/v1") ? baseUrl : `${baseUrl}/v1`;
     return `provider = "openai"
 
@@ -133,7 +133,7 @@ export async function POST(request) {
         const dir = getDeepSeekDir();
         await fs.mkdir(dir, { recursive: true });
 
-        const newConfig = buildT-RouterConfig(baseUrl, await resolveCliApiKey(apiKey), model);
+        const newConfig = buildTRouterConfig(baseUrl, await resolveCliApiKey(apiKey), model);
         await fs.writeFile(getDeepSeekConfigPath(), newConfig);
 
         return NextResponse.json({

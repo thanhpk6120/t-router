@@ -263,3 +263,9 @@ export const removeStt9Router = (yaml) => {
   if (body.trim() === "") return yaml.replace(STT_BLOCK_RE, "").replace(/^\n+/, "");
   return yaml.replace(STT_BLOCK_RE, `stt:\n${body}`);
 };
+
+export const hasTRouterConfig = has9RouterConfig;
+export const isTRouterStt = is9RouterStt;
+export const upsertSttTRouter = upsertStt9Router;
+export const removeSttTRouter = removeStt9Router;
+

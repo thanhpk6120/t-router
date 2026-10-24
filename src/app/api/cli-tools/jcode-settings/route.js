@@ -118,12 +118,13 @@ export async function GET() {
   }
 
   const config = await readConfig();
-  const hasT-Router = hasTRouterConfig(config);
+  const hasTRouter = hasTRouterConfig(config);
 
   return NextResponse.json({
     installed: true,
     config,
-    hasT-Router,
+    hasTRouter,
+    has9Router: hasTRouter,
     configPath: getConfigPath(),
   });
 }
