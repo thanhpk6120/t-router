@@ -1,0 +1,45 @@
+import { getApiKeyByKey, getInjectKeyModelPrompts, getInjectModelPrompts } from "@/lib/localDb";
+
+/**
+ * Resolve a combo's effective strategy (T Router pair rotation).
+ *
+ * Precedence: the combo's own configured strategy, then the global
+ * combo strategy, then the default. The default is "fallback" —
+ * EXCEPT for a pair: a name carrying its own prompt injection (set on
+ * the Prompt Injection page, for all keys or for the calling key)
+ * backed by more than one model. A pair rotates its starting model
+ * per request ("round-robin", sticky 1) so the load spreads across
+ * the backing providers instead of the first model serving until it
+ * fails; a failure still falls through the remaining models in
+ * order. Storage errors fail open to "fallback".
+ *
+ * The global value only counts as a choice when it is not "fallback":
+ * the settings defaults materialize comboStrategy: "fallback" even
+ * when the user never picked anything, so an ambient "fallback"
+ * cannot be told apart from the default — and a per-combo
+ * "fallback" remains the way to pin one pair to sequential order.
+ */
+export async function resolveComboStrategy(modelStr, comboModels, settings, apiKey) {
+  const comboStrategies = settings?.comboStrategies || {};
+  const specific = comboStrategies[modelStr]?.fallbackStrategy;
+  if (specific) return specific;
+  if (settings?.comboStrategy && settings.comboStrategy !== "fallback") return settings.comboStrategy;
+
+  if (Array.isArray(comboModels) && comboModels.length > 1) {
+    try {
+      const modelPrompts = await getInjectModelPrompts();
+      let pairEntry = modelPrompts?.[modelStr];
+      if (!pairEntry && apiKey) {
+        const keyRecord = await getApiKeyByKey(apiKey).catch(() => null);
+        if (keyRecord?.id) {
+          const keyModelPrompts = await getInjectKeyModelPrompts();
+          pairEntry = keyModelPrompts?.[keyRecord.id]?.[modelStr];
+        }
+      }
+      if (pairEntry?.enabled) return "round-robin";
+    } catch {
+      // Fail-open: a storage hiccup must never change routing.
+    }
+  }
+  return "fallback";
+}

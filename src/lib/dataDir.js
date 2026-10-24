@@ -1,0 +1,38 @@
+import fs from "node:fs";
+import path from "path";
+import os from "os";
+
+const APP_NAME = "trouter";
+
+function defaultDir() {
+  if (process.platform === "win32") {
+    return path.join(process.env.APPDATA || path.join(os.homedir(), "AppData", "Roaming"), APP_NAME);
+  }
+  return path.join(os.homedir(), `.${APP_NAME}`);
+}
+
+export function getDataDir() {
+  const configured = process.env.DATA_DIR;
+  if (!configured) return defaultDir();
+
+  // On Windows, ignore Unix-style absolute paths (e.g. /var/lib/...) that come
+  // from a Linux-targeted .env or Docker config — they are not valid here.
+  if (process.platform === "win32" && /^\/[a-zA-Z0-9]/.test(configured) && !configured.startsWith("./") && !configured.startsWith(".\\")) {
+    console.warn(`[DATA_DIR] '${configured}' is a Unix path on Windows → fallback to default`);
+    return defaultDir();
+  }
+
+  const resolved = path.resolve(process.cwd(), configured);
+  try {
+    fs.mkdirSync(resolved, { recursive: true });
+    return resolved;
+  } catch (e) {
+    if (e?.code === "EACCES" || e?.code === "EPERM") {
+      console.warn(`[DATA_DIR] '${configured}' not writable → fallback ~/.${APP_NAME}`);
+      return defaultDir();
+    }
+    throw e;
+  }
+}
+
+export const DATA_DIR = getDataDir();
