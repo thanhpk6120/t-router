@@ -18,6 +18,8 @@ export default function LoginPage() {
   const [samlLoginLabel, setSamlLoginLabel] = useState("Sign in with SAML SSO");
   const [mustChange, setMustChange] = useState(false);
   const [newPassword, setNewPassword] = useState("");
+  const [isDefaultPassword, setIsDefaultPassword] = useState(false);
+  const [defaultPasswordText, setDefaultPasswordText] = useState("123456");
 
   // Countdown for rate-limit
   useEffect(() => {
@@ -44,7 +46,11 @@ export default function LoginPage() {
             window.location.assign("/dashboard");
             return;
           }
-          setHasPassword(!!data.hasPassword);
+          setHasPassword(data.hasPassword !== false);
+          setIsDefaultPassword(data.isDefaultPassword === true);
+          if (data.defaultPassword) {
+            setDefaultPasswordText(data.defaultPassword);
+          }
           setAuthMode(data.authMode || "password");
           setSsoType(data.ssoType || "oidc");
           setOidcConfigured(data.oidcConfigured === true);
@@ -54,10 +60,12 @@ export default function LoginPage() {
         } else {
           // Safe fallback on non-OK response to avoid infinite loading state.
           setHasPassword(true);
+          setIsDefaultPassword(false);
         }
       } catch (err) {
         clearTimeout(timeoutId);
         setHasPassword(true);
+        setIsDefaultPassword(false);
       }
     }
     checkAuth();
@@ -235,7 +243,7 @@ export default function LoginPage() {
                   )}
                   {resetHint && (
                     <p className="text-xs text-text-muted">
-                      Forgot password? Open <code className="bg-sidebar px-1 rounded">9router</code> CLI on the host → <b>Settings</b> → <b>Reset Password to Default</b>.
+                      Forgot password? Open <code className="bg-sidebar px-1 rounded">t-router</code> CLI on the host → <b>Settings</b> → <b>Reset Password to Default</b>.
                     </p>
                   )}
                 </div>
@@ -250,12 +258,9 @@ export default function LoginPage() {
                   {retryAfter > 0 ? `Wait ${retryAfter}s` : "Login"}
                 </Button>
 
-                <p className="text-xs text-center text-text-muted mt-2">
-                  Default password is <code className="bg-sidebar px-1 rounded">9routerpro</code>
-                </p>
-                {hasPassword === false && (
-                  <p className="text-xs text-center text-amber-600 dark:text-amber-400">
-                    Security risk: no password set. You will be asked to set one when logging in remotely.
+                {isDefaultPassword && (
+                  <p className="text-xs text-center text-text-muted mt-2">
+                    Default password is <code className="bg-sidebar px-1 rounded">{defaultPasswordText}</code>
                   </p>
                 )}
               </form>

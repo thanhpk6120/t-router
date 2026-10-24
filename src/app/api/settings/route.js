@@ -58,8 +58,9 @@ export async function PATCH(request) {
         }
       } else {
         // First time setting password, no current password needed
-        // Allow empty currentPassword or default "9routerpro"
-        if (body.currentPassword && body.currentPassword !== "9routerpro") {
+        // Allow empty currentPassword or default "123456"
+        const defaultPwd = process.env.INITIAL_PASSWORD || "123456";
+        if (body.currentPassword && body.currentPassword !== defaultPwd) {
            return NextResponse.json({ error: "Invalid current password" }, { status: 401 });
         }
       }

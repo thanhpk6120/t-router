@@ -4,6 +4,7 @@ import { getSettings } from "@/lib/localDb";
 import { isOidcConfigured } from "@/lib/auth/oidc";
 import { isSamlConfigured } from "@/lib/auth/saml.js";
 import { getDashboardAuthSession } from "@/lib/auth/dashboardSession";
+import bcrypt from "bcryptjs";
 
 export async function GET() {
   try {
@@ -18,6 +19,15 @@ export async function GET() {
     const samlName = String(session?.samlName || "").trim();
     const samlEmail = String(session?.samlEmail || "").trim();
 
+    const defaultPassword = process.env.INITIAL_PASSWORD || "123456";
+    let isDefaultPassword = !settings.password;
+    if (settings.password && typeof settings.password === "string") {
+      try {
+        isDefaultPassword = bcrypt.compareSync(defaultPassword, settings.password);
+      } catch {
+        isDefaultPassword = false;
+      }
+    }
     const displayName =
       samlName ||
       samlEmail ||
@@ -35,7 +45,9 @@ export async function GET() {
       oidcLoginLabel: (settings.oidcLoginLabel || "Sign in with OIDC").trim() || "Sign in with OIDC",
       samlConfigured: isSamlConfigured(settings),
       samlLoginLabel: (settings.samlLoginLabel || "Sign in with SAML SSO").trim() || "Sign in with SAML SSO",
-      hasPassword: !!settings.password,
+      hasPassword: !isDefaultPassword,
+      isDefaultPassword,
+      defaultPassword: isDefaultPassword ? defaultPassword : null,
       displayName,
       loginMethod,
       authenticated: !!session,
@@ -56,6 +68,8 @@ export async function GET() {
       samlConfigured: false,
       samlLoginLabel: "Sign in with SAML SSO",
       hasPassword: false,
+      isDefaultPassword: true,
+      defaultPassword: process.env.INITIAL_PASSWORD || "123456",
       displayName: "Password user",
       loginMethod: "Password",
       authenticated: false,
