@@ -62,35 +62,38 @@ function getPublishedVersions() {
 // Calculate next version adhering to: v[9router]-[9router-pro]-[trouter]
 // and ensuring it never collides with already published versions on npmjs.com
 function resolveNextVersion(currentVer, upstreamProVer) {
-  const published = new Set(getPublishedVersions());
+  const published = getPublishedVersions();
 
-  let candidate = '';
+  // Base prefix: if upstreamProVer has '-pro.', use it; otherwise extract from currentVer
+  let basePrefix = '';
   if (upstreamProVer && upstreamProVer.includes('-pro.')) {
-    candidate = upstreamProVer + '-t.1';
-  } else if (currentVer) {
-    candidate = currentVer;
+    basePrefix = upstreamProVer;
+  } else if (currentVer && currentVer.includes('-t.')) {
+    basePrefix = currentVer.replace(/-t\.\d+$/, '');
   } else {
-    candidate = '0.5.109-pro.12-t.1';
+    basePrefix = (currentVer || '0.5.109-pro.12').replace(/-t.*$/, '');
   }
 
-  // Ensure candidate has -t.<N> suffix
-  if (!candidate.match(/-t\.\d+$/)) {
-    candidate = candidate.replace(/-t.*$/, '') + '-t.1';
+  // Find all known t-numbers for this basePrefix from published list and currentVer
+  const usedNumbers = new Set();
+  const prefixPattern = new RegExp(`^${basePrefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}-t\\.(\\d+)$`);
+
+  for (const v of published) {
+    const m = String(v).match(prefixPattern);
+    if (m) usedNumbers.add(parseInt(m[1], 10));
+  }
+  if (currentVer) {
+    const m = String(currentVer).match(prefixPattern);
+    if (m) usedNumbers.add(parseInt(m[1], 10));
   }
 
-  // If candidate is already published or same as current, bump trailing number
-  while (published.has(candidate) || candidate === currentVer) {
-    const match = candidate.match(/^(.*-t\.)(\d+)$/);
-    if (match) {
-      const prefix = match[1];
-      const num = parseInt(match[2], 10) + 1;
-      candidate = prefix + num;
-    } else {
-      candidate = candidate + '.1';
-    }
+  // Determine highest used number for this prefix
+  let maxNum = 0;
+  for (const n of usedNumbers) {
+    if (n > maxNum) maxNum = n;
   }
 
-  return candidate;
+  return `${basePrefix}-t.${maxNum + 1}`;
 }
 
 function runExec(cmd, opts = {}) {
@@ -177,6 +180,20 @@ async function doPublish(targetVersion) {
       await runExec(gitCmd, { cwd: DIR_TROUTER, timeout: 60000 });
     } catch (gitErr) {
       log('Git push notice: ' + gitErr.message);
+    }
+    // 4.1 Update .versions.json baseline
+    const versionsFilePath = path.join(DIR_BASE, '.versions.json');
+    try {
+      let vData = {};
+      if (fs.existsSync(versionsFilePath)) {
+        vData = JSON.parse(fs.readFileSync(versionsFilePath, 'utf8'));
+      }
+      vData.t_router = targetVersion;
+      vData.updated_at = new Date().toISOString();
+      fs.writeFileSync(versionsFilePath, JSON.stringify(vData, null, 2) + '\n', 'utf8');
+      log('Updated .versions.json baseline to: ' + targetVersion);
+    } catch (ve) {
+      log('Update .versions.json notice: ' + ve.message);
     }
 
     // 5. Gracefully restart t-router.service on default port 20126
