@@ -456,11 +456,8 @@ export async function proxyAwareFetch(url, options = {}, proxyOptions = null) {
   if (proxyOptions?.strictProxy === true && proxyIntended) {
     throw new Error("[ProxyFetch] Proxy required but none resolved (strictProxy=true)");
   }
-  if (proxyIntended && proxyOptions?.directActive === false && !proxyOptions?.isDirect) {
-    throw new Error("[ProxyFetch] Proxy intended but none active and Direct connection is disabled in Proxy Pools.");
-  }
-  if (proxyOptions?.isDirect && proxyOptions?.directActive === false) {
-    throw new Error("[ProxyFetch] Direct connection is disabled in Proxy Pools (isActive=false).");
+  if (proxyOptions?.directActive === false) {
+    throw new Error("[ProxyFetch] Direct connection is disabled in Proxy Pools. Refusing direct request to prevent IP leak.");
   }
 
   // got-scraping disabled — use native fetch directly

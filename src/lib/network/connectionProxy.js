@@ -52,10 +52,16 @@ export function resolveRotationPoolIds(allPools, selectedIds, proxySource = "bot
     if (rotatingOnly.length > 0) sourcePools = rotatingOnly;
   }
 
-  const usable = sourcePools.map((p) => p.id);
-  if (!Array.isArray(selectedIds) || selectedIds.length === 0) return usable;
+  const hasCustomProxies = sourcePools.some((p) => p.id !== "direct");
+  if (!Array.isArray(selectedIds) || selectedIds.length === 0) {
+    if (hasCustomProxies) {
+      return sourcePools.filter((p) => p.id !== "direct").map((p) => p.id);
+    }
+    return sourcePools.map((p) => p.id);
+  }
+
   const wanted = new Set(selectedIds);
-  return usable.filter((id) => wanted.has(id));
+  return sourcePools.map((p) => p.id).filter((id) => wanted.has(id));
 }
 
 /**

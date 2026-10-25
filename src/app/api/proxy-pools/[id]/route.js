@@ -96,6 +96,12 @@ export async function PUT(request, { params }) {
       return NextResponse.json({ error: normalized.error }, { status: 400 });
     }
 
+    if (id === "direct") {
+      normalized.updates.name = "Direct";
+      normalized.updates.proxyUrl = "direct";
+      normalized.updates.type = "direct";
+    }
+
     const updated = await updateProxyPool(id, normalized.updates);
     return NextResponse.json({ proxyPool: updated });
   } catch (error) {
@@ -112,6 +118,10 @@ export async function DELETE(request, { params }) {
 
     if (!existing) {
       return NextResponse.json({ error: "Proxy pool not found" }, { status: 404 });
+    }
+
+    if (id === "direct") {
+      return NextResponse.json({ error: "Direct proxy cannot be deleted" }, { status: 400 });
     }
 
     const connections = await getProviderConnections();

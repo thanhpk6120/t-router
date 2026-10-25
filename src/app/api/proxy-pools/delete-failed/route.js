@@ -11,7 +11,7 @@ export async function POST() {
     return NextResponse.json({ deleted: 0, skippedBound: 0 });
   }
   const bound = new Set(await getBoundProxyPoolIds());
-  const deletable = failed.filter((p) => !bound.has(p.id)).map((p) => p.id);
+  const deletable = failed.filter((p) => !bound.has(p.id) && p.id !== "direct").map((p) => p.id);
   const deleted = await deleteProxyPoolsByIds(deletable);
   return NextResponse.json({ deleted, skippedBound: failed.length - deletable.length });
 }

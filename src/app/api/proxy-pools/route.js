@@ -99,10 +99,14 @@ export async function GET(request) {
     }
 
     let proxyPools = await getProxyPools(filter);
+    proxyPools.sort((a, b) => {
+      if (a.id === "direct") return -1;
+      if (b.id === "direct") return 1;
+      return new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0);
+    });
     if (search) {
       proxyPools = proxyPools.filter((pool) => (pool.name || "").toLowerCase().includes(search));
     }
-
     if (idsOnly) {
       return NextResponse.json({ ids: proxyPools.map((pool) => pool.id), total: proxyPools.length });
     }
@@ -154,6 +158,10 @@ export async function POST(request) {
 
     if (normalized.error) {
       return NextResponse.json({ error: normalized.error }, { status: 400 });
+    }
+
+    if (normalized.name.toLowerCase() === "direct") {
+      return NextResponse.json({ error: "The name 'Direct' is reserved for the system direct connection pool" }, { status: 400 });
     }
 
     const proxyPool = await createProxyPool(normalized);
