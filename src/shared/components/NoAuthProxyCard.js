@@ -12,17 +12,24 @@ const STRATEGIES = [
   { value: "round-robin", label: "Round-robin" },
   { value: "random", label: "Random" },
 ];
+const PROXY_SOURCES = [
+  { value: "both", label: "Both (Static + Rotating)" },
+  { value: "rotating", label: "Rotating Proxies Only" },
+  { value: "static", label: "Static Proxies Only" },
+];
+
 
 export default function NoAuthProxyCard({ providerId, isNoAuth = false }) {
   const [proxyPools, setProxyPools] = useState([]);
   const [proxyPoolId, setProxyPoolId] = useState(NONE_PROXY_POOL_VALUE);
   const [rotateStrategy, setRotateStrategy] = useState("none");
-  const [selectedPoolIds, setSelectedPoolIds] = useState([]);
+  const [proxySource, setProxySource] = useState("both");
   const [poolSearch, setPoolSearch] = useState("");
   const [pickerOpen, setPickerOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [savedFlash, setSavedFlash] = useState(false);
-
+  const [rotating, setRotating] = useState(false);
+  const [rotateResult, setRotateResult] = useState(null);
   useEffect(() => {
     let cancelled = false;
     Promise.all([
@@ -35,11 +42,12 @@ export default function NoAuthProxyCard({ providerId, isNoAuth = false }) {
       setProxyPoolId(override.proxyPoolId || NONE_PROXY_POOL_VALUE);
       setRotateStrategy(override.rotateStrategy || "none");
       setSelectedPoolIds(Array.isArray(override.proxyPoolIds) ? override.proxyPoolIds : []);
+      setProxySource(override.proxySource || "both");
     }).catch(() => {});
     return () => { cancelled = true; };
   }, [providerId]);
 
-  const save = useCallback(async (poolId, strategy, poolIds) => {
+  const save = useCallback(async (poolId, strategy, poolIds, source = proxySource) => {
     setSaving(true);
     try {
       const res = await fetch("/api/settings", { cache: "no-store" });
@@ -52,7 +60,8 @@ export default function NoAuthProxyCard({ providerId, isNoAuth = false }) {
       else override.rotateStrategy = strategy;
       if (Array.isArray(poolIds) && poolIds.length > 0) override.proxyPoolIds = poolIds;
       else delete override.proxyPoolIds;
-      const updated = { ...current };
+      if (source && source !== "both") override.proxySource = source;
+      else delete override.proxySource;
       if (Object.keys(override).length === 0) delete updated[providerId];
       else updated[providerId] = override;
       await fetch("/api/settings", {
@@ -71,18 +80,23 @@ export default function NoAuthProxyCard({ providerId, isNoAuth = false }) {
 
   const handlePoolChange = (newPoolId) => {
     setProxyPoolId(newPoolId);
-    save(newPoolId, rotateStrategy, selectedPoolIds);
+    save(newPoolId, rotateStrategy, selectedPoolIds, proxySource);
+  };
+
+  const handleSourceChange = (newSource) => {
+    setProxySource(newSource);
+    save(proxyPoolId, rotateStrategy, selectedPoolIds, newSource);
   };
 
   const handleStrategyChange = (newStrategy) => {
     setRotateStrategy(newStrategy);
     if (newStrategy !== "none") setPickerOpen(true);
-    save(proxyPoolId, newStrategy, selectedPoolIds);
+    save(proxyPoolId, newStrategy, selectedPoolIds, proxySource);
   };
 
   const applySelection = (ids) => {
     setSelectedPoolIds(ids);
-    save(proxyPoolId, rotateStrategy, ids);
+    save(proxyPoolId, rotateStrategy, ids, proxySource);
   };
 
   const togglePool = (id) => {
@@ -96,7 +110,27 @@ export default function NoAuthProxyCard({ providerId, isNoAuth = false }) {
 
   const canRotate = proxyPools.length >= 2;
   const isRotation = rotateStrategy !== "none";
+  const selectedPool = proxyPools.find((p) => p.id === proxyPoolId);
 
+  const handleQuickRotate = async () => {
+    if (!selectedPool?.id) return;
+    setRotating(true);
+    setRotateResult(null);
+    try {
+      const res = await fetch(`/api/proxy-pools/${selectedPool.id}/rotate`, { method: "POST" });
+      const data = await res.json();
+      if (res.ok) {
+        setRotateResult({ ok: true, msg: data.response ? `Rotated: ${data.response.slice(0, 80)}` : "IP rotated successfully" });
+      } else {
+        setRotateResult({ ok: false, msg: data.error || "Failed to rotate" });
+      }
+    } catch (e) {
+      setRotateResult({ ok: false, msg: e.message });
+    } finally {
+      setRotating(false);
+      setTimeout(() => setRotateResult(null), 4000);
+    }
+  };
   return (
     <Card>
       <div className="flex items-center gap-3 mb-4">
@@ -121,10 +155,37 @@ export default function NoAuthProxyCard({ providerId, isNoAuth = false }) {
         disabled={saving || isRotation}
         options={[
           { value: NONE_PROXY_POOL_VALUE, label: "None (direct)" },
-          ...proxyPools.map((pool) => ({ value: pool.id, label: pool.name })),
+          ...proxyPools.map((pool) => ({
+            value: pool.id,
+            label: `${pool.name}${pool.rotateLink || pool.rotateUrl ? " [🔄 Rotating IP]" : ""}`,
+          })),
         ]}
         hint={isRotation ? (selectedPoolIds.length > 0 ? "Rotating through the selected pools." : "Pool selector is ignored when rotation is active — all active pools are used.") : undefined}
       />
+      {selectedPool && (selectedPool.rotateLink || selectedPool.rotateUrl) && !isRotation && (
+        <div className="flex items-center justify-between gap-2 mt-2 p-2 rounded-lg bg-sky-500/5 border border-sky-500/20 text-xs">
+          <div className="flex items-center gap-1.5 min-w-0 text-text-muted">
+            <span className="material-symbols-outlined text-[16px] text-sky-500">sync</span>
+            <span className="truncate">Rotate Link: <span className="font-mono text-sky-600 dark:text-sky-400">{selectedPool.rotateLink || selectedPool.rotateUrl}</span></span>
+          </div>
+          <button
+            type="button"
+            onClick={handleQuickRotate}
+            disabled={rotating}
+            className="shrink-0 px-2.5 py-1 rounded bg-sky-500 text-white font-medium hover:bg-sky-600 disabled:opacity-50 flex items-center gap-1 transition-all"
+          >
+            <span className="material-symbols-outlined text-[14px]" style={rotating ? { animation: "spin 1s linear infinite" } : undefined}>
+              {rotating ? "progress_activity" : "sync"}
+            </span>
+            {rotating ? "Rotating..." : "Rotate IP"}
+          </button>
+        </div>
+      )}
+      {rotateResult && (
+        <p className={`text-xs mt-1.5 ${rotateResult.ok ? "text-green-500" : "text-red-500"}`}>
+          {rotateResult.msg}
+        </p>
+      )}
 
       <div className="flex flex-col gap-2 mt-4">
         <label className="text-sm font-medium text-text-main">Rotation Strategy</label>
@@ -152,6 +213,24 @@ export default function NoAuthProxyCard({ providerId, isNoAuth = false }) {
                 : "Uses the selected pool above. Set to Round-robin or Random to rotate across all active pools."}
         </p>
       </div>
+      {isRotation && (
+        <div className="flex flex-col gap-2 mt-4">
+          <label className="text-sm font-medium text-text-main">Proxy Source</label>
+          <select
+            value={proxySource}
+            onChange={(e) => handleSourceChange(e.target.value)}
+            disabled={saving}
+            className="py-2 px-3 text-sm text-text-main bg-white dark:bg-white/5 border border-black/10 dark:border-white/10 rounded-md focus:ring-1 focus:ring-primary/30 focus:border-primary/50 focus:outline-none transition-all disabled:opacity-50"
+          >
+            {PROXY_SOURCES.map((ps) => (
+              <option key={ps.value} value={ps.value}>{ps.label}</option>
+            ))}
+          </select>
+          <p className="text-xs text-text-muted">
+            Filter which pools are eligible for rotation (both, rotating-only, or static-only).
+          </p>
+        </div>
+      )}
 
       {isRotation && (
         <div className="flex flex-col gap-2 mt-4">
@@ -183,7 +262,10 @@ export default function NoAuthProxyCard({ providerId, isNoAuth = false }) {
                 {filteredPools.slice(0, 100).map((pool) => (
                   <label key={pool.id} className="flex items-center gap-2 px-3 py-2 cursor-pointer hover:bg-black/5 dark:hover:bg-white/5">
                     <input type="checkbox" checked={selectedPoolIds.includes(pool.id)} onChange={() => togglePool(pool.id)} className="h-4 w-4 shrink-0 accent-primary" />
-                    <span className="text-sm text-text-main truncate">{pool.name}</span>
+                    <span className="text-sm text-text-main truncate flex-1">{pool.name}</span>
+                    {(pool.rotateLink || pool.rotateUrl) && (
+                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-sky-500/10 text-sky-600 dark:text-sky-400 font-medium">rotate</span>
+                    )}
                   </label>
                 ))}
                 {filteredPools.length === 0 && (

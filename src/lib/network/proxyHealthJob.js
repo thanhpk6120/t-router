@@ -1,5 +1,6 @@
 import { getProxyPools, updateProxyPool } from "@/lib/db/repos/proxyPoolsRepo";
 import { testProxyUrl, testRelayUrl } from "@/lib/network/proxyTest";
+import { evictProxyDispatcher } from "open-sse/utils/proxyFetch.js";
 
 // Server-side bulk proxy health check. The dashboard used to test pools one
 // HTTP request per pool from the browser, which falls apart at thousands of
@@ -59,4 +60,37 @@ export async function startProxyHealthJob(ids) {
   })();
 
   return { ...job };
+}
+/**
+ * Periodically rotate proxies whose last rotation is older than maxIntervalSec (opencode2api standard)
+ */
+export async function rotateDueProxies(maxIntervalSec = 1800) {
+  const all = await getProxyPools({ isActive: true });
+  const now = Date.now();
+  for (const pool of all) {
+    const rotateLink = pool.rotateLink || pool.rotateUrl;
+    if (!rotateLink) continue;
+    const lastRotated = pool.lastRotatedAt ? new Date(pool.lastRotatedAt).getTime() : 0;
+    if (now - lastRotated >= maxIntervalSec * 1000) {
+      try {
+        const res = await fetch(rotateLink, { method: "GET", signal: AbortSignal.timeout(10000) });
+        const text = await res.text();
+        if (res.ok) {
+          if (pool.proxyUrl) evictProxyDispatcher(pool.proxyUrl);
+          await updateProxyPool(pool.id, {
+            lastRotatedAt: new Date().toISOString(),
+            lastRotateResponse: text.slice(0, 500),
+          });
+        }
+      } catch (err) {
+        console.warn(`[ProxyRotate] Auto-rotate due failed for ${pool.name}: ${err.message}`);
+      }
+    }
+  }
+}
+
+if (!globalThis.__proxyRotateInterval) {
+  globalThis.__proxyRotateInterval = setInterval(() => {
+    rotateDueProxies().catch(() => {});
+  }, 60000);
 }

@@ -988,7 +988,7 @@ export async function testSingleConnection(id) {
       let pPoolId = providerOverride.proxyPoolId || null;
       if (pStrategy !== "none") {
         const allPools = await getProxyPools({ isActive: true });
-        const poolIds = resolveRotationPoolIds(allPools, providerOverride.proxyPoolIds);
+        const poolIds = resolveRotationPoolIds(allPools, providerOverride.proxyPoolIds, providerOverride.proxySource);
         pPoolId = pickProxyPoolId(poolIds, pStrategy, connection.provider);
       }
       if (pPoolId) {

@@ -35,9 +35,18 @@ export function parseProxyShorthand(raw) {
 function normalizeProxyPoolInput(body = {}) {
   const name = typeof body?.name === "string" ? body.name.trim() : "";
   let proxyUrl = typeof body?.proxyUrl === "string" ? body.proxyUrl.trim() : "";
+  let rotateLink = typeof body?.rotateLink === "string" ? body.rotateLink.trim() : "";
+
+  if (proxyUrl.includes("|")) {
+    const parts = proxyUrl.split("|");
+    proxyUrl = parts[0].trim();
+    if (!rotateLink && parts.length > 1) {
+      rotateLink = parts.slice(1).join("|").trim();
+    }
+  }
+
   proxyUrl = parseProxyShorthand(proxyUrl);
   const noProxy = typeof body?.noProxy === "string" ? body.noProxy.trim() : "";
-  const rotateLink = typeof body?.rotateLink === "string" ? body.rotateLink.trim() : "";
   const isActive = body?.isActive === undefined ? true : body.isActive === true;
   const strictProxy = body?.strictProxy === true;
   const type = VALID_PROXY_TYPES.includes(body?.type) ? body.type : "http";

@@ -20,6 +20,13 @@ function normalizeProxyPoolUpdate(body = {}) {
 
   if (Object.prototype.hasOwnProperty.call(body, "proxyUrl")) {
     let proxyUrl = typeof body?.proxyUrl === "string" ? body.proxyUrl.trim() : "";
+    if (proxyUrl.includes("|")) {
+      const parts = proxyUrl.split("|");
+      proxyUrl = parts[0].trim();
+      if (!Object.prototype.hasOwnProperty.call(body, "rotateLink") && parts.length > 1) {
+        updates.rotateLink = parts.slice(1).join("|").trim();
+      }
+    }
     proxyUrl = parseProxyShorthand(proxyUrl);
     if (!proxyUrl) {
       return { error: "Proxy URL is required" };

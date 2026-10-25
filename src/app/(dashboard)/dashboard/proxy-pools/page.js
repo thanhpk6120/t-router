@@ -22,6 +22,7 @@ function normalizeFormData(data = {}) {
   return {
     name: data.name || "",
     proxyUrl: data.proxyUrl || "",
+    rotateLink: data.rotateLink || data.rotateUrl || "",
     noProxy: data.noProxy || "",
     isActive: data.isActive !== false,
     strictProxy: data.strictProxy === true,
@@ -49,6 +50,7 @@ export default function ProxyPoolsPage() {
   const [importing, setImporting] = useState(false);
   const [deploying, setDeploying] = useState(false);
   const [testingId, setTestingId] = useState(null);
+  const [rotatingId, setRotatingId] = useState(null);
   const [selectedIds, setSelectedIds] = useState([]);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(50);
@@ -141,6 +143,7 @@ export default function ProxyPoolsPage() {
     const payload = {
       name: formData.name.trim(),
       proxyUrl: formData.proxyUrl.trim(),
+      rotateLink: formData.rotateLink ? formData.rotateLink.trim() : "",
       noProxy: formData.noProxy.trim(),
       isActive: formData.isActive === true,
       strictProxy: formData.strictProxy === true,
@@ -221,6 +224,26 @@ export default function ProxyPoolsPage() {
       setTestingId(null);
     }
   };
+  const handleRotate = async (proxyPoolId) => {
+    setRotatingId(proxyPoolId);
+    try {
+      const res = await fetch(`/api/proxy-pools/${proxyPoolId}/rotate`, { method: "POST" });
+      const data = await res.json();
+      if (!res.ok) {
+        notify.error(data.error || "Failed to rotate IP");
+        return;
+      }
+      await fetchProxyPools();
+      const respPreview = data.response ? ` (${data.response.slice(0, 100)})` : "";
+      notify.success(`IP rotated successfully${respPreview}`);
+    } catch (error) {
+      console.log("Error rotating proxy IP:", error);
+      notify.error("Failed to rotate IP");
+    } finally {
+      setRotatingId(null);
+    }
+  };
+
 
   const handleToggleActive = async (pool) => {
     const next = !pool.isActive;
@@ -309,6 +332,28 @@ export default function ProxyPoolsPage() {
       }
     });
   };
+  const bulkRotate = async () => {
+    const rotatable = proxyPools.filter((p) => selectedIds.includes(p.id) && (p.rotateLink || p.rotateUrl));
+    if (rotatable.length === 0) {
+      notify.warning("No selected proxy pools have a rotate link configured.");
+      return;
+    }
+    setBulkBusy(true);
+    let ok = 0; let failed = 0;
+    try {
+      for (const pool of rotatable) {
+        try {
+          const res = await fetch(`/api/proxy-pools/${pool.id}/rotate`, { method: "POST" });
+          if (res.ok) ok += 1; else failed += 1;
+        } catch { failed += 1; }
+      }
+      await fetchProxyPools();
+      notify.success(`Rotated IP for ${ok} pool(s)${failed ? `, failed ${failed}` : ""}`);
+    } finally {
+      setBulkBusy(false);
+    }
+  };
+
 
   const healthPollRef = useRef(null);
   const healthSummaryForRef = useRef(null);
@@ -586,14 +631,22 @@ export default function ProxyPoolsPage() {
   };
 
   const parseProxyLine = (line) => {
-    const trimmed = line.trim();
+    let trimmed = line.trim();
     if (!trimmed) return null;
+
+    let rotateLink = "";
+    if (trimmed.includes("|")) {
+      const parts = trimmed.split("|");
+      trimmed = parts[0].trim();
+      rotateLink = parts.slice(1).join("|").trim();
+    }
 
     if (trimmed.includes("://")) {
       const parsed = new URL(trimmed);
       const hostLabel = parsed.port ? `${parsed.hostname}:${parsed.port}` : parsed.hostname;
       return {
         proxyUrl: parsed.toString(),
+        rotateLink: rotateLink || undefined,
         name: `Imported ${hostLabel}`,
       };
     }
@@ -606,14 +659,26 @@ export default function ProxyPoolsPage() {
       }
 
       const proxyUrl = `http://${encodeURIComponent(username)}:${encodeURIComponent(password)}@${host}:${port}`;
-      const parsed = new URL(proxyUrl);
       return {
-        proxyUrl: parsed.toString(),
+        proxyUrl,
+        rotateLink: rotateLink || undefined,
         name: `Imported ${host}:${port}`,
       };
     }
 
-    throw new Error("Unsupported format");
+    if (parts.length === 2) {
+      const [host, port] = parts;
+      if (!host || !port || isNaN(Number(port))) {
+        throw new Error("Invalid host:port format");
+      }
+      return {
+        proxyUrl: `http://${host}:${port}`,
+        rotateLink: rotateLink || undefined,
+        name: `Imported ${host}:${port}`,
+      };
+    }
+
+    throw new Error("Unsupported format. Use host:port, host:port:user:pass, or URL");
   };
 
   const handleBatchImport = async () => {
@@ -675,11 +740,11 @@ export default function ProxyPoolsPage() {
           body: JSON.stringify({
             name: entry.name,
             proxyUrl: entry.proxyUrl,
+            rotateLink: entry.rotateLink || "",
             noProxy: "",
             isActive: true,
           }),
         });
-
         if (res.ok) {
           created += 1;
           existingKeys.add(dedupeKey);
@@ -841,6 +906,9 @@ export default function ProxyPoolsPage() {
                   <Button size="sm" variant="secondary" icon="toggle_off" onClick={() => bulkSetActive(false)} disabled={bulkBusy || healthChecking}>
                     Deactivate
                   </Button>
+                  <Button size="sm" variant="secondary" icon="sync" onClick={bulkRotate} disabled={bulkBusy || healthChecking}>
+                    Rotate IP
+                  </Button>
                   <Button size="sm" variant="secondary" icon="delete" onClick={bulkDelete} disabled={bulkBusy || healthChecking}>
                     Delete
                   </Button>
@@ -896,10 +964,21 @@ export default function ProxyPoolsPage() {
                     <Badge variant="default" size="sm">
                       {pool.boundConnectionCount || 0} bound
                     </Badge>
+                    {(pool.rotateLink || pool.rotateUrl) && (
+                      <Badge variant="default" size="sm" className="bg-sky-500/10 text-sky-600 dark:text-sky-400 border border-sky-500/20">
+                        rotating ip
+                      </Badge>
+                    )}
                   </div>
                   <p className="text-xs text-text-muted truncate mt-1">{pool.proxyUrl}</p>
                   {pool.noProxy ? (
                     <p className="text-xs text-text-muted truncate">No proxy: {pool.noProxy}</p>
+                  ) : null}
+                  {(pool.rotateLink || pool.rotateUrl) ? (
+                    <p className="text-xs text-text-muted truncate mt-0.5">
+                      Rotate: <span className="font-mono text-sky-600 dark:text-sky-400">{pool.rotateLink || pool.rotateUrl}</span>
+                      {pool.lastRotatedAt ? ` · Last rotated: ${formatDateTime(pool.lastRotatedAt)}` : ""}
+                    </p>
                   ) : null}
                   <p className="text-[11px] text-text-muted mt-1">
                     Last tested: {formatDateTime(pool.lastTestedAt)}
@@ -915,6 +994,21 @@ export default function ProxyPoolsPage() {
                     onChange={() => handleToggleActive(pool)}
                     title={pool.isActive ? "Disable" : "Enable"}
                   />
+                  {(pool.rotateLink || pool.rotateUrl) && (
+                    <button
+                      onClick={() => handleRotate(pool.id)}
+                      className="p-2 rounded hover:bg-sky-500/10 text-text-muted hover:text-sky-500"
+                      title="Rotate IP"
+                      disabled={rotatingId === pool.id}
+                    >
+                      <span
+                        className="material-symbols-outlined text-[18px]"
+                        style={rotatingId === pool.id ? { animation: "spin 1s linear infinite" } : undefined}
+                      >
+                        {rotatingId === pool.id ? "progress_activity" : "sync"}
+                      </span>
+                    </button>
+                  )}
                   <button
                     onClick={() => handleTest(pool.id)}
                     className="p-2 rounded hover:bg-black/5 dark:hover:bg-white/5 text-text-muted hover:text-primary"
@@ -969,11 +1063,11 @@ export default function ProxyPoolsPage() {
             <textarea
               value={batchImportText}
               onChange={(e) => setBatchImportText(e.target.value)}
-              placeholder={"http://user:pass@127.0.0.1:7897\n127.0.0.1:7897:user:pass"}
-              className="w-full min-h-[180px] py-2 px-3 text-sm text-text-main bg-white dark:bg-white/5 border border-black/10 dark:border-white/10 rounded-md focus:ring-1 focus:ring-primary/30 focus:border-primary/50 focus:outline-none transition-all"
+              placeholder={"127.0.0.1:7897\n127.0.0.1:7897:user:pass\n127.0.0.1:7897:user:pass|https://api.proxyservice.com/rotate?key=xyz\nhttp://user:pass@127.0.0.1:7897"}
+              className="w-full min-h-[180px] py-2 px-3 text-sm text-text-main bg-white dark:bg-white/5 border border-black/10 dark:border-white/10 rounded-md focus:ring-1 focus:ring-primary/30 focus:border-primary/50 focus:outline-none transition-all font-mono"
             />
             <p className="text-xs text-text-muted mt-1">
-              Supported formats: protocol://user:pass@host:port, host:port:user:pass
+              Supported formats: host:port, host:port:user:pass, URL, or with rotate link via | (e.g. host:port:user:pass|https://rotate.api)
             </p>
           </div>
 
@@ -1236,7 +1330,15 @@ export default function ProxyPoolsPage() {
             label="Proxy URL"
             value={formData.proxyUrl}
             onChange={(e) => setFormData((prev) => ({ ...prev, proxyUrl: e.target.value }))}
-            placeholder="http://127.0.0.1:7897"
+            placeholder="http://127.0.0.1:7897 hoặc host:port:user:pass"
+            hint="Full URL (http://... / socks5://...) or shorthand host:port / host:port:user:pass"
+          />
+          <Input
+            label="Rotate Link / URL (Optional)"
+            value={formData.rotateLink}
+            onChange={(e) => setFormData((prev) => ({ ...prev, rotateLink: e.target.value }))}
+            placeholder="https://api.proxyservice.com/rotate?key=xyz"
+            hint="HTTP endpoint to trigger dynamic IP change (e.g. 4G/residential proxy rotation URL)"
           />
           <Input
             label="No Proxy"

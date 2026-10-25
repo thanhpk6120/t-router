@@ -39,8 +39,17 @@ export function pickProxyPoolId(poolIds, strategy, providerId) {
  * an empty or absent selection keeps the legacy behavior of rotating
  * across every usable active pool.
  */
-export function resolveRotationPoolIds(allPools, selectedIds) {
-  const usable = (allPools || []).filter((p) => p && p.id && p.proxyUrl).map((p) => p.id);
+export function resolveRotationPoolIds(allPools, selectedIds, proxySource = "both") {
+  let sourcePools = (allPools || []).filter((p) => p && p.id && p.proxyUrl);
+  if (proxySource === "static") {
+    const staticOnly = sourcePools.filter((p) => !p.rotateLink && !p.rotateUrl);
+    if (staticOnly.length > 0) sourcePools = staticOnly;
+  } else if (proxySource === "rotating") {
+    const rotatingOnly = sourcePools.filter((p) => p.rotateLink || p.rotateUrl);
+    if (rotatingOnly.length > 0) sourcePools = rotatingOnly;
+  }
+
+  const usable = sourcePools.map((p) => p.id);
   if (!Array.isArray(selectedIds) || selectedIds.length === 0) return usable;
   const wanted = new Set(selectedIds);
   return usable.filter((id) => wanted.has(id));

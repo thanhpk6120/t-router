@@ -250,6 +250,44 @@ async function getDispatcher(proxyUrl, insecure = false) {
 
   return proxyDispatchers.get(key);
 }
+/**
+ * Evict and close cached proxy dispatcher on IP rotation so keep-alive connections
+ * don't remain pinned to the old exit IP.
+ */
+export function evictProxyDispatcher(proxyUrl) {
+  if (!proxyUrl) return;
+  const normalized = normalizeProxyUrl(proxyUrl);
+  for (const [key, dispatcher] of proxyDispatchers.entries()) {
+    if (key.startsWith(`${normalized || "direct"}::`)) {
+      try {
+        if (typeof dispatcher.close === "function") dispatcher.close();
+        else if (typeof dispatcher.destroy === "function") dispatcher.destroy();
+      } catch {}
+      proxyDispatchers.delete(key);
+    }
+  }
+}
+
+const rotateCooldownMap = new Map();
+const ROTATE_MIN_COOLDOWN_MS = 60 * 1000; // 60s minimum interval
+
+export function triggerBackgroundRotate(rotateLink, proxyUrl = null) {
+  if (!rotateLink) return;
+  const now = Date.now();
+  const last = rotateCooldownMap.get(rotateLink) || 0;
+  if (now - last < ROTATE_MIN_COOLDOWN_MS) {
+    dbg("ProxyFetch", `Auto-rotate skipped: cooldown active (${Math.round((now - last) / 1000)}s < 60s)`);
+    return;
+  }
+  rotateCooldownMap.set(rotateLink, now);
+  fetch(rotateLink, { method: "GET", signal: AbortSignal.timeout(10000) })
+    .then((r) => {
+      dbg("ProxyFetch", `Auto-rotated IP: status=${r.status}`);
+      if (proxyUrl) evictProxyDispatcher(proxyUrl);
+    })
+    .catch((e) => console.warn(`[ProxyFetch] Auto-rotate failed: ${e.message}`));
+}
+
 
 async function fetchWithTlsFallback(url, options, proxyUrl) {
   try {
@@ -378,9 +416,17 @@ export async function proxyAwareFetch(url, options = {}, proxyOptions = null) {
   }
 
   if (proxyUrl) {
+    const rotateLink = proxyOptions?.proxyPool?.rotateLink || proxyOptions?.proxyPool?.rotateUrl || proxyOptions?.rotateLink;
     try {
-      return await fetchWithTlsFallback(url, options, proxyUrl);
+      const res = await fetchWithTlsFallback(url, options, proxyUrl);
+      if (res && (res.status === 429 || res.status === 403) && rotateLink) {
+        triggerBackgroundRotate(rotateLink, proxyUrl);
+      }
+      return res;
     } catch (proxyError) {
+      if (rotateLink) {
+        triggerBackgroundRotate(rotateLink, proxyUrl);
+      }
       // If strictProxy is enabled, fail hard instead of falling back to direct
       if (proxyOptions?.strictProxy === true) {
         throw new Error(`[ProxyFetch] Proxy required but failed (strictProxy=true): ${proxyError.message}`);

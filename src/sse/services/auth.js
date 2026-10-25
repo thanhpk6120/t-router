@@ -101,7 +101,7 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
       let pickedId = override.proxyPoolId || null;
       if (strategy !== "none") {
         const allPools = await getProxyPools({ isActive: true });
-        const poolIds = resolveRotationPoolIds(allPools, override.proxyPoolIds);
+        const poolIds = resolveRotationPoolIds(allPools, override.proxyPoolIds, override.proxySource);
         pickedId = pickProxyPoolId(poolIds, strategy, providerId);
       }
       const resolvedProxy = await resolveConnectionProxyConfig({ proxyPoolId: pickedId || "" });
@@ -117,6 +117,8 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
           connectionProxyPoolId: resolvedProxy.proxyPoolId || null,
           vercelRelayUrl: resolvedProxy.vercelRelayUrl || "",
           strictProxy: resolvedProxy.strictProxy === true,
+          rotateLink: resolvedProxy.rotateLink || resolvedProxy.proxyPool?.rotateLink || "",
+          proxyPool: resolvedProxy.proxyPool || null,
         },
       };
     }
@@ -290,7 +292,7 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
       let pPoolId = providerOverride.proxyPoolId || null;
       if (pStrategy !== "none") {
         const allPools = await getProxyPools({ isActive: true });
-        const poolIds = resolveRotationPoolIds(allPools, providerOverride.proxyPoolIds);
+        const poolIds = resolveRotationPoolIds(allPools, providerOverride.proxyPoolIds, providerOverride.proxySource);
         pPoolId = pickProxyPoolId(poolIds, pStrategy, providerId);
       }
       if (pPoolId) {
@@ -319,6 +321,8 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
         connectionProxyPoolId: resolvedProxy.proxyPoolId || null,
         vercelRelayUrl: resolvedProxy.vercelRelayUrl || "",
         strictProxy: resolvedProxy.strictProxy === true,
+        rotateLink: resolvedProxy.rotateLink || resolvedProxy.proxyPool?.rotateLink || "",
+        proxyPool: resolvedProxy.proxyPool || null,
       },
       connectionId: connection.id,
       // Include current status for optimization check

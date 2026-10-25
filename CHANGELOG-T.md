@@ -25,6 +25,17 @@ Upstream changelogs (`CHANGELOG.md` and `CHANGELOG-PRO.md`) are kept intact for 
 
 ---
 
+## v0.5.109-pro.12-t.5 (2026-10-25)
+
+- **Advanced Proxy Management & Dynamic IP Rotation (aligned with opencode2api)**:
+  - **Rotate Link & Dynamic IP Rotation**: Hỗ trợ đầy đủ trường `rotateLink` (URL đổi IP) trên giao diện Proxy Pools (thêm mới, chỉnh sửa, batch import).
+  - **Nút Xoay IP Ngay (Rotate IP)**: Cho phép đổi IP ngay lập tức trên từng Proxy Pool hoặc thực hiện hàng loạt (Bulk Rotate) trực tiếp từ giao diện với thông báo và hiển thị thời gian đổi IP gần nhất.
+  - **Proxy Source Selection**: Bổ sung bộ lọc nguồn proxy (`both` | `static` | `rotating`) trong cấu hình xoay proxy của provider.
+  - **Tự Động Đổi IP Khi Bị Chặn (Auto-Rotate on 429/403/Error)**: Tự động gọi rotate link khi gặp lỗi rate limit (429) hoặc bị chặn (403), kèm cơ chế cooldown 60s để chống spam API xoay proxy.
+  - **Evict Socket Cache Khi Đổi IP**: Tự động giải phóng và đóng các kết nối keep-alive cũ trong `proxyDispatchers` ngay khi IP được xoay, đảm bảo request tiếp theo lập tức dùng IP mới thoát ra ngoài.
+  - **Tự Động Xoay Định Kỳ (Auto-Rotate Due)**: Tự động đổi IP định kỳ cho các proxy pool xoay có thời gian đổi IP cũ hơn 30 phút.
+  - **Hỗ trợ định dạng Shorthand đa dạng**: Hỗ trợ `host:port`, `host:port:user:pass`, `host:port:user:pass|rotateLink`, `host:port|rotateLink`, socks5 và URL chuẩn.
+
 ## v0.5.109-pro.12-t.4 (2026-10-25)
 
 - Monotonic +1 version bump: upgraded to 0.5.109-pro.12-t.4 aligned with latest upstream 9router-pro.12.
