@@ -5,6 +5,22 @@ Upstream changelogs (`CHANGELOG.md` and `CHANGELOG-PRO.md`) are kept intact for 
 
 ---
 
+## Upstream Sync (9router 0.5.109, 9router-pro 0.5.109-pro.11)
+
+- **Prompt Injection (Variant-based)**:
+  - Chuyển đổi prompt injection sang cơ chế variant-based: prompt gắn với tên variant tùy chỉnh thay vì model gốc.
+  - Variant là một tên tùy chỉnh liên kết với chính xác 1 provider/model gốc kèm prompt. Khi gọi theo variant name sẽ áp dụng prompt; khi gọi theo raw model name sẽ không bị ảnh hưởng.
+  - Tự động tạo và đồng bộ single-member combo tương ứng cho variant.
+  - Tự động migrate các cấu hình prompt injection dạng model cũ sang variants trên lần đọc đầu tiên.
+- **Sửa lỗi crash trang Prompt Injection**:
+  - Loại bỏ hoàn toàn khối code thừa từ UI copy-to-providers gây crash toàn bộ trang khi render trên trình duyệt.
+- **Phân trang Proxy Pools (Pagination & Filtering)**:
+  - Bổ sung phân trang phía server (hỗ trợ pageSize 10, 20, 50) và tìm kiếm theo tên pool (`search`), giúp tối ưu hóa hiệu năng và bộ nhớ khi quản lý số lượng lớn proxy pools.
+  - Lựa chọn theo trang kết hợp lưu trữ cross-page selection cho bulk actions.
+  - Tương thích 100% với Universal Proxy Pools & Rotation của T Router.
+
+---
+
 ## v0.5.109-pro.10-t.3 (2026-10-24)
 
 - Automated sync and release via Telegram Bot.
