@@ -167,9 +167,10 @@ JSON_EOF
   MERGE_SOURCE="9router (${LATEST_9ROUTER:-$HEAD_9ROUTER}) & 9router-pro (${LATEST_PRO:-$HEAD_PRO})"
   COMMIT_LOG=$(git -C "$DIR_TROUTER" log -1 --pretty=%B | head -n 3 | tr '\n' ' ')
 
-  JSON_PAYLOAD=$(CURRENT_VER="$CURRENT_VER" MERGE_SOURCE="$MERGE_SOURCE" COMMIT_LOG="$COMMIT_LOG" node -e '
+  JSON_PAYLOAD=$(CURRENT_VER="$CURRENT_VER" UPSTREAM_PRO="${LATEST_PRO:-$HEAD_PRO}" MERGE_SOURCE="$MERGE_SOURCE" COMMIT_LOG="$COMMIT_LOG" node -e '
     console.log(JSON.stringify({
       currentVersion: process.env.CURRENT_VER || "",
+      upstreamProVersion: process.env.UPSTREAM_PRO || "",
       mergedFrom: process.env.MERGE_SOURCE || "",
       summary: process.env.COMMIT_LOG || ""
     }));
