@@ -125,7 +125,7 @@ export async function GET(request) {
 
     const total = proxyPools.length;
     const activeCount = proxyPools.filter((p) => p.isActive !== false).length;
-    const failedCount = proxyPools.filter((p) => p.healthStatus === "failed").length;
+    const failedCount = proxyPools.filter((p) => p.testStatus === "error" || p.healthStatus === "failed").length;
 
     const start = (page - 1) * pageSize;
     let pagePools = proxyPools.slice(start, start + pageSize);

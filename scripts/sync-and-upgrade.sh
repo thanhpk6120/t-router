@@ -105,6 +105,7 @@ Yêu cầu thực hiện:
    - Các chuỗi OAuth secret nếu có phải tách mảng hoặc decode để không kích hoạt GitHub Secret Scanning.
    - Đảm bảo Proxy Pools áp dụng được cho tất cả provider (Universal Proxy Pools & Rotation).
    - Đảm bảo chức năng Round Robin trong Settings tắt bật được bình thường.
+   - Giữ nguyên các tính năng Proxy nâng cao: rotateLink (Dynamic IP Rotation), nút Rotate IP, Proxy Source (both/static/rotating), auto-rotate trên 429/403/cooldown, và parser shorthand (host:port, host:port:user:pass, |rotateLink).
    - Tất cả thay đổi về release t-router chỉ ghi vào CHANGELOG-T.md.
 3. Kiểm tra cú pháp bằng 'node -c' trên các file JS thay đổi.
 4. KHÔNG tự động nâng version trong package.json và KHÔNG tự động publish npmjs (việc này sẽ do người dùng quyết định qua Telegram Bot).
