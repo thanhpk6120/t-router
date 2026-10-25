@@ -150,6 +150,19 @@ export async function PATCH(request) {
     if (!provider || !Array.isArray(authTypes) || !authTypes.length) {
       return NextResponse.json({ error: "provider and authTypes are required" }, { status: 400 });
     }
+
+    if (FREE_PROVIDERS[provider]?.noAuth) {
+      const { getSettings, updateSettings } = await import("@/models");
+      const settings = await getSettings();
+      const current = settings.providerStrategies || {};
+      const override = { ...(current[provider] || {}) };
+      override.isActive = !!isActive;
+      override.disabled = !isActive;
+      await updateSettings({ providerStrategies: { ...current, [provider]: override } });
+      statsCache = { at: 0, data: null };
+      return NextResponse.json({ updated: 1 });
+    }
+
     const updated = await bulkSetConnectionsActive(provider, authTypes, !!isActive);
     statsCache = { at: 0, data: null };
     return NextResponse.json({ updated });

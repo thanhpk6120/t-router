@@ -98,6 +98,10 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
     // Inject a virtual connection for no-auth free providers (with optional proxy pool from settings)
     if (FREE_PROVIDERS[providerId]?.noAuth) {
       const override = providerOverride;
+      if (override.disabled === true || override.isActive === false) {
+        log.warn("AUTH", `Provider ${providerId} is disabled`);
+        return null;
+      }
       const strategy = override.rotateStrategy || "none";
       let pickedId = override.proxyPoolId || null;
       if (strategy !== "none") {
@@ -120,6 +124,8 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
           strictProxy: resolvedProxy.strictProxy === true,
           rotateLink: resolvedProxy.rotateLink || resolvedProxy.proxyPool?.rotateLink || "",
           proxyPool: resolvedProxy.proxyPool || null,
+          directActive: resolvedProxy.directActive !== false,
+          isDirect: resolvedProxy.isDirect === true,
         },
       };
     }
@@ -324,6 +330,8 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
         strictProxy: resolvedProxy.strictProxy === true,
         rotateLink: resolvedProxy.rotateLink || resolvedProxy.proxyPool?.rotateLink || "",
         proxyPool: resolvedProxy.proxyPool || null,
+        directActive: resolvedProxy.directActive !== false,
+        isDirect: resolvedProxy.isDirect === true,
       },
       connectionId: connection.id,
       // Include current status for optimization check

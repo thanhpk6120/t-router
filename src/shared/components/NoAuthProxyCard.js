@@ -5,12 +5,13 @@ import PropTypes from "prop-types";
 import Card from "./Card";
 import Select from "./Select";
 import Badge from "./Badge";
-
+import Toggle from "./Toggle";
 const NONE_PROXY_POOL_VALUE = "__none__";
 const STRATEGIES = [
   { value: "none", label: "None (single pool)" },
   { value: "round-robin", label: "Round-robin" },
   { value: "random", label: "Random" },
+  { value: "fallback", label: "Fallback (Priority)" },
 ];
 const PROXY_SOURCES = [
   { value: "both", label: "Both (Static + Rotating)" },
@@ -31,6 +32,7 @@ export default function NoAuthProxyCard({ providerId, isNoAuth = false }) {
   const [savedFlash, setSavedFlash] = useState(false);
   const [rotating, setRotating] = useState(false);
   const [rotateResult, setRotateResult] = useState(null);
+  const [providerActive, setProviderActive] = useState(true);
   useEffect(() => {
     let cancelled = false;
     Promise.all([
@@ -44,6 +46,7 @@ export default function NoAuthProxyCard({ providerId, isNoAuth = false }) {
       setRotateStrategy(override.rotateStrategy || "none");
       setSelectedPoolIds(Array.isArray(override.proxyPoolIds) ? override.proxyPoolIds : []);
       setProxySource(override.proxySource || "both");
+      setProviderActive(override.isActive !== false && override.disabled !== true);
     }).catch(() => {});
     return () => { cancelled = true; };
   }, [providerId]);
@@ -78,8 +81,36 @@ export default function NoAuthProxyCard({ providerId, isNoAuth = false }) {
     } finally {
       setSaving(false);
     }
-  }, [providerId]);
+  }, [providerId, proxySource]);
 
+  const handleToggleActive = async (val) => {
+    setProviderActive(val);
+    setSaving(true);
+    try {
+      const res = await fetch("/api/settings", { cache: "no-store" });
+      const data = res.ok ? await res.json() : {};
+      const current = data.providerStrategies || {};
+      const override = { ...(current[providerId] || {}) };
+      override.isActive = val;
+      override.disabled = !val;
+      await fetch("/api/settings", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ providerStrategies: { ...current, [providerId]: override } }),
+      });
+      await fetch("/api/providers", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ provider: providerId, authTypes: ["free"], isActive: val }),
+      }).catch(() => {});
+      setSavedFlash(true);
+      setTimeout(() => setSavedFlash(false), 1500);
+    } catch (e) {
+      console.log("Toggle provider active error:", e);
+    } finally {
+      setSaving(false);
+    }
+  };
   const handlePoolChange = (newPoolId) => {
     setProxyPoolId(newPoolId);
     save(newPoolId, rotateStrategy, selectedPoolIds, proxySource);
@@ -140,13 +171,19 @@ export default function NoAuthProxyCard({ providerId, isNoAuth = false }) {
           <span className="material-symbols-outlined text-[20px]">{isNoAuth ? "lock_open" : "lan"}</span>
         </div>
         <div className="flex-1">
-          <p className="text-sm font-medium">{isNoAuth ? "No authentication required" : "Proxy Pool & Rotation"}</p>
+          <p className="text-sm font-medium">{isNoAuth ? "OpenCode Free & Proxy Settings" : "Proxy Pool & Rotation"}</p>
           <p className="text-xs text-text-muted">
             {isNoAuth
-              ? "This provider is ready to use. To bypass IP-based limits, route requests through your own proxy pool — your own IP credentials only, no proxies are included."
-              : "Route requests for this provider through a proxy pool or rotate across multiple proxies (round-robin / random) automatically."}
+              ? "Free tier AI service. Toggle this provider on/off, or route requests through your own proxy pool."
+              : "Route requests for this provider through a proxy pool or rotate across multiple proxies (round-robin / random / fallback) automatically."}
           </p>
         </div>
+        {isNoAuth && (
+          <div className="flex items-center gap-2 mr-2">
+            <span className="text-xs text-text-muted font-medium">{providerActive ? "Active" : "Disabled"}</span>
+            <Toggle checked={providerActive} onChange={handleToggleActive} disabled={saving} />
+          </div>
+        )}
         {savedFlash && <Badge variant="success" size="sm">Saved</Badge>}
       </div>
 
@@ -159,7 +196,7 @@ export default function NoAuthProxyCard({ providerId, isNoAuth = false }) {
           { value: NONE_PROXY_POOL_VALUE, label: "None (direct)" },
           ...proxyPools.map((pool) => ({
             value: pool.id,
-            label: `${pool.name}${pool.rotateLink || pool.rotateUrl ? " [🔄 Rotating IP]" : ""}`,
+            label: `${pool.name}${pool.id === "direct" ? " [Direct / No Proxy]" : ""}${pool.rotateLink || pool.rotateUrl ? " [🔄 Rotating IP]" : ""}`,
           })),
         ]}
         hint={isRotation ? (selectedPoolIds.length > 0 ? "Rotating through the selected pools." : "Pool selector is ignored when rotation is active — all active pools are used.") : undefined}
@@ -211,8 +248,10 @@ export default function NoAuthProxyCard({ providerId, isNoAuth = false }) {
               : isRotation
                 ? rotateStrategy === "round-robin"
                   ? <>{"Rotating through all "}{proxyPools.length}{" active pools in order. State is in-memory (resets on restart)."}</>
-                  : <>{"Picking a random pool from "}{proxyPools.length}{" active pools each request."}</>
-                : "Uses the selected pool above. Set to Round-robin or Random to rotate across all active pools."}
+                  : rotateStrategy === "random"
+                    ? <>{"Picking a random pool from "}{proxyPools.length}{" active pools each request."}</>
+                    : <>{"Trying active pools in priority order (Fallback)."}</>
+                : "Uses the selected pool above. Set to Round-robin, Random, or Fallback to rotate across active pools."}
         </p>
       </div>
       {isRotation && (

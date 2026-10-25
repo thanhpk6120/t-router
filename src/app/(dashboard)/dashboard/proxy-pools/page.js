@@ -931,18 +931,29 @@ export default function ProxyPoolsPage() {
           </div>
         ) : (
           <div className="flex flex-col divide-y divide-black/[0.04] dark:divide-white/[0.05]">
-            {proxyPools.map((pool) => (
+            {proxyPools.map((pool) => {
+              const isDirect = pool.id === "direct" || pool.type === "direct" || pool.name === "Direct";
+              return (
               <div key={pool.id} className="flex flex-col gap-3 py-3 sm:flex-row sm:items-center sm:justify-between">
                 <div className="flex items-start gap-3 min-w-0 flex-1">
-                  <input
-                    type="checkbox"
-                    checked={selectedIds.includes(pool.id)}
-                    onChange={() => toggleSelect(pool.id)}
-                    className="mt-1 size-4 shrink-0 rounded border-black/20 dark:border-white/20"
-                  />
+                  {!isDirect ? (
+                    <input
+                      type="checkbox"
+                      checked={selectedIds.includes(pool.id)}
+                      onChange={() => toggleSelect(pool.id)}
+                      className="mt-1 size-4 shrink-0 rounded border-black/20 dark:border-white/20"
+                    />
+                  ) : (
+                    <div className="mt-1 size-4 shrink-0" />
+                  )}
                   <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2 flex-wrap">
                     <p className="min-w-0 max-w-full truncate text-sm font-medium sm:max-w-[18rem]">{pool.name}</p>
+                    {isDirect ? (
+                      <Badge variant="default" size="sm" className="bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 font-medium">
+                        Direct (No Proxy)
+                      </Badge>
+                    ) : null}
                     <Badge variant={getStatusVariant(pool.testStatus)} size="sm" dot>
                       {pool.testStatus || "unknown"}
                     </Badge>
@@ -970,8 +981,10 @@ export default function ProxyPoolsPage() {
                       </Badge>
                     )}
                   </div>
-                  <p className="text-xs text-text-muted truncate mt-1">{pool.proxyUrl}</p>
-                  {pool.noProxy ? (
+                  <p className="text-xs text-text-muted truncate mt-1">
+                    {isDirect ? "Direct connection to the internet without proxy" : pool.proxyUrl}
+                  </p>
+                  {!isDirect && pool.noProxy ? (
                     <p className="text-xs text-text-muted truncate">No proxy: {pool.noProxy}</p>
                   ) : null}
                   {(pool.rotateLink || pool.rotateUrl) ? (
@@ -1029,16 +1042,18 @@ export default function ProxyPoolsPage() {
                   >
                     <span className="material-symbols-outlined text-[18px]">edit</span>
                   </button>
-                  <button
-                    onClick={() => handleDelete(pool)}
-                    className="p-2 rounded hover:bg-red-500/10 text-red-500"
-                    title="Delete"
-                  >
-                    <span className="material-symbols-outlined text-[18px]">delete</span>
-                  </button>
+                  {!isDirect && (
+                    <button
+                      onClick={() => handleDelete(pool)}
+                      className="p-2 rounded hover:bg-red-500/10 text-red-500"
+                      title="Delete"
+                    >
+                      <span className="material-symbols-outlined text-[18px]">delete</span>
+                    </button>
+                  )}
                 </div>
               </div>
-            ))}
+            );})}
           </div>
         )}
         {total > 0 && (
@@ -1326,13 +1341,19 @@ export default function ProxyPoolsPage() {
             onChange={(e) => setFormData((prev) => ({ ...prev, name: e.target.value }))}
             placeholder="Office Proxy"
           />
-          <Input
-            label="Proxy URL"
-            value={formData.proxyUrl}
-            onChange={(e) => setFormData((prev) => ({ ...prev, proxyUrl: e.target.value }))}
-            placeholder="http://127.0.0.1:7897 hoặc host:port:user:pass"
-            hint="Full URL (http://... / socks5://...) or shorthand host:port / host:port:user:pass"
-          />
+          {!editingProxyPool || editingProxyPool.id !== "direct" ? (
+            <Input
+              label="Proxy URL"
+              value={formData.proxyUrl}
+              onChange={(e) => setFormData((prev) => ({ ...prev, proxyUrl: e.target.value }))}
+              placeholder="http://127.0.0.1:7897 hoặc host:port:user:pass"
+              hint="Full URL (http://... / socks5://...) or shorthand host:port / host:port:user:pass"
+            />
+          ) : (
+            <div className="rounded-lg bg-emerald-500/5 border border-emerald-500/20 p-2.5 text-xs text-emerald-600 dark:text-emerald-400">
+              <span className="font-semibold">Direct Connection:</span> Uses local network interface directly without passing through external proxy servers.
+            </div>
+          )}
           <Input
             label="Rotate Link / URL (Optional)"
             value={formData.rotateLink}

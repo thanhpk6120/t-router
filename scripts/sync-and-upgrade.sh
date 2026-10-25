@@ -71,6 +71,56 @@ $NICE_CMD git -C "$DIR_PRO" pull origin master || true
 log "Pulling latest git changes for t-router..."
 $NICE_CMD git -C "$DIR_TROUTER" pull origin main || true
 
+# 3.1 Check if t-router on Git was updated or version bumped vs npmjs
+CURRENT_VER=$(node -e "try { console.log(require('$DIR_TROUTER/package.json').version); } catch { console.log('0.5.109-pro.12-t.6'); }" 2>/dev/null)
+NPM_PUB_VER=$(npm view t-router-proxy version 2>/dev/null || echo "")
+
+if [ -n "$CURRENT_VER" ] && [ "$CURRENT_VER" != "$NPM_PUB_VER" ] && [ "$CURRENT_VER" != "$SAVED_TROUTER" ]; then
+  log "New t-router version detected on Git: $CURRENT_VER (published on npm: ${NPM_PUB_VER:-none}, saved: $SAVED_TROUTER)"
+  log "Running verification build and notifying Telegram for publish confirmation..."
+
+  # Run preliminary syntax verification
+  find "$DIR_TROUTER/src" "$DIR_TROUTER/open-sse" -name "*.js" -exec node -c {} +
+
+  # Build CLI with resource limits
+  log "Building CLI package with resource limits..."
+  $NICE_CMD node --max-old-space-size=2048 "$DIR_TROUTER/cli/scripts/build-cli.js" 2>&1 | tee -a "$LOG_FILE"
+
+  # Restart runtime service
+  log "Restarting t-router.service on port 20126..."
+  systemctl --user restart t-router.service || true
+
+  # Notify Telegram for publish approval
+  LATEST_COMMIT_MSG=$(git -C "$DIR_TROUTER" log -1 --pretty=%B | head -n 3 | tr '\n' ' ')
+  JSON_PAYLOAD=$(CURRENT_VER="$CURRENT_VER" NPM_PUB_VER="$NPM_PUB_VER" COMMIT_MSG="$LATEST_COMMIT_MSG" node -e '
+    console.log(JSON.stringify({
+      currentVersion: process.env.CURRENT_VER || "",
+      publishedVersion: process.env.NPM_PUB_VER || "",
+      nextVersion: process.env.CURRENT_VER || "",
+      mergedFrom: "GitHub origin/main",
+      summary: process.env.COMMIT_MSG || "Bản cập nhật mới trên GitHub"
+    }));
+  ')
+
+  curl -s -X POST http://127.0.0.1:20129/notify-release \
+    -H "Content-Type: application/json" \
+    -d "$JSON_PAYLOAD" || log "Failed to call publisher daemon on 127.0.0.1:20129"
+
+  # Update saved t_router version in versions file
+  node -e "
+    const fs = require('fs');
+    try {
+      const f = '$VERSIONS_FILE';
+      let d = fs.existsSync(f) ? JSON.parse(fs.readFileSync(f, 'utf8')) : {};
+      d.t_router = '$CURRENT_VER';
+      d.updated_at = new Date().toISOString();
+      fs.writeFileSync(f, JSON.stringify(d, null, 2) + '\n');
+    } catch {}
+  " 2>/dev/null || true
+
+  log "Direct git update handled and Telegram notification sent. Continuing upstream sync check..."
+fi
+
 HEAD_9ROUTER=$(git -C "$DIR_9ROUTER" rev-parse --short HEAD 2>/dev/null || echo "")
 HEAD_PRO=$(git -C "$DIR_PRO" rev-parse --short HEAD 2>/dev/null || echo "")
 

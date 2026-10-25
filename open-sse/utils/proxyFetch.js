@@ -427,11 +427,14 @@ export async function proxyAwareFetch(url, options = {}, proxyOptions = null) {
       if (rotateLink) {
         triggerBackgroundRotate(rotateLink, proxyUrl);
       }
-      // If strictProxy is enabled, fail hard instead of falling back to direct
+      // If strictProxy is enabled or Direct is disabled, fail hard instead of leaking direct IP
       if (proxyOptions?.strictProxy === true) {
         throw new Error(`[ProxyFetch] Proxy required but failed (strictProxy=true): ${proxyError.message}`);
       }
-      console.warn(`[ProxyFetch] Proxy failed, falling back to direct: ${proxyError.message}`);
+      if (proxyOptions?.directActive === false) {
+        throw new Error(`[ProxyFetch] Proxy failed and Direct connection is disabled in Proxy Pools. Refusing direct fallback to prevent IP leak: ${proxyError.message}`);
+      }
+      console.warn(`[ProxyFetch] Proxy failed, falling back to active Direct connection: ${proxyError.message}`);
       return fetchWithTlsFallback(url, options, null);
     }
   }
@@ -452,6 +455,12 @@ export async function proxyAwareFetch(url, options = {}, proxyOptions = null) {
     || !!normalizeString(proxyOptions?.url ?? proxyOptions?.connectionProxyUrl);
   if (proxyOptions?.strictProxy === true && proxyIntended) {
     throw new Error("[ProxyFetch] Proxy required but none resolved (strictProxy=true)");
+  }
+  if (proxyIntended && proxyOptions?.directActive === false && !proxyOptions?.isDirect) {
+    throw new Error("[ProxyFetch] Proxy intended but none active and Direct connection is disabled in Proxy Pools.");
+  }
+  if (proxyOptions?.isDirect && proxyOptions?.directActive === false) {
+    throw new Error("[ProxyFetch] Direct connection is disabled in Proxy Pools (isActive=false).");
   }
 
   // got-scraping disabled — use native fetch directly

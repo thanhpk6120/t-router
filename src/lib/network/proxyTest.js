@@ -38,6 +38,38 @@ export async function testProxyUrl({ proxyUrl, testUrl, timeoutMs } = {}) {
       ? Math.min(timeoutMsRaw, 30000)
       : DEFAULT_TIMEOUT_MS;
 
+  if (normalizedProxyUrl === "direct") {
+    const controller = new AbortController();
+    const startedAt = Date.now();
+    const timer = setTimeout(() => controller.abort(), normalizedTimeoutMs);
+    try {
+      const res = await undiciFetch(normalizedTestUrl, {
+        method: "HEAD",
+        signal: controller.signal,
+        headers: {
+          "User-Agent": "TRouter",
+        },
+      });
+      return {
+        ok: res.ok,
+        status: res.status,
+        statusText: res.statusText,
+        url: normalizedTestUrl,
+        elapsedMs: Date.now() - startedAt,
+      };
+    } catch (err) {
+      const isTimeout = err?.name === "AbortError" || controller.signal.aborted;
+      return {
+        ok: false,
+        status: isTimeout ? 504 : 502,
+        error: isTimeout ? `Direct test timed out after ${normalizedTimeoutMs}ms` : getErrorMessage(err),
+        elapsedMs: Date.now() - startedAt,
+      };
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
   let dispatcher;
 
   try {
@@ -61,7 +93,7 @@ export async function testProxyUrl({ proxyUrl, testUrl, timeoutMs } = {}) {
         dispatcher,
         signal: controller.signal,
         headers: {
-          "User-Agent": "9Router",
+          "User-Agent": "TRouter",
         },
       });
 

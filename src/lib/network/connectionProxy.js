@@ -1,4 +1,4 @@
-import { getProxyPoolById, getProxyPools } from "@/models";
+import { getProxyPoolById, getProxyPools, isDirectProxyActive } from "@/models";
 
 // Safely normalize any value into a trimmed string.
 function normalizeString(value) {
@@ -30,6 +30,9 @@ export function pickProxyPoolId(poolIds, strategy, providerId) {
     return poolIds[Math.floor(Math.random() * poolIds.length)];
   }
 
+  if (strategy === "fallback") {
+    return poolIds[0];
+  }
   return poolIds[0]; // "none" or unknown
 }
 
@@ -103,8 +106,8 @@ export async function resolveConnectionProxyConfig(
     // usable (inactive, or saved without a url). Otherwise the unusable-pool
     // path below reports strictProxy:false and the request silently leaves
     // over the direct IP — the leak strict mode exists to prevent (#4333).
+    const directActive = await isDirectProxyActive().catch(() => true);
     let poolStrictProxy = false;
-
     /**
      * -----------------------------
      * Proxy Pool Resolution
@@ -124,6 +127,20 @@ export async function resolveConnectionProxyConfig(
       poolStrictProxy = proxyPool?.strictProxy === true;
 
       if (isValidPool) {
+        if (proxyPool.id === "direct" || proxyPool.type === "direct" || proxyPool.proxyUrl === "direct") {
+          return {
+            source: "direct",
+            proxyPoolId: "direct",
+            proxyPool,
+            connectionProxyEnabled: false,
+            connectionProxyUrl: "",
+            connectionNoProxy: noProxy,
+            strictProxy: false,
+            isDirect: true,
+            directActive,
+          };
+        }
+
         /**
          * Vercel/Cloudflare/Deno/Netlify relay proxies use base URL rewriting
          * instead of HTTP_PROXY environment variables.
@@ -131,17 +148,14 @@ export async function resolveConnectionProxyConfig(
         if (proxyPool.type === "vercel" || proxyPool.type === "cloudflare" || proxyPool.type === "deno" || proxyPool.type === "netlify") {
           return {
             source: proxyPool.type,
-
             proxyPoolId,
             proxyPool,
-
             connectionProxyEnabled: false,
             connectionProxyUrl: "",
             connectionNoProxy: noProxy,
-
             strictProxy: proxyPool.strictProxy === true,
-
-            vercelRelayUrl: proxyUrl, // Still mapped to vercelRelayUrl in the unified payload since they use the exact same header spec
+            vercelRelayUrl: proxyUrl,
+            directActive,
           };
         }
 
@@ -150,15 +164,13 @@ export async function resolveConnectionProxyConfig(
          */
         return {
           source: "pool",
-
           proxyPoolId,
           proxyPool,
-
           connectionProxyEnabled: true,
           connectionProxyUrl: proxyUrl,
           connectionNoProxy: noProxy,
-
           strictProxy: proxyPool.strictProxy === true,
+          directActive,
         };
       }
     }
@@ -179,7 +191,7 @@ export async function resolveConnectionProxyConfig(
         proxyPool: null,
 
         strictProxy: poolStrictProxy,
-
+        directActive,
         ...legacy,
       };
     }
@@ -196,7 +208,7 @@ export async function resolveConnectionProxyConfig(
       proxyPool: null,
 
       strictProxy: poolStrictProxy,
-
+      directActive,
       ...legacy,
     };
   } catch (error) {
@@ -216,6 +228,7 @@ export async function resolveConnectionProxyConfig(
       connectionNoProxy: "",
 
       strictProxy: false,
+      directActive: true,
     };
   }
 }

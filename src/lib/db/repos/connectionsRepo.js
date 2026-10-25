@@ -144,6 +144,26 @@ export async function getProviderConnectionStats() {
       }
     }
   }
+  try {
+    const settingsRow = db.get("SELECT data FROM settings WHERE id = 1 OR id = 'main'");
+    const settings = settingsRow ? parseJson(settingsRow.data, {}) : {};
+    const providerStrategies = settings.providerStrategies || {};
+    const noAuthProviders = ["opencode"];
+    for (const pId of noAuthProviders) {
+      const override = providerStrategies[pId] || {};
+      const isDisabled = override.disabled === true || override.isActive === false;
+      const key = `${pId}|free`;
+      stats[key] = {
+        provider: pId,
+        authType: "free",
+        total: 1,
+        connected: isDisabled ? 0 : 1,
+        error: 0,
+        allDisabled: isDisabled,
+        latestError: null,
+      };
+    }
+  } catch {}
   return stats;
 }
 

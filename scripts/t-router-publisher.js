@@ -233,17 +233,18 @@ const server = http.createServer(async (req, res) => {
         if (bodyStr) body = JSON.parse(bodyStr);
       } catch (e) {}
 
-      if (url.pathname === '/notify-merge') {
-        const { currentVersion, upstreamProVersion, mergedFrom, summary } = body;
-        log('Received notify-merge: ' + JSON.stringify(body));
+      if (url.pathname === '/notify-merge' || url.pathname === '/notify-release') {
+        const { currentVersion, nextVersion, upstreamProVersion, publishedVersion, mergedFrom, summary } = body;
+        log('Received notify: ' + JSON.stringify(body));
 
-        const nextVer = resolveNextVersion(currentVersion, upstreamProVersion);
+        const targetVer = nextVersion || currentVersion || resolveNextVersion(currentVersion, upstreamProVersion);
         const stateData = {
           currentVersion: currentVersion || '0.5.109-pro.12-t.0',
-          nextVersion: nextVer,
+          nextVersion: targetVer,
+          publishedVersion: publishedVersion || '',
           upstreamProVersion: upstreamProVersion || '',
-          mergedFrom: mergedFrom || 'Upstream',
-          summary: summary || 'Tích hợp các bản cập nhật mới nhất từ upstream',
+          mergedFrom: mergedFrom || 'Git origin/main',
+          summary: summary || 'Bản cập nhật mới trên GitHub',
           timestamp: new Date().toISOString(),
         };
 
@@ -254,17 +255,18 @@ const server = http.createServer(async (req, res) => {
         }
 
         const msgText =
-          '🚀 <b>T-Router Auto Sync: Đã merge thành công!</b>\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n' +
-          '📦 <b>Phiên bản hiện tại:</b> <code>' + (currentVersion || 'N/A') + '</code>\n' +
-          '🔀 <b>Merge từ:</b> ' + (mergedFrom || 'Upstream') + '\n' +
-          '📝 <b>Tóm tắt:</b> ' + (summary || 'Cập nhật upstream') + '\n' +
-          '✅ <b>Kiểm tra:</b> Syntax OK, build thử nghiệm OK!\n\n' +
+          '🚀 <b>T-Router: Phát hiện Code mới & Version mới!</b>\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n' +
+          '📦 <b>Phiên bản Git:</b> <code>' + (currentVersion || 'N/A') + '</code>\n' +
+          (publishedVersion ? '🌐 <b>Phiên bản npmjs:</b> <code>' + publishedVersion + '</code>\n' : '') +
+          '🔀 <b>Nguồn:</b> ' + (mergedFrom || 'Git origin/main') + '\n' +
+          '📝 <b>Tóm tắt:</b> ' + (summary || 'Cập nhật tính năng mới') + '\n' +
+          '✅ <b>Kiểm tra:</b> Syntax OK, build hoàn tất, service active!\n\n' +
           '💡 Đề xuất publish lên npmjs.com?';
 
         const inlineKeyboard = {
           inline_keyboard: [
             [
-              { text: '🚀 Publish (' + nextVer + ')', callback_data: 'trouter_pub_auto' },
+              { text: '🚀 Publish (' + targetVer + ')', callback_data: 'trouter_pub_auto' },
               { text: '✏️ Custom Version', callback_data: 'trouter_pub_custom' },
             ],
             [
@@ -274,7 +276,7 @@ const server = http.createServer(async (req, res) => {
         };
 
         await sendTelegram(msgText, inlineKeyboard);
-        return sendJson(200, { ok: true, message: 'Notification sent' });
+        return sendJson(200, { ok: true, message: 'Notification sent', targetVersion: targetVer });
       }
 
       if (url.pathname === '/publish') {

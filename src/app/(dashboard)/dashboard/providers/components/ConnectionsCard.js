@@ -414,16 +414,21 @@ export default function ConnectionsCard({ providerId, isOAuth, loginProviderId =
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between mb-4">
           <h2 className="text-lg font-semibold">Connections</h2>
           <div className="flex flex-wrap items-center gap-2">
-            <span className="text-xs text-text-muted font-medium">Round Robin</span>
-            <Toggle
-              checked={providerStrategy === "round-robin"}
-              onChange={(enabled) => {
-                const strategy = enabled ? "round-robin" : null;
-                setProviderStrategy(strategy);
-                if (enabled && !providerStickyLimit) setProviderStickyLimit("1");
-                saveStrategy(strategy, enabled ? (providerStickyLimit || "1") : providerStickyLimit);
+            <span className="text-xs text-text-muted font-medium">Account Strategy:</span>
+            <select
+              value={providerStrategy || "fill-first"}
+              onChange={(e) => {
+                const strat = e.target.value === "fill-first" ? null : e.target.value;
+                setProviderStrategy(strat);
+                if (strat === "round-robin" && !providerStickyLimit) setProviderStickyLimit("1");
+                saveStrategy(strat, strat === "round-robin" ? (providerStickyLimit || "1") : providerStickyLimit);
               }}
-            />
+              className="py-1 px-2 text-xs border border-border rounded-md bg-background text-text-main focus:outline-none focus:border-primary"
+            >
+              <option value="fill-first">Priority (Fill First)</option>
+              <option value="round-robin">Round Robin</option>
+              <option value="balanced">Balanced (Healthiest)</option>
+            </select>
             {providerStrategy === "round-robin" && (
               <div className="flex flex-wrap items-center gap-1.5">
                 <span className="text-xs text-text-muted">Sticky:</span>

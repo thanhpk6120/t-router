@@ -25,6 +25,24 @@ Upstream changelogs (`CHANGELOG.md` and `CHANGELOG-PRO.md`) are kept intact for 
 
 ---
 
+## v0.5.109-pro.12-t.6 (2026-10-26)
+
+- **Cố định Proxy Direct trong Proxy Pools & Chống rò rỉ IP (No Direct Leak)**:
+  - Proxy Pools luôn có một proxy mặc định tên "Direct" đại diện cho đường truyền trực tiếp không qua proxy.
+  - Cho phép người dùng chủ động tắt (inactive) proxy "Direct" này để cấm hoàn toàn việc tự động fallback về mạng trực tiếp khi các proxy active bị lỗi hoặc quá tải.
+  - Khi Direct bị tắt, hệ thống từ chối fallback về IP máy chủ và trả về lỗi rõ ràng để bảo vệ an toàn danh tính IP.
+- **Hỗ trợ Bật/Tắt (Toggle Active) OpenCode Free**:
+  - Bổ sung công tắc bật/tắt hoạt động cho provider OpenCode Free như mọi provider khác.
+  - Khi tắt, OpenCode Free chuyển sang trạng thái Disabled mờ 50% và không xuất hiện trong danh mục `/v1/models`.
+- **Đồng bộ Rotation Strategies & Cấu hình Proxy cho tất cả Provider**:
+  - Mở rộng đầy đủ các chế độ xoay vòng: None, Round-robin, Random, Fallback (Priority) cho toàn bộ các nhà cung cấp.
+  - Giao diện cấu hình Proxy Pool & Rotation nhất quán trên tất cả các trang chi tiết provider.
+- **Dynamic Tool Gating & Protobuf Schema Sanitization**:
+  - Tự động nén và lọc thông minh danh sách MCP Tools khi vượt ngưỡng 64 tools, giữ trọn vẹn 100% Core Tools và Context Tools.
+  - Làm sạch sâu JSON Schema, loại bỏ lỗi Protobuf của Google Gemini và ngăn ngừa vòng lặp retry ngầm trên Claude Code CLI.
+
+---
+
 ## v0.5.109-pro.12-t.5 (2026-10-25)
 
 - **Advanced Proxy Management & Dynamic IP Rotation (aligned with opencode2api)**:

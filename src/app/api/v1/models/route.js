@@ -368,7 +368,10 @@ export async function buildModelsList(kindFilter, options = {}) {
   }
 
   // Include no-auth free providers (e.g. opencode) so their models are exposed in /v1/models
+  const providerStrategies = settings?.providerStrategies || {};
   for (const [id, provider] of Object.entries(FREE_PROVIDERS || {})) {
+    const override = providerStrategies[id] || {};
+    if (override.disabled === true || override.isActive === false) continue;
     if (provider?.noAuth && !activeConnectionByProvider.has(id)) {
       activeConnectionByProvider.set(id, {
         id: "noauth",

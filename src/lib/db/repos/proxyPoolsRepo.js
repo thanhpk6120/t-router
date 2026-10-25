@@ -1,6 +1,36 @@
 import { v4 as uuidv4 } from "uuid";
 import { getAdapter } from "../driver.js";
 import { parseJson, stringifyJson } from "../helpers/jsonCol.js";
+export const DIRECT_PROXY_ID = "direct";
+export const DIRECT_PROXY_NAME = "Direct";
+
+function ensureDirectPool(db) {
+  try {
+    const row = db.get("SELECT id FROM proxyPools WHERE id = ?", [DIRECT_PROXY_ID]);
+    if (!row) {
+      const now = new Date().toISOString();
+      const directPool = {
+        id: DIRECT_PROXY_ID,
+        name: DIRECT_PROXY_NAME,
+        proxyUrl: "direct",
+        noProxy: "",
+        rotateLink: "",
+        type: "direct",
+        isActive: true,
+        strictProxy: false,
+        testStatus: "active",
+        lastTestedAt: now,
+        lastRotatedAt: null,
+        lastRotateResponse: null,
+        lastError: null,
+        createdAt: now,
+        updatedAt: now,
+        isSystem: true,
+      };
+      upsert(db, directPool);
+    }
+  } catch {}
+}
 
 function rowToPool(row) {
   if (!row) return null;
@@ -41,6 +71,7 @@ function upsert(db, p) {
 
 export async function getProxyPools(filter = {}) {
   const db = await getAdapter();
+  ensureDirectPool(db);
   const where = [];
   const params = [];
   if (filter.isActive !== undefined) { where.push("isActive = ?"); params.push(filter.isActive ? 1 : 0); }
@@ -55,6 +86,14 @@ export async function getProxyPoolById(id) {
   const db = await getAdapter();
   return rowToPool(db.get(`SELECT * FROM proxyPools WHERE id = ?`, [id]));
 }
+
+export async function isDirectProxyActive() {
+  const db = await getAdapter();
+  ensureDirectPool(db);
+  const row = db.get("SELECT isActive FROM proxyPools WHERE id = ?", [DIRECT_PROXY_ID]);
+  return row ? (row.isActive === 1 || row.isActive === true) : true;
+}
+
 
 export async function createProxyPool(data) {
   const db = await getAdapter();
@@ -94,6 +133,7 @@ export async function updateProxyPool(id, data) {
 }
 
 export async function deleteProxyPool(id) {
+  if (id === DIRECT_PROXY_ID) return null; // Direct proxy cannot be deleted
   const db = await getAdapter();
   let removed = null;
   db.transaction(() => {
@@ -107,10 +147,12 @@ export async function deleteProxyPool(id) {
 
 export async function deleteProxyPoolsByIds(ids) {
   if (!Array.isArray(ids) || !ids.length) return 0;
+  const safeIds = ids.filter(id => id !== DIRECT_PROXY_ID);
+  if (!safeIds.length) return 0;
   const db = await getAdapter();
   let changes = 0;
   db.transaction(() => {
-    for (const id of ids) {
+    for (const id of safeIds) {
       const info = db.run(`DELETE FROM proxyPools WHERE id = ?`, [id]);
       changes += info?.changes ?? 0;
     }
