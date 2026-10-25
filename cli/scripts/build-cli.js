@@ -194,7 +194,17 @@ function buildCliPackage() {
   // Step 2: Clean old app/cli/app if exists
   console.log("2️⃣  Cleaning old app/cli/app...");
   if (fs.existsSync(cliAppDir)) {
-    fs.rmSync(cliAppDir, { recursive: true, force: true });
+    try {
+      fs.rmSync(cliAppDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 500 });
+    } catch {
+      // Fallback for Windows lock
+      try {
+        const files = fs.readdirSync(cliAppDir);
+        for (const file of files) {
+          fs.rmSync(path.join(cliAppDir, file), { recursive: true, force: true, maxRetries: 5, retryDelay: 300 });
+        }
+      } catch {}
+    }
   }
   console.log("✅ Cleaned\n");
 

@@ -242,6 +242,26 @@ export function openaiToClaudeResponse(chunk, state) {
         index: toolInfo.blockIndex
       });
     }
+    // Anti-Empty Guard: If the model produced 0 content blocks (neither text, thinking, nor tool call),
+    // inject a single whitespace text delta to ensure Claude Code receives visible output and does not enter
+    // the infinite retry loop: [Your previous response had no visible output...]
+    if (state.nextBlockIndex === 0) {
+      const emptyBlockIdx = state.nextBlockIndex++;
+      results.push({
+        type: "content_block_start",
+        index: emptyBlockIdx,
+        content_block: { type: CLAUDE_BLOCK.TEXT, text: "" }
+      });
+      results.push({
+        type: "content_block_delta",
+        index: emptyBlockIdx,
+        delta: { type: "text_delta", text: " " }
+      });
+      results.push({
+        type: "content_block_stop",
+        index: emptyBlockIdx
+      });
+    }
 
     // Mark finish for later usage injection in stream.js
     state.finishReason = choice.finish_reason;

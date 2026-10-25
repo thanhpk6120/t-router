@@ -4,7 +4,7 @@ import { adjustMaxTokens } from "../formats/maxTokens.js";
 import { encodeDataUri } from "../concerns/image.js";
 import { ROLE, OPENAI_BLOCK, CLAUDE_BLOCK } from "../schema/index.js";
 import { collapseTextParts } from "../concerns/message.js";
-
+import { gateAndPruneTools } from "../concerns/dynamicToolGating.js";
 function stripAnthropicBillingHeader(text) {
   if (typeof text !== "string") return "";
   return text.replace(/^x-anthropic-billing-header:[^\n]*(?:\r?\n)?/i, "");
@@ -63,14 +63,18 @@ export function claudeToOpenAIRequest(model, body, stream) {
   // (distinct from the global immediate-next check in concerns/toolCall, runs on the openai leg).
   fixMissingToolResponsesOpenAI(result.messages);
 
-  // Tools
+  // Tools (gated & sanitized for OpenAI/non-Anthropic limits)
   if (body.tools && Array.isArray(body.tools)) {
-    result.tools = body.tools.map(tool => ({
+    const gatedTools = gateAndPruneTools(body.tools, {
+      messages: body.messages,
+      toolChoice: body.tool_choice,
+    });
+    result.tools = gatedTools.map(tool => ({
       type: OPENAI_BLOCK.FUNCTION,
       function: {
-        name: tool.name,
-        description: String(tool.description || ""),
-        parameters: tool.input_schema || { type: "object", properties: {} }
+        name: tool.name || tool.function?.name || "",
+        description: String(tool.description || tool.function?.description || ""),
+        parameters: tool.input_schema || tool.function?.parameters || tool.parameters || { type: "object", properties: {} }
       }
     }));
   }
