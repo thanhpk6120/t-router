@@ -23,6 +23,7 @@ export default function NoAuthProxyCard({ providerId, isNoAuth = false }) {
   const [proxyPools, setProxyPools] = useState([]);
   const [proxyPoolId, setProxyPoolId] = useState(NONE_PROXY_POOL_VALUE);
   const [rotateStrategy, setRotateStrategy] = useState("none");
+  const [selectedPoolIds, setSelectedPoolIds] = useState([]);
   const [proxySource, setProxySource] = useState("both");
   const [poolSearch, setPoolSearch] = useState("");
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -62,6 +63,7 @@ export default function NoAuthProxyCard({ providerId, isNoAuth = false }) {
       else delete override.proxyPoolIds;
       if (source && source !== "both") override.proxySource = source;
       else delete override.proxySource;
+      const updated = { ...current };
       if (Object.keys(override).length === 0) delete updated[providerId];
       else updated[providerId] = override;
       await fetch("/api/settings", {
