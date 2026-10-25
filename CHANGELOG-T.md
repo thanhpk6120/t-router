@@ -5,8 +5,12 @@ Upstream changelogs (`CHANGELOG.md` and `CHANGELOG-PRO.md`) are kept intact for 
 
 ---
 
-## Upstream Sync (9router 0.5.109, 9router-pro 0.5.109-pro.11)
+## Upstream Sync (9router 0.5.109, 9router-pro 0.5.109-pro.12)
 
+- **Đồng bộ Upstream 9Router Pro v0.5.109-pro.12**:
+  - Tích hợp bản vá đóng gói packaging fix cho phân phối slim npm từ upstream 9router-pro v0.5.109-pro.12.
+  - Duy trì toàn diện tính năng variant-based prompt injection, sửa lỗi crash trang injection và tối ưu phân trang proxy pools.
+  - Bảo đảm tương thích toàn bộ hệ thống Universal Proxy Pools & Rotation cho tất cả provider, giữ nguyên cổng 20126, đường dẫn `~/.trouter`, theme Azure (#3B82F6) và icon Azure T.
 - **Prompt Injection (Variant-based)**:
   - Chuyển đổi prompt injection sang cơ chế variant-based: prompt gắn với tên variant tùy chỉnh thay vì model gốc.
   - Variant là một tên tùy chỉnh liên kết với chính xác 1 provider/model gốc kèm prompt. Khi gọi theo variant name sẽ áp dụng prompt; khi gọi theo raw model name sẽ không bị ảnh hưởng.
