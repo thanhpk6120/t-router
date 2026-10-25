@@ -69,14 +69,19 @@ export function claudeToOpenAIRequest(model, body, stream) {
       messages: body.messages,
       toolChoice: body.tool_choice,
     });
-    result.tools = gatedTools.map(tool => ({
-      type: OPENAI_BLOCK.FUNCTION,
-      function: {
-        name: tool.name || tool.function?.name || "",
-        description: String(tool.description || tool.function?.description || ""),
-        parameters: tool.input_schema || tool.function?.parameters || tool.parameters || { type: "object", properties: {} }
-      }
-    }));
+    result.tools = gatedTools
+      .filter(tool => {
+        const name = tool.name || tool.function?.name;
+        return typeof name === "string" && name.trim().length > 0;
+      })
+      .map(tool => ({
+        type: OPENAI_BLOCK.FUNCTION,
+        function: {
+          name: (tool.name || tool.function?.name).trim(),
+          description: String(tool.description || tool.function?.description || ""),
+          parameters: tool.input_schema || tool.function?.parameters || tool.parameters || { type: "object", properties: {} }
+        }
+      }));
   }
 
   // Tool choice

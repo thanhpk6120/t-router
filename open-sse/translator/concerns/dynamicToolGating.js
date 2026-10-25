@@ -101,6 +101,18 @@ export function coerceSchemaTypes(schema) {
     if (!key || typeof key !== "string" || !key.trim()) continue;
     // Strip redundant schema metadata that bloats tokens or causes 400 errors
     if (key === "$schema" || key === "$id") continue;
+
+    // Dictionaries of child schemas: keys are property names, not schema keywords
+    if ((key === "properties" || key === "patternProperties" || key === "$defs" || key === "definitions") && value && typeof value === "object" && !Array.isArray(value)) {
+      const propMap = {};
+      for (const [propName, propSchema] of Object.entries(value)) {
+        if (!propName || typeof propName !== "string" || !propName.trim()) continue;
+        propMap[propName] = coerceSchemaTypes(propSchema);
+      }
+      cleaned[key] = propMap;
+      continue;
+    }
+
     if (NUMERIC_SCHEMA_FIELDS.has(key) && typeof value === "string") {
       const num = Number(value.trim());
       cleaned[key] = Number.isFinite(num) ? num : value;
@@ -277,13 +289,18 @@ function scoreTool(tool, tokens) {
 export function gateAndPruneTools(tools, options = {}) {
   if (!Array.isArray(tools) || tools.length === 0) return tools;
 
+  // Filter out any tool that lacks a valid non-empty name
+  const validTools = tools.filter(tool => {
+    const name = getToolName(tool);
+    return typeof name === "string" && name.trim().length > 0;
+  });
+
   const maxTools = options.maxTools || MAX_SAFE_OPENAI_TOOLS;
 
   // Always sanitize schemas regardless of tool count
-  if (tools.length <= maxTools) {
-    return tools.map(sanitizeToolDefinition);
+  if (validTools.length <= maxTools) {
+    return validTools.map(sanitizeToolDefinition);
   }
-
   const messages = options.messages || [];
   const activeToolNames = extractActiveToolNames(messages);
   const queryTokens = extractQueryKeywords(messages);
@@ -301,7 +318,7 @@ export function gateAndPruneTools(tools, options = {}) {
   const pinned = [];
   const candidatePool = [];
 
-  for (const tool of tools) {
+  for (const tool of validTools) {
     const name = getToolName(tool);
     if (
       isCoreTool(name) ||
