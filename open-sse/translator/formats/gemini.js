@@ -7,7 +7,7 @@ import { isGemini4Model } from "../../providers/capabilities.js";
 // Unsupported JSON Schema constraints that should be removed for Antigravity
 export const UNSUPPORTED_SCHEMA_CONSTRAINTS = [
   // Basic constraints (not supported by Gemini API)
-  "minLength", "maxLength", "exclusiveMinimum", "exclusiveMaximum",
+  "minimum", "maximum", "minLength", "maxLength", "exclusiveMinimum", "exclusiveMaximum",
   "minItems", "maxItems", "format", "multipleOf",
   // Array keywords the Gemini schema proto has no field for. Agent tool
   // schemas set these routinely, and one occurrence rejects the whole request
@@ -156,6 +156,10 @@ function removeUnsupportedKeywords(obj, keywords) {
   }
 
   for (const key of Object.keys(obj)) {
+    if (!key || typeof key !== "string" || !key.trim()) {
+      delete obj[key];
+      continue;
+    }
     if (keywords.includes(key) || key.startsWith("x-")) {
       delete obj[key];
       continue;

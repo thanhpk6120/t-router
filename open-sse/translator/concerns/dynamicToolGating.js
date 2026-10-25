@@ -98,9 +98,9 @@ export function coerceSchemaTypes(schema) {
 
   const cleaned = {};
   for (const [key, value] of Object.entries(schema)) {
+    if (!key || typeof key !== "string" || !key.trim()) continue;
     // Strip redundant schema metadata that bloats tokens or causes 400 errors
     if (key === "$schema" || key === "$id") continue;
-
     if (NUMERIC_SCHEMA_FIELDS.has(key) && typeof value === "string") {
       const num = Number(value.trim());
       cleaned[key] = Number.isFinite(num) ? num : value;
