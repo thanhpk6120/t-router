@@ -59,41 +59,24 @@ function getPublishedVersions() {
   }
 }
 
-// Calculate next version adhering to: v[9router]-[9router-pro]-[trouter]
-// and ensuring it never collides with already published versions on npmjs.com
-function resolveNextVersion(currentVer, upstreamProVer) {
-  const published = getPublishedVersions();
-
-  // Base prefix: if upstreamProVer has '-pro.', use it; otherwise extract from currentVer
-  let basePrefix = '';
-  if (upstreamProVer && upstreamProVer.includes('-pro.')) {
-    basePrefix = upstreamProVer;
-  } else if (currentVer && currentVer.includes('-t.')) {
-    basePrefix = currentVer.replace(/-t\.\d+$/, '');
-  } else {
-    basePrefix = (currentVer || '0.5.109-pro.12').replace(/-t.*$/, '');
+// Calculate next version by incrementing the trailing number: e.g. 0.5.109-pro.12-t.1 -> 0.5.109-pro.12-t.2
+function bumpTrailingVersion(currentVer) {
+  const match = (currentVer || '').match(/^(.*[^\d])(\d+)$/);
+  if (match) {
+    const prefix = match[1];
+    const num = parseInt(match[2], 10) + 1;
+    return prefix + num;
   }
+  return (currentVer || '0.5.109-pro.12-t') + '.1';
+}
 
-  // Find all known t-numbers for this basePrefix from published list and currentVer
-  const usedNumbers = new Set();
-  const prefixPattern = new RegExp(`^${basePrefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}-t\\.(\\d+)$`);
-
-  for (const v of published) {
-    const m = String(v).match(prefixPattern);
-    if (m) usedNumbers.add(parseInt(m[1], 10));
+function resolveNextVersion(currentVer) {
+  const published = new Set(getPublishedVersions());
+  let candidate = bumpTrailingVersion(currentVer);
+  while (published.has(candidate)) {
+    candidate = bumpTrailingVersion(candidate);
   }
-  if (currentVer) {
-    const m = String(currentVer).match(prefixPattern);
-    if (m) usedNumbers.add(parseInt(m[1], 10));
-  }
-
-  // Determine highest used number for this prefix
-  let maxNum = 0;
-  for (const n of usedNumbers) {
-    if (n > maxNum) maxNum = n;
-  }
-
-  return `${basePrefix}-t.${maxNum + 1}`;
+  return candidate;
 }
 
 function runExec(cmd, opts = {}) {
