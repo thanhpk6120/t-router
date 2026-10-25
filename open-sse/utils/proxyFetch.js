@@ -402,8 +402,15 @@ export async function proxyAwareFetch(url, options = {}, proxyOptions = null) {
         if (proxyOptions?.strictProxy === true) {
           throw new Error(`[ProxyFetch] Proxy required but failed (strictProxy=true): ${proxyError.message}`);
         }
+        if (proxyOptions?.directActive === false) {
+          throw new Error(`[ProxyFetch] Proxy failed and Direct connection is disabled in Proxy Pools. Refusing direct bypass to prevent IP leak: ${proxyError.message}`);
+        }
         console.warn(`[ProxyFetch] Proxy failed, falling back to direct bypass: ${proxyError.message}`);
       }
+    }
+    // No proxy
+    if (proxyOptions?.directActive === false) {
+      throw new Error(`[ProxyFetch] Direct connection is disabled in Proxy Pools. Refusing direct MITM bypass to prevent IP leak.`);
     }
     // No proxy — manually resolve real IP to bypass DNS spoof
     try {
