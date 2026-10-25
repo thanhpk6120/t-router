@@ -280,7 +280,7 @@ export function triggerBackgroundRotate(rotateLink, proxyUrl = null) {
     return;
   }
   rotateCooldownMap.set(rotateLink, now);
-  fetch(rotateLink, { method: "GET", signal: AbortSignal.timeout(10000) })
+  originalFetch(rotateLink, { method: "GET", signal: AbortSignal.timeout(10000) })
     .then((r) => {
       dbg("ProxyFetch", `Auto-rotated IP: status=${r.status}`);
       if (proxyUrl) evictProxyDispatcher(proxyUrl);
