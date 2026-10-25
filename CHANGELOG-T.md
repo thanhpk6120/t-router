@@ -25,7 +25,11 @@ Upstream changelogs (`CHANGELOG.md` and `CHANGELOG-PRO.md`) are kept intact for 
 
 ---
 
-## v0.5.109-pro.12-t.2 (2026-10-25)
+## v0.5.109-pro.12-t.4 (2026-10-25)
+
+- Monotonic +1 version bump: upgraded to 0.5.109-pro.12-t.4 aligned with latest upstream 9router-pro.12.
+
+
 
 - Automated sync and release via Telegram Bot.
 
