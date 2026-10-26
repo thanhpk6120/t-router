@@ -75,7 +75,10 @@ export default function ProfilePage() {
   const [langOpen, setLangOpen] = useState(false);
   const [shutdownOpen, setShutdownOpen] = useState(false);
   const [isShuttingDown, setIsShuttingDown] = useState(false);
-  const [settings, setSettings] = useState({ fallbackStrategy: "balanced" });
+  const [settings, setSettings] = useState({ requireLogin: true, fallbackStrategy: "balanced" });
+  const [updateInfo, setUpdateInfo] = useState(null);
+  const [checkingUpdate, setCheckingUpdate] = useState(false);
+  const [updatingSystem, setUpdatingSystem] = useState(false);
   const [loading, setLoading] = useState(true);
   const [passwords, setPasswords] = useState({ current: "", new: "", confirm: "" });
   const [passStatus, setPassStatus] = useState({ type: "", message: "" });
@@ -186,6 +189,49 @@ export default function ProfilePage() {
       });
   }, []);
 
+  useEffect(() => {
+    fetch("/api/version")
+      .then((res) => res.json())
+      .then((data) => setUpdateInfo(data))
+      .catch(() => {});
+  }, []);
+
+  const checkVersionUpdate = async () => {
+    setCheckingUpdate(true);
+    try {
+      const res = await fetch("/api/version?refresh=1");
+      const data = await res.json();
+      setUpdateInfo(data);
+    } catch {}
+    setCheckingUpdate(false);
+  };
+
+  const triggerAutoUpdate = async () => {
+    setUpdatingSystem(true);
+    try {
+      const res = await fetch("/api/version/update", { method: "POST" });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        alert(data.message || "Không thể tự động cập nhật. Vui lòng cập nhật qua terminal.");
+        setUpdatingSystem(false);
+        return;
+      }
+      // Poll until server restarts
+      const interval = setInterval(async () => {
+        try {
+          const check = await fetch("/api/version?refresh=1");
+          if (check.ok) {
+            clearInterval(interval);
+            globalThis.location.reload();
+          }
+        } catch {}
+      }, 2500);
+    } catch (err) {
+      alert("Lỗi cập nhật: " + err.message);
+      setUpdatingSystem(false);
+    }
+  };
+
   const updateOutboundProxy = async (e) => {
     e.preventDefault();
     if (settings.outboundProxyEnabled !== true) return;
@@ -289,6 +335,10 @@ export default function ProfilePage() {
       setPassStatus({ type: "error", message: "Passwords do not match" });
       return;
     }
+    if (!passwords.new || passwords.new.length < 4) {
+      setPassStatus({ type: "error", message: "Password must be at least 4 characters" });
+      return;
+    }
 
     setPassLoading(true);
     setPassStatus({ type: "", message: "" });
@@ -298,7 +348,7 @@ export default function ProfilePage() {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          currentPassword: passwords.current,
+          currentPassword: passwords.current || (settings.hasPassword ? "" : "123456"),
           newPassword: passwords.new,
         }),
       });
@@ -308,11 +358,12 @@ export default function ProfilePage() {
       if (res.ok) {
         setPassStatus({ type: "success", message: "Password updated successfully" });
         setPasswords({ current: "", new: "", confirm: "" });
+        setSettings((prev) => ({ ...prev, ...data, hasPassword: true }));
       } else {
         setPassStatus({ type: "error", message: data.error || "Failed to update password" });
       }
     } catch (err) {
-      setPassStatus({ type: "error", message: "An error occurred" });
+      setPassStatus({ type: "error", message: "An error occurred: " + err.message });
     } finally {
       setPassLoading(false);
     }
@@ -384,7 +435,9 @@ export default function ProfilePage() {
     }
   };
 
-  const updateRequireLogin = async (requireLogin) => {
+  const updateRequireLogin = async (nextVal) => {
+    const requireLogin = Boolean(nextVal);
+    setSettings((prev) => ({ ...prev, requireLogin }));
     try {
       const res = await fetch("/api/settings", {
         method: "PATCH",
@@ -392,7 +445,8 @@ export default function ProfilePage() {
         body: JSON.stringify({ requireLogin }),
       });
       if (res.ok) {
-        setSettings(prev => ({ ...prev, requireLogin }));
+        const data = await res.json();
+        setSettings((prev) => ({ ...prev, ...data, requireLogin }));
       }
     } catch (err) {
       console.error("Failed to update require login:", err);
@@ -1251,68 +1305,73 @@ export default function ProfilePage() {
                 </p>
               </div>
               <Toggle
-                checked={settings.requireLogin === true}
-                onChange={() => updateRequireLogin(!settings.requireLogin)}
+                checked={settings.requireLogin !== false}
+                onChange={(val) => updateRequireLogin(val)}
                 disabled={loading}
               />
             </div>
-            {settings.requireLogin === true && (
-              <form onSubmit={handlePasswordChange} className="flex flex-col gap-4 pt-4 border-t border-border/50">
-                {settings.hasPassword && (
-                  <div className="flex flex-col gap-2">
-                    <label className="text-xs sm:text-sm font-medium">Current Password</label>
-                    <Input
-                      type="password"
-                      placeholder="Enter current password"
-                      value={passwords.current}
-                      onChange={(e) => setPasswords({ ...passwords, current: e.target.value })}
-                      required
-                    />
-                  </div>
+            <form onSubmit={handlePasswordChange} className="flex flex-col gap-4 pt-4 border-t border-border/50">
+              <div className="flex items-center justify-between">
+                <p className="text-sm font-medium text-text-main">Change Password</p>
+                {!settings.hasPassword && (
+                  <span className="text-[11px] px-2 py-0.5 rounded bg-brand-500/10 text-brand-600 dark:text-brand-400 font-medium">
+                    Default: 123456
+                  </span>
                 )}
-                {/* {!settings.hasPassword && (
-                  <div className="p-3 rounded-lg bg-blue-500/10 border border-blue-500/20">
-                    <p className="text-sm text-blue-600 dark:text-blue-400">
-                      Setting password for the first time. Leave current password empty or use default: <code className="bg-blue-500/20 px-1 rounded">123456</code>
-                    </p>
-                  </div>
-                )} */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <div className="flex flex-col gap-2">
-                    <label className="text-xs sm:text-sm font-medium">New Password</label>
-                    <Input
-                      type="password"
-                      placeholder="Enter new password"
-                      value={passwords.new}
-                      onChange={(e) => setPasswords({ ...passwords, new: e.target.value })}
-                      required
-                    />
-                  </div>
-                  <div className="flex flex-col gap-2">
-                    <label className="text-xs sm:text-sm font-medium">Confirm New Password</label>
-                    <Input
-                      type="password"
-                      placeholder="Confirm new password"
-                      value={passwords.confirm}
-                      onChange={(e) => setPasswords({ ...passwords, confirm: e.target.value })}
-                      required
-                    />
-                  </div>
+              </div>
+              {settings.hasPassword ? (
+                <div className="flex flex-col gap-2">
+                  <label className="text-xs sm:text-sm font-medium">Current Password</label>
+                  <Input
+                    type="password"
+                    placeholder="Enter current password"
+                    value={passwords.current}
+                    onChange={(e) => setPasswords({ ...passwords, current: e.target.value })}
+                    required
+                  />
                 </div>
-
-                {passStatus.message && (
-                  <p className={`text-xs sm:text-sm ${passStatus.type === "error" ? "text-red-500" : "text-green-500"}`}>
-                    {passStatus.message}
+              ) : (
+                <div className="p-3 rounded-lg bg-brand-500/10 border border-brand-500/20">
+                  <p className="text-xs sm:text-sm text-brand-600 dark:text-brand-400">
+                    Mật khẩu hiện tại là mặc định (<code className="bg-brand-500/20 px-1 py-0.5 rounded font-mono font-semibold">123456</code>). Nhập mật khẩu mới bên dưới để đổi ngay.
                   </p>
-                )}
-
-                <div className="pt-2">
-                  <Button type="submit" variant="primary" loading={passLoading} className="w-full sm:w-auto">
-                    {settings.hasPassword ? "Update Password" : "Set Password"}
-                  </Button>
                 </div>
-              </form>
-            )}
+              )}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="flex flex-col gap-2">
+                  <label className="text-xs sm:text-sm font-medium">New Password</label>
+                  <Input
+                    type="password"
+                    placeholder="Enter new password"
+                    value={passwords.new}
+                    onChange={(e) => setPasswords({ ...passwords, new: e.target.value })}
+                    required
+                  />
+                </div>
+                <div className="flex flex-col gap-2">
+                  <label className="text-xs sm:text-sm font-medium">Confirm New Password</label>
+                  <Input
+                    type="password"
+                    placeholder="Confirm new password"
+                    value={passwords.confirm}
+                    onChange={(e) => setPasswords({ ...passwords, confirm: e.target.value })}
+                    required
+                  />
+                </div>
+              </div>
+
+              {passStatus.message && (
+                <p className={`text-xs sm:text-sm ${passStatus.type === "error" ? "text-red-500" : "text-green-500"}`}>
+                  {passStatus.message}
+                </p>
+              )}
+
+              <div className="pt-2">
+                <Button type="submit" variant="primary" loading={passLoading} className="w-full sm:w-auto">
+                  {settings.hasPassword ? "Update Password" : "Set New Password"}
+                </Button>
+              </div>
+            </form>
           </div>
         </Card>
 
@@ -2043,6 +2102,79 @@ export default function ProfilePage() {
         </Card>
 
         {/* Account actions */}
+        {/* Updates & Version Card */}
+        <Card>
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center gap-3">
+              <div className="p-2 rounded-lg bg-primary/10 text-primary shrink-0">
+                <span className="material-symbols-outlined text-[20px]">system_update</span>
+              </div>
+              <div>
+                <h3 className="text-base sm:text-lg font-semibold">Version & Updates</h3>
+                <p className="text-xs text-text-muted">
+                  Current version: <span className="font-mono font-medium text-text-main">v{APP_CONFIG.version}</span>
+                  {updateInfo?.latestVersion && updateInfo.latestVersion !== APP_CONFIG.version && (
+                    <span> · Latest: <span className="font-mono font-medium text-brand-500">v{updateInfo.latestVersion}</span></span>
+                  )}
+                </p>
+              </div>
+            </div>
+            {updateInfo?.hasUpdate ? (
+              <span className="px-2.5 py-1 rounded-full text-xs font-semibold bg-brand-500/10 text-brand-600 dark:text-brand-400 border border-brand-500/20">
+                Update Available
+              </span>
+            ) : (
+              <span className="px-2.5 py-1 rounded-full text-xs font-semibold bg-green-500/10 text-green-600 dark:text-green-400 border border-green-500/20">
+                Up to Date
+              </span>
+            )}
+          </div>
+
+          {updateInfo?.hasUpdate && (
+            <div className="mb-4 p-3 rounded-lg bg-brand-500/10 border border-brand-500/20 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+              <div className="text-xs sm:text-sm text-text-main">
+                <p className="font-semibold text-brand-600 dark:text-brand-400">
+                  Phiên bản mới v{updateInfo.latestVersion} đã có sẵn trên npmjs!
+                </p>
+                <p className="text-text-muted mt-0.5">
+                  Lệnh cài đặt: <code className="font-mono bg-bg px-1.5 py-0.5 rounded border border-border">{updateInfo.installCmd || "npm i -g t-router-proxy@latest"}</code>
+                </p>
+              </div>
+              <Button
+                variant="primary"
+                size="sm"
+                loading={updatingSystem}
+                onClick={triggerAutoUpdate}
+                className="whitespace-nowrap"
+              >
+                {updatingSystem ? "Đang cập nhật..." : "Cập nhật ngay"}
+              </Button>
+            </div>
+          )}
+
+          <div className="flex gap-2">
+            <Button
+              variant="secondary"
+              size="sm"
+              loading={checkingUpdate}
+              onClick={checkVersionUpdate}
+            >
+              Check for Updates
+            </Button>
+            {updateInfo?.updateUrl && (
+              <a
+                href={updateInfo.updateUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg border border-border text-xs text-text-muted hover:text-text-main hover:bg-surface-2 transition-colors"
+              >
+                <span className="material-symbols-outlined text-[16px]">open_in_new</span>
+                NPM Package
+              </a>
+            )}
+          </div>
+        </Card>
+
         <div className="flex flex-col sm:flex-row gap-2">
           <Button
             variant="outline"

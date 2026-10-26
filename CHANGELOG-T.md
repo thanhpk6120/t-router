@@ -5,6 +5,21 @@ Upstream changelogs (`CHANGELOG.md` and `CHANGELOG-PRO.md`) are kept intact for 
 
 ---
 
+## v0.5.111-pro.13-t.2 (2026-10-26)
+
+- **Version Notification & One-Click Upgrade Engine**:
+  - Sửa lỗi kiểm tra phiên bản mới từ npm registry (`https://registry.npmjs.org/t-router-proxy/latest`) thay vì repo GitHub không tồn tại.
+  - Chuẩn hoá bộ so sánh phiên bản đầy đủ 3 cấp bậc (`major.minor.patch`, `pro`, `t`).
+  - Hiển thị badge thông báo phiên bản mới trên Sidebar và bổ sung card **Version & Updates** trong trang Settings.
+  - Hỗ trợ cả 2 chế độ cập nhật: **Tự động 1-Click (One-Click Auto Update)** với cơ chế reload tự động khi server khởi động lại và **Thủ công (Manual Update)** với lệnh copy `npm i -g t-router-proxy@latest`.
+- **Sửa lỗi "Require login" & Cải tiến đổi mật khẩu trong Settings**:
+  - Kích hoạt mặc định tính năng `Require login` (`true`) trong toàn bộ hệ thống (DB, state, API).
+  - Form đổi mật khẩu luôn luôn hiển thị trực tiếp khi vào Settings mà không bị ẩn đơ sau nút toggle.
+  - Cho phép người dùng mới cài đặt đổi mật khẩu trực tiếp ngay lập tức (không bắt buộc nhập mật khẩu cũ nếu đang dùng mặc định `123456`).
+  - Tự động cập nhật trạng thái `hasPassword: true` sau khi đổi mật khẩu thành công.
+
+---
+
 ## Upstream Sync (9router 0.5.111, 9router-pro 0.5.109-pro.13)
 
 - **Đồng bộ Upstream 9Router v0.5.111**:

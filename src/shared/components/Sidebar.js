@@ -10,7 +10,7 @@ import { MEDIA_PROVIDER_KINDS } from "@/shared/constants/providers";
 import { useCopyToClipboard } from "@/shared/hooks/useCopyToClipboard";
 import useSettingsStore from "@/store/settingsStore";
 import Button from "./Button";
-import { ConfirmModal } from "./Modal";
+import Modal, { ConfirmModal } from "./Modal";
 
 // const VISIBLE_MEDIA_KINDS = ["embedding", "image", "imageToText", "tts", "stt", "webSearch", "webFetch", "video", "music"];
 const VISIBLE_MEDIA_KINDS = ["embedding", "image", "video", "tts", "stt", "systemone"];
@@ -48,6 +48,9 @@ export default function Sidebar({ onClose }) {
   const [showUpdateModal, setShowUpdateModal] = useState(false);
   const [isUpdating, setIsUpdating] = useState(false);
   const [shutdownCountdown, setShutdownCountdown] = useState(0);
+  const [updateMode, setUpdateMode] = useState("auto"); // "auto" | "manual"
+  const [autoUpdateStatus, setAutoUpdateStatus] = useState("");
+  const [autoUpdateError, setAutoUpdateError] = useState("");
   const [enableTranslator, setEnableTranslator] = useState(false);
   const { copied, copy } = useCopyToClipboard(2000);
 
@@ -79,10 +82,48 @@ export default function Sidebar({ onClose }) {
     return pathname.startsWith(href);
   };
 
-  // Open manual update panel (no countdown yet — user must click Copy to trigger shutdown)
-  const handleUpdate = () => {
+  const handleStartAutoUpdate = async () => {
     setShowUpdateModal(false);
     setIsUpdating(true);
+    setUpdateMode("auto");
+    setAutoUpdateError("");
+    setAutoUpdateStatus(`Đang tiến hành tự động cập nhật T Router lên v${updateInfo?.latestVersion || ""}...`);
+
+    try {
+      const res = await fetch("/api/version/update", { method: "POST" });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setAutoUpdateError(data.message || "Không thể kích hoạt tự động cập nhật. Vui lòng cập nhật qua terminal.");
+        return;
+      }
+
+      setAutoUpdateStatus(`Đang cài đặt v${updateInfo?.latestVersion || ""} qua npm và khởi động lại server...`);
+      let attempts = 0;
+      const pollTimer = setInterval(async () => {
+        attempts++;
+        try {
+          const check = await fetch("/api/version?refresh=1", { cache: "no-store" });
+          if (check.ok) {
+            clearInterval(pollTimer);
+            setAutoUpdateStatus("Cập nhật thành công! Đang tải lại trang...");
+            setTimeout(() => globalThis.location.reload(), 1000);
+          }
+        } catch {
+          if (attempts > 50) {
+            clearInterval(pollTimer);
+            setAutoUpdateError("Server đang cập nhật hoặc cần khởi động lại thủ công. Vui lòng tải lại trang sau.");
+          }
+        }
+      }, 2500);
+    } catch (err) {
+      setAutoUpdateError("Lỗi cập nhật: " + err.message);
+    }
+  };
+
+  const handleStartManualUpdate = () => {
+    setShowUpdateModal(false);
+    setIsUpdating(true);
+    setUpdateMode("manual");
   };
 
   // Triggered by Copy button inside ManualUpdatePanel: copy + countdown + shutdown
@@ -135,14 +176,15 @@ export default function Sidebar({ onClose }) {
             </div>
           </Link>
           {updateInfo && (
-            <div className="flex flex-col gap-1.5 rounded p-1 -m-1">
-              <span className="text-xs font-semibold text-green-600 dark:text-amber-500">
-                ↑ New version available: v{updateInfo.latestVersion}
-              </span>
+            <div className="flex flex-col gap-1.5 rounded-lg p-2 bg-brand-500/10 border border-brand-500/20">
+              <div className="flex items-center gap-1.5 text-xs font-semibold text-brand-600 dark:text-brand-400">
+                <span className="material-symbols-outlined text-[16px]">arrow_circle_up</span>
+                <span>New version: v{updateInfo.latestVersion}</span>
+              </div>
               <div className="flex items-center gap-2">
                 <button
                   onClick={() => setShowUpdateModal(true)}
-                  className="px-2 py-1 rounded bg-green-600 hover:bg-green-700 dark:bg-amber-500 dark:hover:bg-amber-600 text-white text-[11px] font-semibold transition-colors cursor-pointer"
+                  className="px-2.5 py-1 rounded bg-brand-500 hover:bg-brand-600 text-slate-950 text-[11px] font-bold transition-colors cursor-pointer shadow-sm"
                 >
                   Update now
                 </button>
@@ -151,7 +193,7 @@ export default function Sidebar({ onClose }) {
                   title="Copy install command"
                   className="flex-1 text-left hover:opacity-80 transition-opacity cursor-pointer min-w-0"
                 >
-                  <code className="block text-[10px] text-green-600/80 dark:text-amber-400/70 font-mono truncate">
+                  <code className="block text-[10px] text-brand-700 dark:text-brand-300 font-mono truncate">
                     {copied ? "✓ copied!" : INSTALL_CMD}
                   </code>
                 </button>
@@ -364,31 +406,114 @@ export default function Sidebar({ onClose }) {
       </aside>
 
 
-      {/* Update Confirmation Modal */}
-      <ConfirmModal
+      {/* Update Choice Modal */}
+      <Modal
         isOpen={showUpdateModal}
         onClose={() => setShowUpdateModal(false)}
-        onConfirm={handleUpdate}
-        title="Update 9Router"
-        message={`Show install command for v${updateInfo?.latestVersion || ""}? You can copy it and shutdown to install manually.`}
-        confirmText="Show Command"
-        cancelText="Cancel"
-        variant="primary"
-      />
+        title="Update T Router"
+        size="md"
+      >
+        <div className="flex flex-col gap-4">
+          <div className="flex items-center gap-3 p-3 rounded-lg bg-brand-500/10 border border-brand-500/20">
+            <div className="flex items-center justify-center size-10 rounded-full bg-brand-500/20 text-brand-500 shrink-0">
+              <span className="material-symbols-outlined text-[24px]">system_update</span>
+            </div>
+            <div className="text-xs sm:text-sm">
+              <p className="font-semibold text-text-main">
+                Phiên bản mới: <span className="font-mono text-brand-500 font-bold">v{updateInfo?.latestVersion}</span>
+              </p>
+              <p className="text-text-muted mt-0.5">
+                Phiên bản hiện tại: <span className="font-mono">v{updateInfo?.currentVersion || APP_CONFIG.version}</span>
+              </p>
+            </div>
+          </div>
+
+          <p className="text-xs sm:text-sm text-text-muted">
+            Chọn phương thức cập nhật phù hợp với bạn:
+          </p>
+
+          <div className="grid grid-cols-1 gap-2.5">
+            <button
+              type="button"
+              onClick={handleStartAutoUpdate}
+              className="flex items-start gap-3 p-3 rounded-xl border border-brand-500/30 hover:border-brand-500 bg-brand-500/5 hover:bg-brand-500/10 text-left transition-all group cursor-pointer"
+            >
+              <div className="p-2 rounded-lg bg-brand-500 text-slate-950 font-bold mt-0.5">
+                <span className="material-symbols-outlined text-[20px]">bolt</span>
+              </div>
+              <div className="flex-1">
+                <p className="font-semibold text-sm text-text-main flex items-center gap-1.5">
+                  Tự động cập nhật 1-Click
+                  <span className="text-[10px] px-1.5 py-0.2 rounded bg-brand-500/20 text-brand-500 font-medium">Khuyên dùng</span>
+                </p>
+                <p className="text-xs text-text-muted mt-0.5">
+                  Chạy updater ngầm, nâng cấp qua npm và tự khởi động lại t-router.
+                </p>
+              </div>
+            </button>
+
+            <button
+              type="button"
+              onClick={handleStartManualUpdate}
+              className="flex items-start gap-3 p-3 rounded-xl border border-border hover:border-border-subtle bg-surface-2 hover:bg-surface-3 text-left transition-all cursor-pointer"
+            >
+              <div className="p-2 rounded-lg bg-surface-3 text-text-muted mt-0.5">
+                <span className="material-symbols-outlined text-[20px]">terminal</span>
+              </div>
+              <div className="flex-1">
+                <p className="font-semibold text-sm text-text-main">
+                  Sao chép lệnh & Tắt server
+                </p>
+                <p className="text-xs text-text-muted mt-0.5">
+                  Hiển thị lệnh npm/pnpm để bạn tự dán và thực thi trong terminal.
+                </p>
+              </div>
+            </button>
+          </div>
+        </div>
+      </Modal>
 
       {/* Disconnected / Updating Overlay */}
       {(isDisconnected || isUpdating) && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-6">
           {isUpdating ? (
-            <ManualUpdatePanel
-              latestVersion={updateInfo?.latestVersion}
-              installCmd={INSTALL_CMD}
-              copied={copied}
-              onCopyAndShutdown={handleCopyAndShutdown}
-              onCancel={handleCancelUpdate}
-              countdown={shutdownCountdown}
-              isDisconnected={isDisconnected}
-            />
+            updateMode === "auto" ? (
+              <div className="w-full max-w-md rounded-xl bg-neutral-900/95 border border-white/10 p-6 text-white text-center">
+                <div className="flex items-center justify-center size-14 rounded-full bg-brand-500/20 text-brand-400 mx-auto mb-4 animate-pulse">
+                  <span className="material-symbols-outlined text-[32px]">sync</span>
+                </div>
+                <h2 className="text-lg font-semibold mb-2">Updating T Router...</h2>
+                <p className="text-xs text-white/70 mb-4">{autoUpdateStatus}</p>
+                {autoUpdateError ? (
+                  <div className="p-3 rounded-lg bg-red-500/20 border border-red-500/30 text-red-300 text-xs mb-4">
+                    {autoUpdateError}
+                    <div className="mt-3 flex gap-2 justify-center">
+                      <Button variant="secondary" size="sm" onClick={() => setIsUpdating(false)}>
+                        Đóng
+                      </Button>
+                      <Button variant="primary" size="sm" onClick={handleStartManualUpdate}>
+                        Cập nhật thủ công
+                      </Button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex items-center justify-center gap-2 text-xs text-white/50">
+                    <div className="w-2 h-2 rounded-full bg-brand-500 animate-ping" />
+                    <span>Đang chờ server nạp phiên bản mới...</span>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <ManualUpdatePanel
+                latestVersion={updateInfo?.latestVersion}
+                installCmd={INSTALL_CMD}
+                copied={copied}
+                onCopyAndShutdown={handleCopyAndShutdown}
+                onCancel={handleCancelUpdate}
+                countdown={shutdownCountdown}
+                isDisconnected={isDisconnected}
+              />
+            )
           ) : (
             <div className="text-center p-8">
               <div className="flex items-center justify-center size-16 rounded-full bg-red-500/20 text-red-500 mx-auto mb-4">
@@ -420,7 +545,7 @@ function ManualUpdatePanel({ latestVersion, installCmd, copied, onCopyAndShutdow
           <span className="material-symbols-outlined text-[24px]">content_copy</span>
         </div>
         <div>
-          <h2 className="text-lg font-semibold">Update 9Router{latestVersion ? ` to v${latestVersion}` : ""}</h2>
+          <h2 className="text-lg font-semibold">Update T Router{latestVersion ? ` to v${latestVersion}` : ""}</h2>
           <p className="text-xs text-white/60">
             {isDisconnected
               ? "Server stopped. Paste the command into a terminal to install."
@@ -439,7 +564,7 @@ function ManualUpdatePanel({ latestVersion, installCmd, copied, onCopyAndShutdow
       <ol className="text-xs text-white/70 space-y-1 list-decimal list-inside mb-4">
         <li>Click <strong>Copy & Shutdown</strong> below.</li>
         <li>Paste the command into your terminal and press Enter.</li>
-        <li>Run <code className="px-1 rounded bg-white/10 text-green-400">9router</code> again after install.</li>
+        <li>Run <code className="px-1 rounded bg-white/10 text-brand-400">t-router</code> again after install.</li>
       </ol>
 
       {isDisconnected ? (

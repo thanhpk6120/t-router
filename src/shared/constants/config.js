@@ -17,8 +17,8 @@ export const GITHUB_CONFIG = {
 // Updater configuration
 export const UPDATER_CONFIG = {
   npmPackageName: "t-router-proxy",
-  installCmd: "npm i -g t-router-proxy",
-  installCmdLatest: "npm i -g t-router-proxy",
+  installCmd: "npm i -g t-router-proxy@latest",
+  installCmdLatest: "npm i -g t-router-proxy@latest",
   shutdownCountdownSec: 3,
   exitDelayMs: 500,
   statusPort: 20129,

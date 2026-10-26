@@ -107,6 +107,9 @@ export function mergeWithDefaults(raw) {
       }
     }
   }
+  if (merged.requireLogin === undefined || merged.requireLogin === null) {
+    merged.requireLogin = true;
+  }
   return merged;
 }
 
