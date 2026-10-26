@@ -331,8 +331,8 @@ export default function ProfilePage() {
 
   const handlePasswordChange = async (e) => {
     e.preventDefault();
-    if (!passwords.new || passwords.new.length < 4) {
-      setPassStatus({ type: "error", message: "Password must be at least 4 characters" });
+    if (!passwords.new) {
+      setPassStatus({ type: "error", message: "Please enter a password" });
       return;
     }
 
@@ -1306,12 +1306,7 @@ export default function ProfilePage() {
             </div>
             <form onSubmit={handlePasswordChange} className="flex flex-col gap-3 pt-4 border-t border-border/50">
               <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm font-medium text-text-main">Set / Change Password</p>
-                  <p className="text-xs text-text-muted mt-0.5">
-                    {settings.hasPassword ? "Nhập mật khẩu mới để đổi mật khẩu quản trị." : "Nhập mật khẩu mới để thay thế mật khẩu mặc định (123456)."}
-                  </p>
-                </div>
+                <p className="text-sm font-medium text-text-main">Password</p>
                 {!settings.hasPassword && (
                   <span className="text-[11px] px-2 py-0.5 rounded bg-brand-500/10 text-brand-600 dark:text-brand-400 font-medium">
                     Default: 123456
@@ -1323,7 +1318,7 @@ export default function ProfilePage() {
                 <div className="flex-1">
                   <Input
                     type="password"
-                    placeholder="Enter new password (min 4 characters)"
+                    placeholder="Enter new password"
                     value={passwords.new}
                     onChange={(e) => setPasswords({ ...passwords, new: e.target.value })}
                     required
