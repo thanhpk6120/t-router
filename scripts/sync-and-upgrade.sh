@@ -8,9 +8,9 @@ export ANTHROPIC_AUTH_TOKEN="sk-bd802b6b81d63797-2ed6ws-9c6f28c7"
 export CLAUDE_DANGEROUSLY_SKIP_PERMISSIONS=1
 export NODE_OPTIONS="--max-old-space-size=2048"
 
-# Strict resource limits: low CPU priority (nice 19) and idle I/O priority (ionice -c 3)
-# to guarantee zero freeze, lag, or server crashes during build / merge
-NICE_CMD="nice -n 19 ionice -c 3"
+# Strict resource limits: low CPU priority (nice 19), idle I/O priority (ionice -c 3),
+# and CPU affinity restricted to cores 0,1 (taskset -c 0,1) so cores 2,3 remain 100% free for active services
+NICE_CMD="nice -n 19 ionice -c 3 taskset -c 0,1"
 
 BASE_DIR="$HOME/router-proxy-ai"
 DIR_9ROUTER="$BASE_DIR/9router"
@@ -69,28 +69,54 @@ log "Pulling latest git changes for upstream 9router-pro..."
 $NICE_CMD git -C "$DIR_PRO" pull origin master || true
 
 log "Pulling latest git changes for t-router..."
+OLD_TROUTER_HEAD=$(git -C "$DIR_TROUTER" rev-parse HEAD 2>/dev/null || echo "")
 $NICE_CMD git -C "$DIR_TROUTER" pull origin main || true
+NEW_TROUTER_HEAD=$(git -C "$DIR_TROUTER" rev-parse HEAD 2>/dev/null || echo "")
 
-# 3.1 Check if t-router on Git was updated or version bumped vs npmjs
-CURRENT_VER=$(node -e "try { console.log(require('$DIR_TROUTER/package.json').version); } catch { console.log('0.5.109-pro.12-t.6'); }" 2>/dev/null)
+HAS_NEW_CODE=false
+if [ "$OLD_TROUTER_HEAD" != "$NEW_TROUTER_HEAD" ] || [ "$FORCE" = true ]; then
+  HAS_NEW_CODE=true
+fi
+
+CURRENT_VER=$(node -e "try { console.log(require('$DIR_TROUTER/package.json').version); } catch { console.log(''); }" 2>/dev/null)
 NPM_PUB_VER=$(npm view t-router-proxy version 2>/dev/null || echo "")
 
+HAS_NEW_VER=false
 if [ -n "$CURRENT_VER" ] && [ "$CURRENT_VER" != "$NPM_PUB_VER" ] && [ "$CURRENT_VER" != "$SAVED_TROUTER" ]; then
-  log "New t-router version detected on Git: $CURRENT_VER (published on npm: ${NPM_PUB_VER:-none}, saved: $SAVED_TROUTER)"
-  log "Running verification build and notifying Telegram for publish confirmation..."
+  HAS_NEW_VER=true
+fi
+
+# 3.1 Check if t-router has new code AND updated version
+if [ "$HAS_NEW_CODE" = true ] && [ "$HAS_NEW_VER" = true ]; then
+  log "New code AND new version detected on Git: $CURRENT_VER (published on npm: ${NPM_PUB_VER:-none}, saved: $SAVED_TROUTER)"
+  log "Running zero-downtime test build and notifying Telegram for publish confirmation..."
 
   # Run preliminary syntax verification
   find "$DIR_TROUTER/src" "$DIR_TROUTER/open-sse" -name "*.js" -exec node -c {} +
 
-  # Build CLI with resource limits
-  log "Building CLI package with resource limits..."
+  # Build CLI with strict resource limits
+  log "Building CLI package with strict resource limits (nice 19, ionice 3, taskset 0,1, memory 2048M)..."
   $NICE_CMD node --max-old-space-size=2048 "$DIR_TROUTER/cli/scripts/build-cli.js" 2>&1 | tee -a "$LOG_FILE"
 
-  # Restart runtime service
-  log "Restarting t-router.service on port 20126..."
-  systemctl --user restart t-router.service || true
+  # Zero-downtime test instance on port 20127 with isolated temporary DATA_DIR
+  log "Zero-downtime test: verifying build on port 20127 (port 20126 remains untouched)..."
+  fuser -k 20127/tcp 2>/dev/null || true
+  TEMP_DATA_DIR=$(mktemp -d /tmp/trouter-test-XXXXXX)
+  PORT=20127 DATA_DIR="$TEMP_DATA_DIR" $NICE_CMD node --max-old-space-size=1024 "$DIR_TROUTER/cli/app/custom-server.js" --port 20127 > /dev/null 2>&1 &
+  TEST_PID=$!
+  sleep 4
+  TEST_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:20127/ || echo "000")
+  kill -9 $TEST_PID 2>/dev/null || true
+  fuser -k 20127/tcp 2>/dev/null || true
+  rm -rf "$TEMP_DATA_DIR"
 
-  # Notify Telegram for publish approval
+  if [ "$TEST_CODE" != "200" ] && [ "$TEST_CODE" != "307" ] && [ "$TEST_CODE" != "308" ]; then
+    log "ERROR: Port 20127 test check failed with HTTP $TEST_CODE. Aborting notification."
+    exit 1
+  fi
+  log "Port 20127 test PASSED with HTTP $TEST_CODE! Port 20126 active service is untouched (zero downtime)."
+
+  # Notify Telegram Ubuntu Server Bot for user publish decision (awaiting user confirm)
   LATEST_COMMIT_MSG=$(git -C "$DIR_TROUTER" log -1 --pretty=%B | head -n 3 | tr '\n' ' ')
   JSON_PAYLOAD=$(CURRENT_VER="$CURRENT_VER" NPM_PUB_VER="$NPM_PUB_VER" COMMIT_MSG="$LATEST_COMMIT_MSG" node -e '
     console.log(JSON.stringify({
@@ -106,19 +132,7 @@ if [ -n "$CURRENT_VER" ] && [ "$CURRENT_VER" != "$NPM_PUB_VER" ] && [ "$CURRENT_
     -H "Content-Type: application/json" \
     -d "$JSON_PAYLOAD" || log "Failed to call publisher daemon on 127.0.0.1:20129"
 
-  # Update saved t_router version in versions file
-  node -e "
-    const fs = require('fs');
-    try {
-      const f = '$VERSIONS_FILE';
-      let d = fs.existsSync(f) ? JSON.parse(fs.readFileSync(f, 'utf8')) : {};
-      d.t_router = '$CURRENT_VER';
-      d.updated_at = new Date().toISOString();
-      fs.writeFileSync(f, JSON.stringify(d, null, 2) + '\n');
-    } catch {}
-  " 2>/dev/null || true
-
-  log "Direct git update handled and Telegram notification sent. Continuing upstream sync check..."
+  log "Zero-downtime test passed and Telegram notification sent. Awaiting user confirmation to publish."
 fi
 
 HEAD_9ROUTER=$(git -C "$DIR_9ROUTER" rev-parse --short HEAD 2>/dev/null || echo "")

@@ -145,9 +145,9 @@ async function doPublish(targetVersion) {
       log('Changelog update notice: ' + clErr.message);
     }
 
-    // 2. Build CLI with strict resource limits (nice -n 19, ionice -c 3, max-old-space-size=2048)
+    // 2. Build CLI with strict resource limits (nice -n 19, ionice -c 3, taskset -c 0,1, max-old-space-size=2048)
     log('Executing resource-constrained build...');
-    const buildCmd = 'nice -n 19 ionice -c 3 node --max-old-space-size=2048 cli/scripts/build-cli.js';
+    const buildCmd = 'nice -n 19 ionice -c 3 taskset -c 0,1 node --max-old-space-size=2048 cli/scripts/build-cli.js';
     await runExec(buildCmd, { cwd: DIR_TROUTER, timeout: 600000 });
 
     // 3. Publish to npmjs (using --ignore-scripts because build-cli.js already ran)
