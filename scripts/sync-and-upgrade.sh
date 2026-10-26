@@ -6,11 +6,11 @@ export HOME="/home/thanhpk"
 export ANTHROPIC_BASE_URL="http://127.0.0.1:20130/v1"
 export ANTHROPIC_AUTH_TOKEN="sk-bd802b6b81d63797-2ed6ws-9c6f28c7"
 export CLAUDE_DANGEROUSLY_SKIP_PERMISSIONS=1
-export NODE_OPTIONS="--max-old-space-size=2048"
+export NODE_OPTIONS="--max-old-space-size=4096"
 
 # Strict resource limits: low CPU priority (nice 19), idle I/O priority (ionice -c 3),
 # and CPU affinity restricted to cores 0,1 (taskset -c 0,1) so cores 2,3 remain 100% free for active services
-NICE_CMD="nice -n 19 ionice -c 3 taskset -c 0,1"
+NICE_CMD="nice -n 19 ionice -c 3 taskset -c 0,1,2"
 
 BASE_DIR="$HOME/router-proxy-ai"
 DIR_9ROUTER="$BASE_DIR/9router"
@@ -95,8 +95,8 @@ if [ "$HAS_NEW_CODE" = true ] && [ "$HAS_NEW_VER" = true ]; then
   find "$DIR_TROUTER/src" "$DIR_TROUTER/open-sse" -name "*.js" -exec node -c {} +
 
   # Build CLI with strict resource limits
-  log "Building CLI package with strict resource limits (nice 19, ionice 3, taskset 0,1, memory 2048M)..."
-  $NICE_CMD node --max-old-space-size=2048 "$DIR_TROUTER/cli/scripts/build-cli.js" 2>&1 | tee -a "$LOG_FILE"
+  log "Building CLI package with strict resource limits (nice 19, ionice 3, taskset 0,1,2, memory 4096M)..."
+  $NICE_CMD node --max-old-space-size=4096 "$DIR_TROUTER/cli/scripts/build-cli.js" 2>&1 | tee -a "$LOG_FILE"
 
   # Zero-downtime test instance on port 20127 with isolated temporary DATA_DIR
   log "Zero-downtime test: verifying build on port 20127 (port 20126 remains untouched)..."
