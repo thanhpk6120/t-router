@@ -9,6 +9,7 @@ export {
   reorderProviderConnections, cleanupProviderConnections,
   getProviderNodes, getProviderNodeById,
   createProviderNode, updateProviderNode, deleteProviderNode,
+  normalizeRoutableMembers,
   getProxyPools, getProxyPoolById,
   createProxyPool, updateProxyPool, deleteProxyPool,
   isDirectProxyActive, DIRECT_PROXY_ID, DIRECT_PROXY_NAME,

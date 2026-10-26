@@ -382,7 +382,7 @@ function isProxyActiveForProvider(proxyOptions) {
   const hasRelayUrl = !!normalizeString(proxyOptions.vercelRelayUrl);
   const isEnabled = proxyOptions.connectionProxyEnabled === true || proxyOptions.enabled === true;
 
-  return hasPoolId || (isEnabled && hasProxyUrl) || hasRelayUrl;
+  return hasPoolId || isEnabled || hasProxyUrl || hasRelayUrl;
 }
 export async function proxyAwareFetch(url, options = {}, proxyOptions = null) {
   const targetUrl = typeof url === "string" ? url : url.toString();

@@ -5,6 +5,26 @@ Upstream changelogs (`CHANGELOG.md` and `CHANGELOG-PRO.md`) are kept intact for 
 
 ---
 
+## Upstream Sync (9router 0.5.109, 9router-pro 0.5.109-pro.13)
+
+- **Đồng bộ Upstream 9Router Pro v0.5.109-pro.13**:
+  - **Sticky-random routing**: Bổ sung chiến lược điều hướng tài khoản mới — gắn kết với một API key đang hoạt động cho đến khi bị khóa/lỗi (429/403/cooldown), sau đó random chọn sang key khả dụng khác. Tối ưu prompt-cache retention và hạn chế phân tán key.
+  - **Variant Backing AUTO Resolution**: Tự động chuẩn hóa prefix alias của custom provider thành routable node id khi lưu variant, lưu combo và import backup (loại bỏ hoàn toàn lỗi 404-alias runtime).
+  - **Variant Prompt Injection qua Combo Members**: Hỗ trợ luồng prompt injection cho các variant khi là thành viên của Combo (combo members), đảm bảo prompt của variant được kích hoạt đúng đắn ngay cả khi gọi qua combo.
+  - **Nhãn hiển thị Backing thân thiện (Friendly Backing Labels)**: Hiển thị `<prefix>/<model>` thay vì UUID nội bộ trên mọi giao diện (thẻ combo, form chỉnh sửa, modal chọn model, trang prompt injection); tự động bỏ qua request 404 cho icon của custom provider nodes.
+  - **Tối ưu hóa render Provider/Combo**: Memoize danh sách active provider IDs giúp tăng tốc độ kiểm tra trạng thái và render tức thì.
+  - **Tự động nhận diện Capability Search cho Combo**: Hỗ trợ tự động chuyển đổi sang model có khả năng search khi request gửi kèm tool dạng search/fetch (`web_search`, `web_fetch`).
+  - **Hỗ trợ NDJSON stream và text parts collapsing**: Tự động parse các dòng JSON thô trong SSE stream và collapse các text parts thành chuỗi đơn giản khi gửi sang endpoint OpenAI-compatible nghiêm ngặt.
+  - **Fuzzy Token Fallback cho Cursor Auto-Import**: Tự động tìm kiếm token và machine ID theo cơ chế fuzzy scan nếu Cursor đổi tên storage key qua các phiên bản mới.
+  - **Bảo toàn 100% ràng buộc T-Router**:
+    - Giữ nguyên màu chủ đạo Azure (#3B82F6 / #1D4ED8) và icon Azure T.
+    - Giữ nguyên Database Location tại `~/.trouter/db/data.sqlite` và dataDir `~/.trouter`.
+    - Cổng mặc định duy trì là 20126.
+    - Đảm bảo chức năng Round Robin trong Settings tắt bật bình thường.
+    - Giữ nguyên hệ thống Universal Proxy Pools & Rotation cho mọi provider, bao gồm Direct proxy guard, `rotateLink` (Dynamic IP Rotation), nút Rotate IP, Proxy Source (`both`/`static`/`rotating`), auto-rotate trên 429/403/cooldown và shorthand parser.
+
+---
+
 ## Upstream Sync (9router 0.5.109, 9router-pro 0.5.109-pro.12)
 
 - **Đồng bộ Upstream 9Router Pro v0.5.109-pro.12**:

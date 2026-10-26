@@ -11,8 +11,10 @@ const DEFAULT_SETTINGS = {
   tunnelProvider: "cloudflare",
   tailscaleEnabled: false,
   tailscaleUrl: "",
-  fallbackStrategy: "balanced",
   stickyRoundRobinLimit: 3,
+  // Global key-routing strategy (profile page). Distinct from
+  // comboStrategy below, which routes *within* a combo's members.
+  fallbackStrategy: "balanced",
   providerStrategies: {},
   quotaVisibility: {},
   comboStrategy: "fallback",
