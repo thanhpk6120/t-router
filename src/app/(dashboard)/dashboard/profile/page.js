@@ -331,10 +331,6 @@ export default function ProfilePage() {
 
   const handlePasswordChange = async (e) => {
     e.preventDefault();
-    if (passwords.new !== passwords.confirm) {
-      setPassStatus({ type: "error", message: "Passwords do not match" });
-      return;
-    }
     if (!passwords.new || passwords.new.length < 4) {
       setPassStatus({ type: "error", message: "Password must be at least 4 characters" });
       return;
@@ -348,7 +344,6 @@ export default function ProfilePage() {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          currentPassword: passwords.current || (settings.hasPassword ? "" : "123456"),
           newPassword: passwords.new,
         }),
       });
@@ -1307,57 +1302,36 @@ export default function ProfilePage() {
               <Toggle
                 checked={settings.requireLogin !== false}
                 onChange={(val) => updateRequireLogin(val)}
-                disabled={loading}
               />
             </div>
-            <form onSubmit={handlePasswordChange} className="flex flex-col gap-4 pt-4 border-t border-border/50">
+            <form onSubmit={handlePasswordChange} className="flex flex-col gap-3 pt-4 border-t border-border/50">
               <div className="flex items-center justify-between">
-                <p className="text-sm font-medium text-text-main">Change Password</p>
+                <div>
+                  <p className="text-sm font-medium text-text-main">Set / Change Password</p>
+                  <p className="text-xs text-text-muted mt-0.5">
+                    {settings.hasPassword ? "Nhập mật khẩu mới để đổi mật khẩu quản trị." : "Nhập mật khẩu mới để thay thế mật khẩu mặc định (123456)."}
+                  </p>
+                </div>
                 {!settings.hasPassword && (
                   <span className="text-[11px] px-2 py-0.5 rounded bg-brand-500/10 text-brand-600 dark:text-brand-400 font-medium">
                     Default: 123456
                   </span>
                 )}
               </div>
-              {settings.hasPassword ? (
-                <div className="flex flex-col gap-2">
-                  <label className="text-xs sm:text-sm font-medium">Current Password</label>
+
+              <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5">
+                <div className="flex-1">
                   <Input
                     type="password"
-                    placeholder="Enter current password"
-                    value={passwords.current}
-                    onChange={(e) => setPasswords({ ...passwords, current: e.target.value })}
-                    required
-                  />
-                </div>
-              ) : (
-                <div className="p-3 rounded-lg bg-brand-500/10 border border-brand-500/20">
-                  <p className="text-xs sm:text-sm text-brand-600 dark:text-brand-400">
-                    Mật khẩu hiện tại là mặc định (<code className="bg-brand-500/20 px-1 py-0.5 rounded font-mono font-semibold">123456</code>). Nhập mật khẩu mới bên dưới để đổi ngay.
-                  </p>
-                </div>
-              )}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div className="flex flex-col gap-2">
-                  <label className="text-xs sm:text-sm font-medium">New Password</label>
-                  <Input
-                    type="password"
-                    placeholder="Enter new password"
+                    placeholder="Enter new password (min 4 characters)"
                     value={passwords.new}
                     onChange={(e) => setPasswords({ ...passwords, new: e.target.value })}
                     required
                   />
                 </div>
-                <div className="flex flex-col gap-2">
-                  <label className="text-xs sm:text-sm font-medium">Confirm New Password</label>
-                  <Input
-                    type="password"
-                    placeholder="Confirm new password"
-                    value={passwords.confirm}
-                    onChange={(e) => setPasswords({ ...passwords, confirm: e.target.value })}
-                    required
-                  />
-                </div>
+                <Button type="submit" variant="primary" loading={passLoading} className="sm:w-auto shrink-0">
+                  {settings.hasPassword ? "Update Password" : "Set Password"}
+                </Button>
               </div>
 
               {passStatus.message && (
@@ -1365,12 +1339,6 @@ export default function ProfilePage() {
                   {passStatus.message}
                 </p>
               )}
-
-              <div className="pt-2">
-                <Button type="submit" variant="primary" loading={passLoading} className="w-full sm:w-auto">
-                  {settings.hasPassword ? "Update Password" : "Set New Password"}
-                </Button>
-              </div>
             </form>
           </div>
         </Card>

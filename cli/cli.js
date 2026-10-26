@@ -192,14 +192,31 @@ if (skipUpdate && !trayMode && !process.stdin.isTTY) {
 // Always use Node.js runtime with absolute path
 const RUNTIME = process.execPath;
 
+// "0.5.109-pro.13-t.1" -> { major: 0, minor: 5, patch: 109, pro: 13, t: 1 }
+function parseVersion(v) {
+  if (!v || typeof v !== "string") return null;
+  const clean = v.replace(/^v/, "").trim();
+  const m = clean.match(/^(\d+)\.(\d+)\.(\d+)(?:-pro\.(\d+))?(?:-t\.(\d+))?$/);
+  if (!m) return null;
+  return {
+    major: Number(m[1]),
+    minor: Number(m[2]),
+    patch: Number(m[3]),
+    pro: m[4] !== undefined ? Number(m[4]) : 0,
+    t: m[5] !== undefined ? Number(m[5]) : 0,
+  };
+}
+
 // Compare semver versions: returns 1 if a > b, -1 if a < b, 0 if equal
 function compareVersions(a, b) {
-  const partsA = a.split(".").map(Number);
-  const partsB = b.split(".").map(Number);
-  for (let i = 0; i < 3; i++) {
-    if (partsA[i] > partsB[i]) return 1;
-    if (partsA[i] < partsB[i]) return -1;
-  }
+  const pa = parseVersion(a);
+  const pb = parseVersion(b);
+  if (!pa || !pb) return 0;
+  if (pa.major !== pb.major) return pa.major > pb.major ? 1 : -1;
+  if (pa.minor !== pb.minor) return pa.minor > pb.minor ? 1 : -1;
+  if (pa.patch !== pb.patch) return pa.patch > pb.patch ? 1 : -1;
+  if (pa.pro !== pb.pro) return pa.pro > pb.pro ? 1 : -1;
+  if (pa.t !== pb.t) return pa.t > pb.t ? 1 : -1;
   return 0;
 }
 
@@ -291,11 +308,11 @@ function killAllAppProcesses(appPort) {
           });
           const lines = output.split("\n").slice(1).filter(l => l.trim());
           lines.forEach(line => {
-            // Whitelist: real node process running 9router/cli.js, or next-server.
-            // Avoids killing editors/grep/strace/cursor that just have "9router" in cmdline.
+            // Whitelist: real node process running t-router/9router/cli.js, or next-server.
+            // Avoids killing editors/grep/strace/cursor that just have app name in cmdline.
             const cmd = line.toLowerCase();
             const isAppProcess =
-              (cmd.includes("node") && cmd.includes("9router") && (cmd.includes("cli.js") || cmd.includes("\\9router") || cmd.includes("/9router")))
+              (cmd.includes("node") && (cmd.includes("t-router") || cmd.includes("trouter") || cmd.includes("9router")) && (cmd.includes("cli.js") || cmd.includes("\\t-router") || cmd.includes("/t-router") || cmd.includes("\\9router") || cmd.includes("/9router")))
               || cmd.includes("next-server");
             if (isAppProcess) {
               const match = line.match(/^"(\d+)"/);
@@ -317,11 +334,11 @@ function killAllAppProcesses(appPort) {
           const lines = output.split('\n');
 
           lines.forEach(line => {
-            // Whitelist: real node process running 9router/cli.js, or next-server.
-            // Avoids killing grep/strace/editors/cursor that incidentally match "9router".
+            // Whitelist: real node process running t-router/9router/cli.js, or next-server.
+            // Avoids killing grep/strace/editors/cursor that incidentally match app name.
             const cmd = line.toLowerCase();
             const isAppProcess =
-              (cmd.includes("node") && cmd.includes("9router") && (cmd.includes("cli.js") || cmd.includes("/9router")))
+              (cmd.includes("node") && (cmd.includes("t-router") || cmd.includes("trouter") || cmd.includes("9router")) && (cmd.includes("cli.js") || cmd.includes("/t-router") || cmd.includes("/9router")))
               || cmd.includes("next-server");
             if (isAppProcess) {
               const parts = line.trim().split(/\s+/);

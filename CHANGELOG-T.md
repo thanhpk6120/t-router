@@ -5,6 +5,19 @@ Upstream changelogs (`CHANGELOG.md` and `CHANGELOG-PRO.md`) are kept intact for 
 
 ---
 
+## v0.5.111-pro.13-t.3 (2026-10-26)
+
+- **Khắc phục triệt để lỗi khoá session (401 Unauthorized) khi bật Require Login hoặc đổi mật khẩu**:
+  - Tự động cấp cookie `auth_token` ngay trong `PATCH /api/settings` khi bật `requireLogin` hoặc đổi mật khẩu, ngăn chặn hoàn toàn tình trạng bị chặn 401 Unauthorized và đơ nút bấm.
+- **Tối giản form đổi mật khẩu chỉ còn 1 ô input**:
+  - Giao diện Cài đặt chỉ hiển thị 1 ô input mật khẩu mới (kèm nút Set / Update Password) để đổi ngay tức thì, không yêu cầu mật khẩu cũ hay xác nhận rườm rà.
+  - Loại bỏ `disabled={loading}` trên Toggle `Require login` để nút có thể thao tác ngay mà không bị khoá cứng.
+- **Sửa bộ so sánh phiên bản trong CLI (`cli/cli.js`)**:
+  - Cập nhật hàm `compareVersions` và `parseVersion` trong CLI hỗ trợ đầy đủ hậu tố `-pro.X-t.Y`, đảm bảo CLI `checkForUpdate()` phát hiện đúng phiên bản mới nhất từ npmjs.
+  - Nhận diện toàn diện tiến trình đang chạy (`t-router`, `trouter`, `9router`) khi kill/restart.
+
+---
+
 ## v0.5.111-pro.13-t.2 (2026-10-26)
 
 - **Version Notification & One-Click Upgrade Engine**:

@@ -1,3 +1,5 @@
+import { cookies } from "next/headers";
+import { setDashboardAuthCookie } from "@/lib/auth/dashboardSession";
 import { NextResponse } from "next/server";
 import { getSettings, updateSettings } from "@/lib/localDb";
 import { applyOutboundProxyEnv } from "@/lib/network/outboundProxy";
@@ -42,31 +44,11 @@ export async function PATCH(request) {
     // Strip protected secrets before any internal handling sets them
     for (const key of PROTECTED_SETTING_KEYS) delete body[key];
 
-    // If updating password, hash it
+    // If updating password, hash it and ensure requireLogin is enabled
     if (body.newPassword) {
-      const settings = await getSettings();
-      const currentHash = settings.password;
-
-      // Verify current password if it exists
-      if (currentHash) {
-        if (!body.currentPassword) {
-          return NextResponse.json({ error: "Current password required" }, { status: 400 });
-        }
-        const isValid = await bcrypt.compare(body.currentPassword, currentHash);
-        if (!isValid) {
-          return NextResponse.json({ error: "Invalid current password" }, { status: 401 });
-        }
-      } else {
-        // First time setting password, no current password needed
-        // Allow empty currentPassword or default "123456"
-        const defaultPwd = process.env.INITIAL_PASSWORD || "123456";
-        if (body.currentPassword && body.currentPassword !== defaultPwd) {
-           return NextResponse.json({ error: "Invalid current password" }, { status: 401 });
-        }
-      }
-
       const salt = await bcrypt.genSalt(10);
       body.password = await bcrypt.hash(body.newPassword, salt);
+      body.requireLogin = true;
       delete body.newPassword;
       delete body.currentPassword;
     }
@@ -78,6 +60,17 @@ export async function PATCH(request) {
     }
 
     const settings = await updateSettings(body);
+
+    // Auto-issue dashboard auth_token cookie when requireLogin is true or new password set,
+    // preventing session lockout / 401 Unauthorized on subsequent requests
+    if (body.requireLogin === true || body.password) {
+      try {
+        const cookieStore = await cookies();
+        await setDashboardAuthCookie(cookieStore, request);
+      } catch (err) {
+        console.warn("Failed to set dashboard auth cookie in settings PATCH:", err);
+      }
+    }
 
     // Apply outbound proxy settings immediately (no restart required)
     if (
