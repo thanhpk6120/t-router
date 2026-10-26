@@ -183,8 +183,13 @@ function resolveNextVersion(currentVer, upstreamProVersion = null, upstream9Rout
 }
 
 function runExec(cmd, opts = {}) {
+  const mergedOpts = {
+    maxBuffer: 50 * 1024 * 1024,
+    timeout: 300000,
+    ...opts,
+  };
   return new Promise((resolve, reject) => {
-    exec(cmd, opts, (error, stdout, stderr) => {
+    exec(cmd, mergedOpts, (error, stdout, stderr) => {
       if (stdout) log('STDOUT: ' + stdout.trim());
       if (stderr) log('STDERR: ' + stderr.trim());
       if (error) {
@@ -256,17 +261,17 @@ async function doPublish(targetVersion) {
     });
 
     // 3. Publish to npmjs
-    log('Publishing to npmjs with npm publish --access public...');
-    await runExec('npm publish --access public', {
+    log('Publishing to npmjs with npm publish --access public --ignore-scripts...');
+    await runExec('npm publish --access public --ignore-scripts', {
       cwd: path.join(DIR_TROUTER, 'cli'),
-      timeout: 120000,
+      timeout: 300000,
     });
 
     // 4. Commit and push bump
     log('Committing and pushing release version to GitHub...');
     try {
       await runExec(
-        `git add package.json cli/package.json CHANGELOG-T.md && git commit -m "release: v${targetVersion}" && git push origin main`,
+        `git add package.json cli/package.json CHANGELOG-T.md && (git commit -m "release: v${targetVersion}" || true) && git push origin main && (git tag -a "v${targetVersion}" -m "Release v${targetVersion}" && git push origin "v${targetVersion}" || true)`,
         { cwd: DIR_TROUTER, timeout: 60000 }
       );
     } catch (gitErr) {
