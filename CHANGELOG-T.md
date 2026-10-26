@@ -5,6 +5,15 @@ Upstream changelogs (`CHANGELOG.md` and `CHANGELOG-PRO.md`) are kept intact for 
 
 ---
 
+## v0.5.111-pro.13-t.4 (2026-10-26)
+
+- **Robust Release Pipeline & Telegram Integration**:
+  - Upgraded release execution with `--ignore-scripts` on `npm publish` and 50MB process buffer to ensure fast, zero-timeout tarball upload to npmjs.
+  - Added automatic resolution for staged version conflicts (HTTP 409) with automated version bumping.
+  - Optimized error extraction so Telegram failure notifications show concise diagnostic logs.
+
+---
+
 ## v0.5.111-pro.13-t.3 (2026-10-26)
 
 - **Session Lockout Fix (401 Unauthorized) on Require Login / Password Update**:

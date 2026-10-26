@@ -182,6 +182,16 @@ function resolveNextVersion(currentVer, upstreamProVersion = null, upstream9Rout
   return candidate;
 }
 
+function extractCleanError(output) {
+  if (!output) return 'Unknown error';
+  const lines = output.split('\n');
+  const errorLines = lines.filter(l => l.includes('npm error') || l.includes('Error:') || l.includes('fatal:'));
+  if (errorLines.length > 0) {
+    return errorLines.slice(-10).join('\n');
+  }
+  return lines.slice(-10).join('\n');
+}
+
 function runExec(cmd, opts = {}) {
   const mergedOpts = {
     maxBuffer: 50 * 1024 * 1024,
@@ -193,7 +203,8 @@ function runExec(cmd, opts = {}) {
       if (stdout) log('STDOUT: ' + stdout.trim());
       if (stderr) log('STDERR: ' + stderr.trim());
       if (error) {
-        return reject(new Error(cmd + ' failed: ' + (stderr || stdout || error.message)));
+        const cleanErr = extractCleanError(stderr || stdout || error.message);
+        return reject(new Error(cmd + ' failed:\n' + cleanErr));
       }
       resolve(stdout);
     });
@@ -228,16 +239,19 @@ async function doPublish(targetVersion) {
       `⏳ <b>Bắt đầu publish T-Router lên npmjs!</b>\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n📦 Phiên bản: <code>${targetVersion}</code>\n⚙️ Đang cập nhật metadata và đóng gói CLI với giới hạn tài nguyên CPU/RAM...`
     );
 
-    // 1. Update version in package.json and cli/package.json
+    // 1. Update version in package.json, cli/package.json, and cli/app/package.json
     const rootPkgPath = path.join(DIR_TROUTER, 'package.json');
     const cliPkgPath = path.join(DIR_TROUTER, 'cli', 'package.json');
-    const rootPkg = JSON.parse(fs.readFileSync(rootPkgPath, 'utf8'));
-    const cliPkg = JSON.parse(fs.readFileSync(cliPkgPath, 'utf8'));
-    rootPkg.version = targetVersion;
-    cliPkg.version = targetVersion;
-    fs.writeFileSync(rootPkgPath, JSON.stringify(rootPkg, null, 2) + '\n', 'utf8');
-    fs.writeFileSync(cliPkgPath, JSON.stringify(cliPkg, null, 2) + '\n', 'utf8');
-
+    const appCliPkgPath = path.join(DIR_TROUTER, 'cli', 'app', 'package.json');
+    for (const p of [rootPkgPath, cliPkgPath, appCliPkgPath]) {
+      if (fs.existsSync(p)) {
+        try {
+          const pkg = JSON.parse(fs.readFileSync(p, 'utf8'));
+          pkg.version = targetVersion;
+          fs.writeFileSync(p, JSON.stringify(pkg, null, 2) + '\n', 'utf8');
+        } catch (e) {}
+      }
+    }
     // Update CHANGELOG-T.md
     const changelogPath = path.join(DIR_TROUTER, 'CHANGELOG-T.md');
     if (fs.existsSync(changelogPath)) {
@@ -262,10 +276,21 @@ async function doPublish(targetVersion) {
 
     // 3. Publish to npmjs
     log('Publishing to npmjs with npm publish --access public --ignore-scripts...');
-    await runExec('npm publish --access public --ignore-scripts', {
-      cwd: path.join(DIR_TROUTER, 'cli'),
-      timeout: 300000,
-    });
+    try {
+      await runExec('npm publish --access public --ignore-scripts', {
+        cwd: path.join(DIR_TROUTER, 'cli'),
+        timeout: 300000,
+      });
+    } catch (pubErr) {
+      if (pubErr.message.includes('409') || pubErr.message.includes('previously staged')) {
+        log('Conflict 409 detected on version ' + targetVersion + ', auto-bumping...');
+        const nextVer = resolveNextVersion(targetVersion);
+        await sendTelegram(`⚠️ Phiên bản <code>${targetVersion}</code> đã bị staged trước đó trên npmjs. Đang tự động nâng lên: <code>${nextVer}</code> để tiếp tục publish...`);
+        isPublishing = false;
+        return doPublish(nextVer);
+      }
+      throw pubErr;
+    }
 
     // 4. Commit and push bump
     log('Committing and pushing release version to GitHub...');
@@ -409,8 +434,8 @@ const server = http.createServer(async (req, res) => {
       }
 
       if (url.pathname === '/publish') {
-        const action = body.action || url.searchParams.get('action') || 'auto';
         const customVersion = body.version || url.searchParams.get('version');
+        const action = body.action || url.searchParams.get('action') || (customVersion ? 'custom' : 'auto');
         log('Received publish request: action=' + action + ', version=' + customVersion);
 
         if (action === 'cancel') {
@@ -422,7 +447,7 @@ const server = http.createServer(async (req, res) => {
         }
 
         let targetVersion = customVersion;
-        if (action === 'auto' || !targetVersion) {
+        if (!targetVersion) {
           let pending = null;
           try {
             if (fs.existsSync(STATE_FILE)) pending = JSON.parse(fs.readFileSync(STATE_FILE, 'utf8'));
