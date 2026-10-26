@@ -7,89 +7,89 @@ Upstream changelogs (`CHANGELOG.md` and `CHANGELOG-PRO.md`) are kept intact for 
 
 ## v0.5.111-pro.13-t.3 (2026-10-26)
 
-- **Khắc phục triệt để lỗi khoá session (401 Unauthorized) khi bật Require Login hoặc đổi mật khẩu**:
-  - Tự động cấp cookie `auth_token` ngay trong `PATCH /api/settings` khi bật `requireLogin` hoặc đổi mật khẩu, ngăn chặn hoàn toàn tình trạng bị chặn 401 Unauthorized và đơ nút bấm.
-- **Tối giản form đổi mật khẩu chỉ còn 1 ô input**:
-  - Giao diện Cài đặt chỉ hiển thị 1 ô input mật khẩu mới (kèm nút Set / Update Password) để đổi ngay tức thì, không yêu cầu mật khẩu cũ hay xác nhận rườm rà.
-  - Loại bỏ `disabled={loading}` trên Toggle `Require login` để nút có thể thao tác ngay mà không bị khoá cứng.
-- **Sửa bộ so sánh phiên bản trong CLI (`cli/cli.js`)**:
-  - Cập nhật hàm `compareVersions` và `parseVersion` trong CLI hỗ trợ đầy đủ hậu tố `-pro.X-t.Y`, đảm bảo CLI `checkForUpdate()` phát hiện đúng phiên bản mới nhất từ npmjs.
-  - Nhận diện toàn diện tiến trình đang chạy (`t-router`, `trouter`, `9router`) khi kill/restart.
+- **Session Lockout Fix (401 Unauthorized) on Require Login / Password Update**:
+  - Automatically issue and renew the dashboard `auth_token` cookie directly in `PATCH /api/settings` when enabling `requireLogin` or updating the password, eliminating 401 Unauthorized session lockouts and unclickable button states.
+- **Streamlined Single-Input Password Form in Settings**:
+  - Simplified the password change form in Settings to a single input field (with an immediate Set / Update Password action) without requiring legacy password fields or redundant confirmation inputs.
+  - Removed `disabled={loading}` on the `Require login` toggle so users can interact with it immediately upon page load without freezing.
+- **CLI Version Comparison & Update Detection (`cli/cli.js`)**:
+  - Updated `compareVersions` and `parseVersion` in the CLI to support the `-pro.X-t.Y` suffix convention, ensuring CLI `checkForUpdate()` correctly detects newer versions from npmjs.
+  - Comprehensive process detection matching running instances of `t-router`, `trouter`, and legacy `9router` for clean process termination and restarts.
 
 ---
 
 ## v0.5.111-pro.13-t.2 (2026-10-26)
 
 - **Version Notification & One-Click Upgrade Engine**:
-  - Sửa lỗi kiểm tra phiên bản mới từ npm registry (`https://registry.npmjs.org/t-router-proxy/latest`) thay vì repo GitHub không tồn tại.
-  - Chuẩn hoá bộ so sánh phiên bản đầy đủ 3 cấp bậc (`major.minor.patch`, `pro`, `t`).
-  - Hiển thị badge thông báo phiên bản mới trên Sidebar và bổ sung card **Version & Updates** trong trang Settings.
-  - Hỗ trợ cả 2 chế độ cập nhật: **Tự động 1-Click (One-Click Auto Update)** với cơ chế reload tự động khi server khởi động lại và **Thủ công (Manual Update)** với lệnh copy `npm i -g t-router-proxy@latest`.
-- **Sửa lỗi "Require login" & Cải tiến đổi mật khẩu trong Settings**:
-  - Kích hoạt mặc định tính năng `Require login` (`true`) trong toàn bộ hệ thống (DB, state, API).
-  - Form đổi mật khẩu luôn luôn hiển thị trực tiếp khi vào Settings mà không bị ẩn đơ sau nút toggle.
-  - Cho phép người dùng mới cài đặt đổi mật khẩu trực tiếp ngay lập tức (không bắt buộc nhập mật khẩu cũ nếu đang dùng mặc định `123456`).
-  - Tự động cập nhật trạng thái `hasPassword: true` sau khi đổi mật khẩu thành công.
+  - Resolved version check queries to target the official npm registry (`https://registry.npmjs.org/t-router-proxy/latest`) with fast response and reliable fallbacks.
+  - Standardized 3-tier version comparator supporting upstream base (`major.minor.patch`), upstream pro (`pro.X`), and internal release (`t.Y`).
+  - Added new version notification badges on the Sidebar and introduced a dedicated **Version & Updates** card on the Settings page.
+  - Provided dual update modes: **1-Click Auto Update** with automatic reload upon server restart, and **Manual Update** with copy-ready command `npm i -g t-router-proxy@latest`.
+- **Require Login Default & Password Management**:
+  - Enabled `Require login` by default (`true`) across all configuration layers (DB defaults, client state, and API routes).
+  - Ensured the password change form is always directly visible in Settings rather than conditionally hidden behind toggle states.
+  - Allowed first-time users to set their password immediately without entering the default `123456`.
+  - Automatically synchronized `hasPassword: true` state upon successful password changes.
 
 ---
 
 ## Upstream Sync (9router 0.5.111, 9router-pro 0.5.109-pro.13)
 
-- **Đồng bộ Upstream 9Router v0.5.111**:
-  - **Ollama Local TTS (Phonon)**: Thêm provider TTS `ollama-local` hỗ trợ dòng mô hình Phonon (15 tags, 38 preset voices), chuẩn hóa định dạng audio sang WAV/PCM, fallback tự động và đóng gói PCM thô thành file WAV với đầy đủ header để dashboard có thể nghe trước.
-  - **Ollama Local Embeddings**: Bổ sung adapter embedding cho endpoint `/v1/embeddings`, tự động chuẩn hóa URL host, gửi Bearer token khi có API key và lập danh mục 14 họ mô hình embedding kèm dimensions.
-  - **Provider mới Runcrate (`rc`)**: Hỗ trợ endpoint OpenAI-compatible Runcrate với các model DeepSeek, GLM, Qwen và gpt-oss; xác thực qua `GET /api/v1/billing/balance`.
-  - **CommandCode & OpenCode Go**: Bổ sung model Kimi K3.1 Pro vào catalog (giữ nguyên upstream id, luồng NDJSON `/alpha/generate`, hỗ trợ vision/video, context window 1M và output 131k).
-  - **OpenCode Free Tier & TLS Fingerprint**: Khôi phục hoạt động cho free tier bằng cách gửi TLS ClientHello chuẩn xác (thông qua `wreq-js`, fail-open với native fetch) và chuẩn hóa session/fingerprint tool definitions in-place.
-  - **Claude Translator & Headroom**: Tự động chuyển đổi `image_url` bên trong tool message sang định dạng Claude image block; tối ưu RTK Headroom cho Claude giúp bảo toàn PDF native, signed thinking và tool history.
-  - **CLI Tools (Pi Settings)**: Cung cấp tùy chọn cấu hình `contextWindow` và `maxTokens` cho từng model Pi, bảo toàn tên model tùy biến do người dùng tự đặt trong `models.json`.
-- **Bảo toàn 100% ràng buộc T-Router**:
-  - Giữ nguyên màu chủ đạo Azure (#3B82F6 / #1D4ED8) và icon Azure T.
-  - Giữ nguyên Database Location tại `~/.trouter/db/data.sqlite` và dataDir `~/.trouter`.
-  - Cổng mặc định duy trì là 20126.
-  - Tuyệt đối không chứa thông tin tác giả Gienetic, Telegram, Donate.
-  - Giữ nguyên hệ thống Universal Proxy Pools & Rotation cho mọi provider, bao gồm Direct proxy guard, `rotateLink` (Dynamic IP Rotation), nút Rotate IP, Proxy Source (`both`/`static`/`rotating`), auto-rotate trên 429/403/cooldown và shorthand parser.
-  - Đảm bảo chức năng Round Robin trong Settings tắt bật bình thường.
+- **Upstream 9Router v0.5.111 Synchronization**:
+  - **Ollama Local TTS (Phonon)**: Added `ollama-local` TTS provider supporting Phonon model families (15 tags, 38 preset voices), standardized audio format conversion to WAV/PCM, automatic fallbacks, and raw PCM encapsulation into standard WAV headers for dashboard audio previews.
+  - **Ollama Local Embeddings**: Added embedding adapter for `/v1/embeddings`, auto-normalized host URLs, Bearer token authorization with API keys, and cataloged 14 embedding model families with dimensions.
+  - **New Provider Runcrate (`rc`)**: Supported Runcrate OpenAI-compatible endpoint with DeepSeek, GLM, Qwen, and gpt-oss models; balance authenticated via `GET /api/v1/billing/balance`.
+  - **CommandCode & OpenCode Go**: Added Kimi K3.1 Pro to catalog (retaining upstream model ID, NDJSON `/alpha/generate` streaming, vision/video support, 1M context window, and 131k output tokens).
+  - **OpenCode Free Tier & TLS Fingerprint**: Restored OpenCode free tier connectivity by sending genuine TLS ClientHello fingerprints (via `wreq-js`, fail-open to native fetch) and in-place session/fingerprint tool definition normalization.
+  - **Claude Translator & Headroom**: Automatically converted `image_url` within tool messages to native Claude image blocks; optimized RTK Headroom for Claude to preserve native PDFs, signed thinking, and tool history.
+  - **CLI Tools (Pi Settings)**: Added configurable `contextWindow` and `maxTokens` per Pi model while preserving custom user-defined model names in `models.json`.
+- **Preserved 100% T-Router Constraints**:
+  - Preserved primary brand theme Azure (`#3B82F6` / `#1D4ED8`) and Azure T icons.
+  - Preserved database location at `~/.trouter/db/data.sqlite` and data directory `~/.trouter`.
+  - Maintained default listening port `20126`.
+  - Zero external author telemetry, credits, Telegram links, or donation modals.
+  - Preserved Universal Proxy Pools & Rotation for all providers, including Direct proxy guard, `rotateLink` (Dynamic IP Rotation), Rotate IP button, Proxy Source (`both`/`static`/`rotating`), auto-rotate on 429/403/cooldown, and shorthand parsers.
+  - Ensured Round Robin routing strategy in Settings can be toggled on/off reliably.
 
 ---
 
 ## Upstream Sync (9router 0.5.109, 9router-pro 0.5.109-pro.13)
 
-- **Đồng bộ Upstream 9Router Pro v0.5.109-pro.13**:
-  - **Sticky-random routing**: Bổ sung chiến lược điều hướng tài khoản mới — gắn kết với một API key đang hoạt động cho đến khi bị khóa/lỗi (429/403/cooldown), sau đó random chọn sang key khả dụng khác. Tối ưu prompt-cache retention và hạn chế phân tán key.
-  - **Variant Backing AUTO Resolution**: Tự động chuẩn hóa prefix alias của custom provider thành routable node id khi lưu variant, lưu combo và import backup (loại bỏ hoàn toàn lỗi 404-alias runtime).
-  - **Variant Prompt Injection qua Combo Members**: Hỗ trợ luồng prompt injection cho các variant khi là thành viên của Combo (combo members), đảm bảo prompt của variant được kích hoạt đúng đắn ngay cả khi gọi qua combo.
-  - **Nhãn hiển thị Backing thân thiện (Friendly Backing Labels)**: Hiển thị `<prefix>/<model>` thay vì UUID nội bộ trên mọi giao diện (thẻ combo, form chỉnh sửa, modal chọn model, trang prompt injection); tự động bỏ qua request 404 cho icon của custom provider nodes.
-  - **Tối ưu hóa render Provider/Combo**: Memoize danh sách active provider IDs giúp tăng tốc độ kiểm tra trạng thái và render tức thì.
-  - **Tự động nhận diện Capability Search cho Combo**: Hỗ trợ tự động chuyển đổi sang model có khả năng search khi request gửi kèm tool dạng search/fetch (`web_search`, `web_fetch`).
-  - **Hỗ trợ NDJSON stream và text parts collapsing**: Tự động parse các dòng JSON thô trong SSE stream và collapse các text parts thành chuỗi đơn giản khi gửi sang endpoint OpenAI-compatible nghiêm ngặt.
-  - **Fuzzy Token Fallback cho Cursor Auto-Import**: Tự động tìm kiếm token và machine ID theo cơ chế fuzzy scan nếu Cursor đổi tên storage key qua các phiên bản mới.
-  - **Bảo toàn 100% ràng buộc T-Router**:
-    - Giữ nguyên màu chủ đạo Azure (#3B82F6 / #1D4ED8) và icon Azure T.
-    - Giữ nguyên Database Location tại `~/.trouter/db/data.sqlite` và dataDir `~/.trouter`.
-    - Cổng mặc định duy trì là 20126.
-    - Đảm bảo chức năng Round Robin trong Settings tắt bật bình thường.
-    - Giữ nguyên hệ thống Universal Proxy Pools & Rotation cho mọi provider, bao gồm Direct proxy guard, `rotateLink` (Dynamic IP Rotation), nút Rotate IP, Proxy Source (`both`/`static`/`rotating`), auto-rotate trên 429/403/cooldown và shorthand parser.
+- **Upstream 9Router Pro v0.5.109-pro.13 Synchronization**:
+  - **Sticky-random routing**: Added a new account routing strategy — stick to an active API key until rate-limited or in error (429/403/cooldown), then randomly pick another available key to maximize prompt-cache retention.
+  - **Variant Backing AUTO Resolution**: Automatically resolved custom provider alias prefixes to routable node IDs on variant save, combo save, and backup import (eliminating 404-alias runtime errors).
+  - **Variant Prompt Injection for Combo Members**: Supported prompt injection workflows for variants when acting as members of a Combo, ensuring variant-specific prompts trigger correctly even when routed via combos.
+  - **Friendly Backing Labels**: Displayed readable `<prefix>/<model>` labels instead of internal UUIDs across all UI components (combo cards, edit forms, model picker modals, prompt injection pages); ignored 404 requests for custom provider node icons.
+  - **Optimized Provider/Combo Rendering**: Memoized active provider IDs to accelerate status checks and provide instant rendering.
+  - **Auto-Detection of Search Capability for Combos**: Automatically routed to search-capable models when incoming requests included search/fetch tool definitions (`web_search`, `web_fetch`).
+  - **NDJSON Stream Support & Text Parts Collapsing**: Automatically parsed raw JSON lines in SSE streams and collapsed text parts into simple strings for strict OpenAI-compatible endpoints.
+  - **Fuzzy Token Fallback for Cursor Auto-Import**: Performed fuzzy scans for tokens and machine IDs if Cursor updated internal storage keys across versions.
+- **Preserved 100% T-Router Constraints**:
+  - Preserved primary brand theme Azure (`#3B82F6` / `#1D4ED8`) and Azure T icons.
+  - Preserved database location at `~/.trouter/db/data.sqlite` and data directory `~/.trouter`.
+  - Maintained default listening port `20126`.
+  - Ensured Round Robin routing strategy in Settings can be toggled on/off reliably.
+  - Preserved Universal Proxy Pools & Rotation for all providers.
 
 ---
 
 ## Upstream Sync (9router 0.5.109, 9router-pro 0.5.109-pro.12)
 
-- **Đồng bộ Upstream 9Router Pro v0.5.109-pro.12**:
-  - Tích hợp bản vá đóng gói packaging fix cho phân phối slim npm từ upstream 9router-pro v0.5.109-pro.12.
-  - Duy trì toàn diện tính năng variant-based prompt injection, sửa lỗi crash trang injection và tối ưu phân trang proxy pools.
-  - Bảo đảm tương thích toàn bộ hệ thống Universal Proxy Pools & Rotation cho tất cả provider, giữ nguyên cổng 20126, đường dẫn `~/.trouter`, theme Azure (#3B82F6) và icon Azure T.
-- **Prompt Injection (Variant-based)**:
-  - Chuyển đổi prompt injection sang cơ chế variant-based: prompt gắn với tên variant tùy chỉnh thay vì model gốc.
-  - Variant là một tên tùy chỉnh liên kết với chính xác 1 provider/model gốc kèm prompt. Khi gọi theo variant name sẽ áp dụng prompt; khi gọi theo raw model name sẽ không bị ảnh hưởng.
-  - Tự động tạo và đồng bộ single-member combo tương ứng cho variant.
-  - Tự động migrate các cấu hình prompt injection dạng model cũ sang variants trên lần đọc đầu tiên.
-- **Sửa lỗi crash trang Prompt Injection**:
-  - Loại bỏ hoàn toàn khối code thừa từ UI copy-to-providers gây crash toàn bộ trang khi render trên trình duyệt.
-- **Phân trang Proxy Pools (Pagination & Filtering)**:
-  - Bổ sung phân trang phía server (hỗ trợ pageSize 10, 20, 50) và tìm kiếm theo tên pool (`search`), giúp tối ưu hóa hiệu năng và bộ nhớ khi quản lý số lượng lớn proxy pools.
-  - Lựa chọn theo trang kết hợp lưu trữ cross-page selection cho bulk actions.
-  - Tương thích 100% với Universal Proxy Pools & Rotation của T Router.
+- **Upstream 9Router Pro v0.5.109-pro.12 Synchronization**:
+  - Integrated slim npm distribution packaging patch from upstream 9router-pro v0.5.109-pro.12.
+  - Maintained variant-based prompt injection, fixed prompt injection crash, and optimized proxy pool pagination.
+  - Preserved Universal Proxy Pools & Rotation, port 20126, path `~/.trouter`, and Azure theme (#3B82F6).
+- **Variant-Based Prompt Injection**:
+  - Transitioned prompt injection to variant-based mechanisms: prompts bind to custom variant names rather than raw underlying models.
+  - A variant links an alias name with exactly one underlying provider/model and injected prompt. Calling by variant name applies the prompt; calling by raw model name remains untouched.
+  - Automatically created and synchronized corresponding single-member combos for each variant.
+  - Migrated legacy model-based prompt injection configurations to variants on initial read.
+- **Prompt Injection Crash Fix**:
+  - Removed dangling UI copy-to-providers code blocks that caused complete page crashes during browser rendering.
+- **Proxy Pools Pagination & Filtering**:
+  - Added server-side pagination (pageSize 10, 20, 50) and name search (`search`), optimizing performance and memory footprint when managing large proxy pool collections.
+  - Supported per-page selection with cross-page preservation for bulk operations.
+  - 100% compatible with T Router's Universal Proxy Pools & Rotation.
 
 ---
 
@@ -99,55 +99,51 @@ Upstream changelogs (`CHANGELOG.md` and `CHANGELOG-PRO.md`) are kept intact for 
 
 ## v0.5.109-pro.13-t.1 (2026-10-26)
 
-- **Fix Antigravity / Gemini Multi-turn Function Calling & System Instruction Loss**:
-  - Hỗ trợ đầy đủ `role: "developer"` (OMP, Codex) khi chuyển đổi sang Gemini/Antigravity (`openaiToGeminiRequest`), tránh việc rơi rụng toàn bộ system prompt cốt lõi của agent.
-  - Tích lũy toàn bộ các `system` và `developer` messages vào `systemInstruction.parts` thay vì gán đè làm mất system prompt trước đó.
-  - Sửa `thoughtSignatureStore.js`: cho phép tái sử dụng `thoughtSignature` theo đúng `toolCallId` bất kể model alias (tránh việc ánh xạ `claude-sonnet-5` sang Gemini bị từ chối signature dẫn đến hỏng trạng thái gọi tool nhiều lượt).
-  - Tự động phát hiện và bóc tách các cú pháp tool call bị rò rỉ vào text (`call:default_api:...`) trong stream response của Gemini để chuyển đổi ngược về OpenAI `tool_calls` delta chuẩn với `finish_reason: "tool_calls"`.
+- **Antigravity / Gemini Multi-turn Function Calling & System Instruction Loss Fix**:
+  - Full support for `role: "developer"` (OMP, Codex) in Gemini/Antigravity request translation (`openaiToGeminiRequest`), preventing loss of core agent system instructions.
+  - Accumulated all `system` and `developer` messages into `systemInstruction.parts` instead of overwriting earlier instructions.
+  - Fixed `thoughtSignatureStore.js`: allowed reusing `thoughtSignature` strictly by `toolCallId` regardless of model aliases (preventing multi-turn tool call failures when mapping `claude-sonnet-5` to Gemini).
+  - Automatically detected and extracted leaked tool call syntax (`call:default_api:...`) in Gemini stream responses and converted them back to standard OpenAI `tool_calls` deltas with `finish_reason: "tool_calls"`.
 
 ## v0.5.109-pro.12-t.8 (2026-10-26)
 
 - **Proxy Direct Guard Condition Refinement**:
-  - Chỉ áp dụng logic chặn fallback về IP trực tiếp (Direct) khi provider đã chủ động bật/chọn sử dụng proxy (qua Proxy Pool, Rotation Strategy hoặc connection proxy).
-  - Đối với các provider không kích hoạt proxy, hệ thống tự động kết nối trực tiếp bình thường (kể cả khi pool 'Direct' trong Proxy Pools đang ở trạng thái tắt).
-  - Đảm bảo an toàn tuyệt đối chống leak IP cho các kết nối proxy nhưng không ảnh hưởng đến các provider chạy trực tiếp.
+  - Applied direct IP fallback prevention strictly when a provider explicitly opts into proxies (via Proxy Pool, Rotation Strategy, or connection proxy).
+  - Providers without proxy configuration route directly as normal (even if the 'Direct' pool in Proxy Pools is toggled inactive).
+  - Ensured complete IP leak protection for proxy-enabled connections without impacting direct-routing providers.
 
 ## v0.5.109-pro.12-t.6 (2026-10-26)
 
-- **Cố định Proxy Direct trong Proxy Pools & Chống rò rỉ IP (No Direct Leak)**:
-  - Proxy Pools luôn có một proxy mặc định tên "Direct" đại diện cho đường truyền trực tiếp không qua proxy.
-  - Cho phép người dùng chủ động tắt (inactive) proxy "Direct" này để cấm hoàn toàn việc tự động fallback về mạng trực tiếp khi các proxy active bị lỗi hoặc quá tải.
-  - Khi Direct bị tắt, hệ thống từ chối fallback về IP máy chủ và trả về lỗi rõ ràng để bảo vệ an toàn danh tính IP.
-- **Hỗ trợ Bật/Tắt (Toggle Active) OpenCode Free**:
-  - Bổ sung công tắc bật/tắt hoạt động cho provider OpenCode Free như mọi provider khác.
-  - Khi tắt, OpenCode Free chuyển sang trạng thái Disabled mờ 50% và không xuất hiện trong danh mục `/v1/models`.
-- **Đồng bộ Rotation Strategies & Cấu hình Proxy cho tất cả Provider**:
-  - Mở rộng đầy đủ các chế độ xoay vòng: None, Round-robin, Random, Fallback (Priority) cho toàn bộ các nhà cung cấp.
-  - Giao diện cấu hình Proxy Pool & Rotation nhất quán trên tất cả các trang chi tiết provider.
+- **Fixed Direct Proxy in Proxy Pools & No Direct IP Leaks**:
+  - Proxy Pools always maintains a default "Direct" entry representing direct connections without proxies.
+  - Allowed users to deactivate the "Direct" pool to strictly forbid fallback to host network when active proxies fail or are rate-limited.
+  - Rejected requests with an explicit error when Direct is disabled and proxies fail, safeguarding server IP anonymity.
+- **OpenCode Free Active Toggle**:
+  - Added an active toggle switch for OpenCode Free provider matching other standard providers.
+  - When disabled, OpenCode Free appears dimmed at 50% opacity and is excluded from `/v1/models`.
+- **Synchronized Rotation Strategies & Proxy Settings for All Providers**:
+  - Extended all rotation strategies (None, Round-robin, Random, Fallback Priority) to every provider.
+  - Provided consistent Proxy Pool & Rotation UI across all provider detail views.
 - **Dynamic Tool Gating & Protobuf Schema Sanitization**:
-  - Tự động nén và lọc thông minh danh sách MCP Tools khi vượt ngưỡng 64 tools, giữ trọn vẹn 100% Core Tools và Context Tools.
-  - Làm sạch sâu JSON Schema, loại bỏ lỗi Protobuf của Google Gemini và ngăn ngừa vòng lặp retry ngầm trên Claude Code CLI.
+  - Automatically compressed and pruned MCP tools exceeding 64 tools, preserving 100% Core Tools and Context Tools.
+  - Sanitized nested JSON Schemas to prevent Google Gemini Protobuf validation errors and eliminate silent retry loops in Claude Code CLI.
 
 ---
 
 ## v0.5.109-pro.12-t.5 (2026-10-25)
 
 - **Advanced Proxy Management & Dynamic IP Rotation (aligned with opencode2api)**:
-  - **Rotate Link & Dynamic IP Rotation**: Hỗ trợ đầy đủ trường `rotateLink` (URL đổi IP) trên giao diện Proxy Pools (thêm mới, chỉnh sửa, batch import).
-  - **Nút Xoay IP Ngay (Rotate IP)**: Cho phép đổi IP ngay lập tức trên từng Proxy Pool hoặc thực hiện hàng loạt (Bulk Rotate) trực tiếp từ giao diện với thông báo và hiển thị thời gian đổi IP gần nhất.
-  - **Proxy Source Selection**: Bổ sung bộ lọc nguồn proxy (`both` | `static` | `rotating`) trong cấu hình xoay proxy của provider.
-  - **Tự Động Đổi IP Khi Bị Chặn (Auto-Rotate on 429/403/Error)**: Tự động gọi rotate link khi gặp lỗi rate limit (429) hoặc bị chặn (403), kèm cơ chế cooldown 60s để chống spam API xoay proxy.
-  - **Evict Socket Cache Khi Đổi IP**: Tự động giải phóng và đóng các kết nối keep-alive cũ trong `proxyDispatchers` ngay khi IP được xoay, đảm bảo request tiếp theo lập tức dùng IP mới thoát ra ngoài.
-  - **Tự Động Xoay Định Kỳ (Auto-Rotate Due)**: Tự động đổi IP định kỳ cho các proxy pool xoay có thời gian đổi IP cũ hơn 30 phút.
-  - **Hỗ trợ định dạng Shorthand đa dạng**: Hỗ trợ `host:port`, `host:port:user:pass`, `host:port:user:pass|rotateLink`, `host:port|rotateLink`, socks5 và URL chuẩn.
+  - **Rotate Link & Dynamic IP Rotation**: Full support for `rotateLink` (IP rotation webhook URL) in Proxy Pools UI (create, edit, batch import).
+  - **Rotate IP Button**: Instantly trigger IP rotation per pool or in bulk from the dashboard with notification feedback and last-rotated timestamps.
+  - **Proxy Source Selection**: Added proxy source filter (`both` | `static` | `rotating`) in provider rotation settings.
+  - **Auto-Rotate on 429/403/Error**: Automatically invoked rotate link on rate limits (429) or IP blocks (403), with a 60-second cooldown to prevent API spam.
+  - **Socket Cache Eviction on IP Rotation**: Evicted and closed stale keep-alive connections in `proxyDispatchers` immediately upon IP rotation, ensuring subsequent requests use the fresh outbound IP.
+  - **Auto-Rotate on Schedule**: Periodically rotated IPs for dynamic proxy pools with timestamps older than 30 minutes.
+  - **Comprehensive Shorthand Parsing**: Supported `host:port`, `host:port:user:pass`, `host:port:user:pass|rotateLink`, `host:port|rotateLink`, SOCKS5, and standard proxy URLs.
 
 ## v0.5.109-pro.12-t.4 (2026-10-25)
 
 - Monotonic +1 version bump: upgraded to 0.5.109-pro.12-t.4 aligned with latest upstream 9router-pro.12.
-
-
-
-- Automated sync and release via Telegram Bot.
 
 ## v0.5.109-pro.12-t.1 (2026-10-25)
 
@@ -157,7 +153,7 @@ Upstream changelogs (`CHANGELOG.md` and `CHANGELOG-PRO.md`) are kept intact for 
 
 - Automated sync and release via Telegram Bot.
 
-
+## v0.5.109-pro.10-t.1 (2026-10-24)
 
 - **Upstream Sync**: Synchronized latest updates from upstream 9router (v0.5.109) and 9router-pro (v0.5.109-pro.10).
 - **9Router-Pro.10 Integration**: Integrated Windowed-LRU in-memory overlay ($O(n)$ latency on ~18k keys), single-pass windowed LRU rotation tests, direct `provider/model` prompt injection architecture, and auto-normalization filters.
