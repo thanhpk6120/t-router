@@ -131,8 +131,8 @@ if [ "$HAS_NEW_CODE" = true ] && [ "$HAS_NEW_VER" = true ]; then
   curl -s -X POST http://127.0.0.1:20129/notify-release \
     -H "Content-Type: application/json" \
     -d "$JSON_PAYLOAD" || log "Failed to call publisher daemon on 127.0.0.1:20129"
-
   log "Zero-downtime test passed and Telegram notification sent. Awaiting user confirmation to publish."
+  exit 0
 fi
 
 HEAD_9ROUTER=$(git -C "$DIR_9ROUTER" rev-parse --short HEAD 2>/dev/null || echo "")
