@@ -27,6 +27,14 @@ function log(msg) {
     fs.appendFileSync(LOG_FILE, line + '\n');
   } catch (e) {}
 }
+function escapeHtml(str) {
+  if (!str || typeof str !== 'string') return '';
+  return str
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
 
 async function sendTelegram(text, replyMarkup = null) {
   try {
@@ -42,7 +50,24 @@ async function sendTelegram(text, replyMarkup = null) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     });
-    return await res.json();
+    const data = await res.json().catch(() => null);
+    if (!res.ok || !data?.ok) {
+      log('sendTelegram failed: ' + (data?.description || `HTTP ${res.status}`));
+      // Fallback: retry as plain text if HTML parsing failed
+      if (data?.description && data.description.includes('parse entities')) {
+        log('Retrying sendTelegram as plain text without HTML parse_mode...');
+        const plainText = text.replace(/<[^>]*>/g, '');
+        const plainPayload = { chat_id: OWNER_ID, text: plainText };
+        if (replyMarkup) plainPayload.reply_markup = replyMarkup;
+        const retryRes = await fetch('https://api.telegram.org/bot' + BOT_TOKEN + '/sendMessage', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(plainPayload),
+        });
+        return await retryRes.json().catch(() => null);
+      }
+    }
+    return data;
   } catch (err) {
     log('sendTelegram error: ' + err.message);
     return null;
@@ -199,7 +224,7 @@ async function doPublish(targetVersion) {
   } catch (err) {
     log('Publish failed: ' + err.message);
     await sendTelegram(
-      '❌ <b>Lỗi trong quá trình build/publish T-Router:</b>\n━━━━━━━━━━━━━━━━━━━━\n<code>' + err.message.substring(0, 1000) + '</code>'
+      '❌ <b>Lỗi trong quá trình build/publish T-Router:</b>\n━━━━━━━━━━━━━━━━━━━━\n<code>' + escapeHtml(err.message.substring(0, 1000)) + '</code>'
     );
   } finally {
     isPublishing = false;
@@ -256,13 +281,12 @@ const server = http.createServer(async (req, res) => {
 
         const msgText =
           '🚀 <b>T-Router: Phát hiện Code mới & Version mới!</b>\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n' +
-          '📦 <b>Phiên bản Git:</b> <code>' + (currentVersion || 'N/A') + '</code>\n' +
-          (publishedVersion ? '🌐 <b>Phiên bản npmjs:</b> <code>' + publishedVersion + '</code>\n' : '') +
-          '🔀 <b>Nguồn:</b> ' + (mergedFrom || 'Git origin/main') + '\n' +
-          '📝 <b>Tóm tắt:</b> ' + (summary || 'Cập nhật tính năng mới') + '\n' +
+          '📦 <b>Phiên bản Git:</b> <code>' + escapeHtml(currentVersion || 'N/A') + '</code>\n' +
+          (publishedVersion ? '🌐 <b>Phiên bản npmjs:</b> <code>' + escapeHtml(publishedVersion) + '</code>\n' : '') +
+          '🔀 <b>Nguồn:</b> ' + escapeHtml(mergedFrom || 'Git origin/main') + '\n' +
+          '📝 <b>Tóm tắt:</b> ' + escapeHtml(summary || 'Cập nhật tính năng mới') + '\n' +
           '✅ <b>Kiểm tra:</b> Syntax OK, build hoàn tất, service active!\n\n' +
           '💡 Đề xuất publish lên npmjs.com?';
-
         const inlineKeyboard = {
           inline_keyboard: [
             [
