@@ -5,6 +5,26 @@ Upstream changelogs (`CHANGELOG.md` and `CHANGELOG-PRO.md`) are kept intact for 
 
 ---
 
+## Upstream Sync (9router 0.5.111, 9router-pro 0.5.109-pro.13)
+
+- **Đồng bộ Upstream 9Router v0.5.111**:
+  - **Ollama Local TTS (Phonon)**: Thêm provider TTS `ollama-local` hỗ trợ dòng mô hình Phonon (15 tags, 38 preset voices), chuẩn hóa định dạng audio sang WAV/PCM, fallback tự động và đóng gói PCM thô thành file WAV với đầy đủ header để dashboard có thể nghe trước.
+  - **Ollama Local Embeddings**: Bổ sung adapter embedding cho endpoint `/v1/embeddings`, tự động chuẩn hóa URL host, gửi Bearer token khi có API key và lập danh mục 14 họ mô hình embedding kèm dimensions.
+  - **Provider mới Runcrate (`rc`)**: Hỗ trợ endpoint OpenAI-compatible Runcrate với các model DeepSeek, GLM, Qwen và gpt-oss; xác thực qua `GET /api/v1/billing/balance`.
+  - **CommandCode & OpenCode Go**: Bổ sung model Kimi K3.1 Pro vào catalog (giữ nguyên upstream id, luồng NDJSON `/alpha/generate`, hỗ trợ vision/video, context window 1M và output 131k).
+  - **OpenCode Free Tier & TLS Fingerprint**: Khôi phục hoạt động cho free tier bằng cách gửi TLS ClientHello chuẩn xác (thông qua `wreq-js`, fail-open với native fetch) và chuẩn hóa session/fingerprint tool definitions in-place.
+  - **Claude Translator & Headroom**: Tự động chuyển đổi `image_url` bên trong tool message sang định dạng Claude image block; tối ưu RTK Headroom cho Claude giúp bảo toàn PDF native, signed thinking và tool history.
+  - **CLI Tools (Pi Settings)**: Cung cấp tùy chọn cấu hình `contextWindow` và `maxTokens` cho từng model Pi, bảo toàn tên model tùy biến do người dùng tự đặt trong `models.json`.
+- **Bảo toàn 100% ràng buộc T-Router**:
+  - Giữ nguyên màu chủ đạo Azure (#3B82F6 / #1D4ED8) và icon Azure T.
+  - Giữ nguyên Database Location tại `~/.trouter/db/data.sqlite` và dataDir `~/.trouter`.
+  - Cổng mặc định duy trì là 20126.
+  - Tuyệt đối không chứa thông tin tác giả Gienetic, Telegram, Donate.
+  - Giữ nguyên hệ thống Universal Proxy Pools & Rotation cho mọi provider, bao gồm Direct proxy guard, `rotateLink` (Dynamic IP Rotation), nút Rotate IP, Proxy Source (`both`/`static`/`rotating`), auto-rotate trên 429/403/cooldown và shorthand parser.
+  - Đảm bảo chức năng Round Robin trong Settings tắt bật bình thường.
+
+---
+
 ## Upstream Sync (9router 0.5.109, 9router-pro 0.5.109-pro.13)
 
 - **Đồng bộ Upstream 9Router Pro v0.5.109-pro.13**:

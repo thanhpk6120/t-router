@@ -438,26 +438,26 @@ exports[`GOLDEN buildHeaders (default executor providers) > cline → headers (a
     "Authorization": "Bearer <TOK>",
     "Content-Type": "application/json",
     "HTTP-Referer": "https://cline.bot",
-    "User-Agent": "9Router/0.5.109-pro.13",
+    "User-Agent": "9Router/0.5.104",
     "X-CLIENT-TYPE": "9router",
-    "X-CLIENT-VERSION": "0.5.109-pro.13",
-    "X-CORE-VERSION": "0.5.109-pro.13",
+    "X-CLIENT-VERSION": "0.5.104",
+    "X-CORE-VERSION": "0.5.104",
     "X-IS-MULTIROOT": "false",
     "X-PLATFORM": "linux",
-    "X-PLATFORM-VERSION": "v24.22.1",
+    "X-PLATFORM-VERSION": "v22.23.2",
     "X-Title": "Cline",
   },
   "nonStream": {
     "Authorization": "Bearer <TOK>",
     "Content-Type": "application/json",
     "HTTP-Referer": "https://cline.bot",
-    "User-Agent": "9Router/0.5.109-pro.13",
+    "User-Agent": "9Router/0.5.104",
     "X-CLIENT-TYPE": "9router",
-    "X-CLIENT-VERSION": "0.5.109-pro.13",
-    "X-CORE-VERSION": "0.5.109-pro.13",
+    "X-CLIENT-VERSION": "0.5.104",
+    "X-CORE-VERSION": "0.5.104",
     "X-IS-MULTIROOT": "false",
     "X-PLATFORM": "linux",
-    "X-PLATFORM-VERSION": "v24.22.1",
+    "X-PLATFORM-VERSION": "v22.23.2",
     "X-Title": "Cline",
   },
   "oauth": {
@@ -465,13 +465,13 @@ exports[`GOLDEN buildHeaders (default executor providers) > cline → headers (a
     "Authorization": "Bearer <TOK>",
     "Content-Type": "application/json",
     "HTTP-Referer": "https://cline.bot",
-    "User-Agent": "9Router/0.5.109-pro.13",
+    "User-Agent": "9Router/0.5.104",
     "X-CLIENT-TYPE": "9router",
-    "X-CLIENT-VERSION": "0.5.109-pro.13",
-    "X-CORE-VERSION": "0.5.109-pro.13",
+    "X-CLIENT-VERSION": "0.5.104",
+    "X-CORE-VERSION": "0.5.104",
     "X-IS-MULTIROOT": "false",
     "X-PLATFORM": "linux",
-    "X-PLATFORM-VERSION": "v24.22.1",
+    "X-PLATFORM-VERSION": "v22.23.2",
     "X-Title": "Cline",
   },
 }
@@ -484,26 +484,26 @@ exports[`GOLDEN buildHeaders (default executor providers) > clinepass → header
     "Authorization": "Bearer <TOK>",
     "Content-Type": "application/json",
     "HTTP-Referer": "https://cline.bot",
-    "User-Agent": "9Router/0.5.109-pro.13",
+    "User-Agent": "9Router/0.5.104",
     "X-CLIENT-TYPE": "9router",
-    "X-CLIENT-VERSION": "0.5.109-pro.13",
-    "X-CORE-VERSION": "0.5.109-pro.13",
+    "X-CLIENT-VERSION": "0.5.104",
+    "X-CORE-VERSION": "0.5.104",
     "X-IS-MULTIROOT": "false",
     "X-PLATFORM": "linux",
-    "X-PLATFORM-VERSION": "v24.22.1",
+    "X-PLATFORM-VERSION": "v22.23.2",
     "X-Title": "Cline",
   },
   "nonStream": {
     "Authorization": "Bearer <TOK>",
     "Content-Type": "application/json",
     "HTTP-Referer": "https://cline.bot",
-    "User-Agent": "9Router/0.5.109-pro.13",
+    "User-Agent": "9Router/0.5.104",
     "X-CLIENT-TYPE": "9router",
-    "X-CLIENT-VERSION": "0.5.109-pro.13",
-    "X-CORE-VERSION": "0.5.109-pro.13",
+    "X-CLIENT-VERSION": "0.5.104",
+    "X-CORE-VERSION": "0.5.104",
     "X-IS-MULTIROOT": "false",
     "X-PLATFORM": "linux",
-    "X-PLATFORM-VERSION": "v24.22.1",
+    "X-PLATFORM-VERSION": "v22.23.2",
     "X-Title": "Cline",
   },
   "oauth": {
@@ -511,13 +511,13 @@ exports[`GOLDEN buildHeaders (default executor providers) > clinepass → header
     "Authorization": "Bearer <TOK>",
     "Content-Type": "application/json",
     "HTTP-Referer": "https://cline.bot",
-    "User-Agent": "9Router/0.5.109-pro.13",
+    "User-Agent": "9Router/0.5.104",
     "X-CLIENT-TYPE": "9router",
-    "X-CLIENT-VERSION": "0.5.109-pro.13",
-    "X-CORE-VERSION": "0.5.109-pro.13",
+    "X-CLIENT-VERSION": "0.5.104",
+    "X-CORE-VERSION": "0.5.104",
     "X-IS-MULTIROOT": "false",
     "X-PLATFORM": "linux",
-    "X-PLATFORM-VERSION": "v24.22.1",
+    "X-PLATFORM-VERSION": "v22.23.2",
     "X-Title": "Cline",
   },
 }
@@ -987,7 +987,7 @@ exports[`GOLDEN buildHeaders (default executor providers) > kimi → headers (ap
     "X-Msh-Device-Model": "Linux x64",
     "X-Msh-Device-Name": "<VOLATILE>",
     "X-Msh-Platform": "9router",
-    "X-Msh-Version": "0.5.109-pro.13",
+    "X-Msh-Version": "0.5.104",
     "x-api-key": "<CRED>",
   },
   "nonStream": {
@@ -998,7 +998,7 @@ exports[`GOLDEN buildHeaders (default executor providers) > kimi → headers (ap
     "X-Msh-Device-Model": "Linux x64",
     "X-Msh-Device-Name": "<VOLATILE>",
     "X-Msh-Platform": "9router",
-    "X-Msh-Version": "0.5.109-pro.13",
+    "X-Msh-Version": "0.5.104",
     "x-api-key": "<CRED>",
   },
   "oauth": {
@@ -1010,7 +1010,7 @@ exports[`GOLDEN buildHeaders (default executor providers) > kimi → headers (ap
     "X-Msh-Device-Model": "Linux x64",
     "X-Msh-Device-Name": "<VOLATILE>",
     "X-Msh-Platform": "9router",
-    "X-Msh-Version": "0.5.109-pro.13",
+    "X-Msh-Version": "0.5.104",
     "x-api-key": "<CRED>",
   },
 }
@@ -1094,7 +1094,7 @@ exports[`GOLDEN buildHeaders (default executor providers) > minimax-code → hea
     "User-Agent": "MiniMaxAgent",
     "X-Mavis-Agent-Id": "main",
     "X-Mavis-Session-Id": "<VOLATILE>",
-    "X-Mavis-Timezone-Offset": "25200",
+    "X-Mavis-Timezone-Offset": "0",
     "anthropic-version": "2023-06-01",
     "x-api-key": "sk-xxx",
   },
@@ -1104,7 +1104,7 @@ exports[`GOLDEN buildHeaders (default executor providers) > minimax-code → hea
     "User-Agent": "MiniMaxAgent",
     "X-Mavis-Agent-Id": "main",
     "X-Mavis-Session-Id": "<VOLATILE>",
-    "X-Mavis-Timezone-Offset": "25200",
+    "X-Mavis-Timezone-Offset": "0",
     "anthropic-version": "2023-06-01",
     "x-api-key": "sk-xxx",
   },
@@ -1115,7 +1115,7 @@ exports[`GOLDEN buildHeaders (default executor providers) > minimax-code → hea
     "User-Agent": "MiniMaxAgent",
     "X-Mavis-Agent-Id": "main",
     "X-Mavis-Session-Id": "<VOLATILE>",
-    "X-Mavis-Timezone-Offset": "25200",
+    "X-Mavis-Timezone-Offset": "0",
     "anthropic-version": "2023-06-01",
     "x-api-key": "sk-xxx",
   },
@@ -1131,7 +1131,7 @@ exports[`GOLDEN buildHeaders (default executor providers) > minimax-code-global 
     "User-Agent": "MiniMaxAgent",
     "X-Mavis-Agent-Id": "main",
     "X-Mavis-Session-Id": "<VOLATILE>",
-    "X-Mavis-Timezone-Offset": "25200",
+    "X-Mavis-Timezone-Offset": "0",
     "anthropic-version": "2023-06-01",
     "x-api-key": "sk-xxx",
   },
@@ -1141,7 +1141,7 @@ exports[`GOLDEN buildHeaders (default executor providers) > minimax-code-global 
     "User-Agent": "MiniMaxAgent",
     "X-Mavis-Agent-Id": "main",
     "X-Mavis-Session-Id": "<VOLATILE>",
-    "X-Mavis-Timezone-Offset": "25200",
+    "X-Mavis-Timezone-Offset": "0",
     "anthropic-version": "2023-06-01",
     "x-api-key": "sk-xxx",
   },
@@ -1152,7 +1152,7 @@ exports[`GOLDEN buildHeaders (default executor providers) > minimax-code-global 
     "User-Agent": "MiniMaxAgent",
     "X-Mavis-Agent-Id": "main",
     "X-Mavis-Session-Id": "<VOLATILE>",
-    "X-Mavis-Timezone-Offset": "25200",
+    "X-Mavis-Timezone-Offset": "0",
     "anthropic-version": "2023-06-01",
     "x-api-key": "sk-xxx",
   },
@@ -1471,6 +1471,25 @@ exports[`GOLDEN buildHeaders (default executor providers) > poolside → headers
 `;
 
 exports[`GOLDEN buildHeaders (default executor providers) > qoder-cn → headers (apiKey / oauth) 1`] = `
+{
+  "apiKey": {
+    "Accept": "text/event-stream",
+    "Authorization": "Bearer <TOK>",
+    "Content-Type": "application/json",
+  },
+  "nonStream": {
+    "Authorization": "Bearer <TOK>",
+    "Content-Type": "application/json",
+  },
+  "oauth": {
+    "Accept": "text/event-stream",
+    "Authorization": "Bearer <TOK>",
+    "Content-Type": "application/json",
+  },
+}
+`;
+
+exports[`GOLDEN buildHeaders (default executor providers) > runcrate → headers (apiKey / oauth) 1`] = `
 {
   "apiKey": {
     "Accept": "text/event-stream",
@@ -2224,6 +2243,13 @@ exports[`GOLDEN buildUrl (default executor providers) > qoder-cn → url (stream
 {
   "nonStream": "https://gateway.qoder.com.cn/algo/api/v2/service/pro/sse/agent_chat_generation",
   "stream": "https://gateway.qoder.com.cn/algo/api/v2/service/pro/sse/agent_chat_generation",
+}
+`;
+
+exports[`GOLDEN buildUrl (default executor providers) > runcrate → url (stream + non-stream) 1`] = `
+{
+  "nonStream": "https://api.runcrate.ai/v1/chat/completions",
+  "stream": "https://api.runcrate.ai/v1/chat/completions",
 }
 `;
 
