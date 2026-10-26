@@ -1,6 +1,6 @@
 {
   "name": "t-router-proxy",
-  "version": "0.5.109-pro.12-t.8",
+  "version": "0.5.109-pro.12-t.9",
   "description": "T Router CLI - Start and manage the T Router server",
   "bin": {
     "t-router": "cli.js",

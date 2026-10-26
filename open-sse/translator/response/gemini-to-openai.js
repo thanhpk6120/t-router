@@ -13,6 +13,43 @@ function chunkMeta(state) {
   return { id: `chatcmpl-${state.messageId}`, created: Math.floor(Date.now() / 1000), model: state.model };
 }
 
+function extractLeakedToolCall(text) {
+  if (!text || typeof text !== "string") return null;
+  const match = text.match(/(?:\}?\s*)?\b(?:call|action):(?:default_api:)?([a-zA-Z0-9_.:\-]+)\s*\{([\s\S]*)\}\s*$/);
+  if (!match) return null;
+
+  const rawToolName = match[1];
+  const toolName = rawToolName.includes(":") ? rawToolName.split(":").pop() : rawToolName;
+  const rawArgs = match[2].trim();
+  const leadingText = text.slice(0, match.index).replace(/\}?\s*$/, "").trimEnd();
+
+  let args = {};
+  try {
+    args = JSON.parse("{" + rawArgs + "}");
+  } catch (e1) {
+    try {
+      args = JSON.parse(rawArgs);
+    } catch (e2) {
+      const kvRegex = /([a-zA-Z0-9_-]+)\s*:\s*("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^,}]+)/g;
+      let m;
+      let parsedAny = false;
+      while ((m = kvRegex.exec(rawArgs)) !== null) {
+        parsedAny = true;
+        const k = m[1];
+        let v = m[2].trim();
+        if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) {
+          v = v.slice(1, -1);
+        }
+        args[k] = v;
+      }
+      if (!parsedAny) {
+        args = { input: rawArgs };
+      }
+    }
+  }
+
+  return { leadingText, toolName, args };
+}
 // Build a tool_call chunk from a gemini functionCall part (shared by sig/non-sig branches)
 function emitFunctionCall(functionCall, state, signature = null) {
   const rawName = functionCall.name;
@@ -78,13 +115,23 @@ export function geminiToOpenAIResponse(chunk, state) {
         }
 
         if (hasTextContent) {
+          if (!isThought) {
+            const leaked = extractLeakedToolCall(part.text);
+            if (leaked) {
+              if (leaked.leadingText) {
+                results.push(buildChunk(chunkMeta(state), { content: leaked.leadingText }, null));
+              }
+              results.push(emitFunctionCall({ name: leaked.toolName, args: leaked.args }, state, hasThoughtSig));
+              state.pendingThoughtSignature = null;
+              continue;
+            }
+          }
           results.push(buildChunk(
             chunkMeta(state),
             isThought ? reasoningDelta(part.text) : { content: part.text },
             null
           ));
         }
-
         if (hasFunctionCall) {
           results.push(emitFunctionCall(part.functionCall, state, hasThoughtSig));
           state.pendingThoughtSignature = null;
@@ -97,6 +144,18 @@ export function geminiToOpenAIResponse(chunk, state) {
       // can also stream thought parts without a signature; those must not be
       // surfaced as normal assistant content in OpenAI-compatible clients.
       if (part.text !== undefined && part.text !== "") {
+        if (!isThought) {
+          const leaked = extractLeakedToolCall(part.text);
+          if (leaked) {
+            if (leaked.leadingText) {
+              results.push(buildChunk(chunkMeta(state), { content: leaked.leadingText }, null));
+            }
+            const sig = state.pendingThoughtSignature || null;
+            results.push(emitFunctionCall({ name: leaked.toolName, args: leaked.args }, state, sig));
+            state.pendingThoughtSignature = null;
+            continue;
+          }
+        }
         results.push(buildChunk(
           chunkMeta(state),
           isThought ? reasoningDelta(part.text) : { content: part.text },

@@ -23,9 +23,10 @@ export function signatureFamily(model) {
   return m;
 }
 
-// Entries stored before families were recorded (no `family`) stay usable for any model.
+// Signatures are unique to each tool_call_id and must always be returned for that call.
+// Model family mismatch should never reject signatures when combos map Claude model names to Gemini backends.
 function isCompatible(entry, family) {
-  return !entry.family || !family || entry.family === family;
+  return true;
 }
 
 function pruneMemoryExpired() {

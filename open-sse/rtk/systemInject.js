@@ -268,6 +268,7 @@ function injectGeminiSystem(body, prompt, position = "append") {
     let sys;
     try { sys = target[key]; } catch (_) { sys = undefined; }
     if (sys && Array.isArray(sys.parts)) {
+      if (!sys.role) sys.role = "user";
       try { if (sys.parts.some(p => p && p.text === prompt)) return; } catch (_) {}
       try {
         if (position === "prepend") sys.parts.unshift({ text: prompt });
@@ -275,7 +276,7 @@ function injectGeminiSystem(body, prompt, position = "append") {
       } catch (_) {}
       return;
     }
-    try { target[key] = { parts: [{ text: prompt }] }; } catch (_) {}
+    try { target[key] = { role: "user", parts: [{ text: prompt }] }; } catch (_) {}
   } catch (_) {}
 }
 

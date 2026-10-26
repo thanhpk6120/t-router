@@ -45,6 +45,14 @@ Upstream changelogs (`CHANGELOG.md` and `CHANGELOG-PRO.md`) are kept intact for 
 
 ---
 
+## v0.5.109-pro.12-t.9 (2026-10-26)
+
+- **Fix Antigravity / Gemini Multi-turn Function Calling & System Instruction Loss**:
+  - Hỗ trợ đầy đủ `role: "developer"` (OMP, Codex) khi chuyển đổi sang Gemini/Antigravity (`openaiToGeminiRequest`), tránh việc rơi rụng toàn bộ system prompt cốt lõi của agent.
+  - Tích lũy toàn bộ các `system` và `developer` messages vào `systemInstruction.parts` thay vì gán đè làm mất system prompt trước đó.
+  - Sửa `thoughtSignatureStore.js`: cho phép tái sử dụng `thoughtSignature` theo đúng `toolCallId` bất kể model alias (tránh việc ánh xạ `claude-sonnet-5` sang Gemini bị từ chối signature dẫn đến hỏng trạng thái gọi tool nhiều lượt).
+  - Tự động phát hiện và bóc tách các cú pháp tool call bị rò rỉ vào text (`call:default_api:...`) trong stream response của Gemini để chuyển đổi ngược về OpenAI `tool_calls` delta chuẩn với `finish_reason: "tool_calls"`.
+
 ## v0.5.109-pro.12-t.8 (2026-10-26)
 
 - **Proxy Direct Guard Condition Refinement**:

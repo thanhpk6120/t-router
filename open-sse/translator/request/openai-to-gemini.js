@@ -142,14 +142,23 @@ function openaiToGeminiBase(model, body, stream, signature = DEFAULT_THINKING_AG
   if (body.messages && Array.isArray(body.messages)) {
     for (let i = 0; i < body.messages.length; i++) {
       const msg = body.messages[i];
-      const role = msg.role;
+      let role = msg.role;
+      if (role === ROLE.DEVELOPER || role === "developer") {
+        role = ROLE.SYSTEM;
+      }
       const content = msg.content;
 
       if (role === ROLE.SYSTEM && body.messages.length > 1) {
-        result.systemInstruction = {
-          role: GEMINI_ROLE.USER,
-          parts: [{ text: typeof content === "string" ? content : extractTextContent(content) }]
-        };
+        if (!result.systemInstruction) {
+          result.systemInstruction = {
+            role: GEMINI_ROLE.USER,
+            parts: []
+          };
+        }
+        const text = typeof content === "string" ? content : extractTextContent(content);
+        if (text) {
+          result.systemInstruction.parts.push({ text });
+        }
       } else if (role === ROLE.USER || (role === ROLE.SYSTEM && body.messages.length === 1)) {
         const parts = convertOpenAIContentToParts(content);
         if (parts.length > 0) {
