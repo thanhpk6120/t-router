@@ -108,12 +108,14 @@ export async function resolveConnectionProxyConfig(
 
     const legacy = normalizeLegacyProxy(providerSpecificData);
 
-    // A strict pool must keep its guarantee even when the pool itself is not
-    // usable (inactive, or saved without a url). Otherwise the unusable-pool
-    // path below reports strictProxy:false and the request silently leaves
-    // over the direct IP — the leak strict mode exists to prevent (#4333).
     const directActive = await isDirectProxyActive().catch(() => true);
     let poolStrictProxy = false;
+
+    const proxyIntended = Boolean(
+      providerSpecificData?.proxyIntended === true ||
+      (proxyPoolId && proxyPoolId !== "__none__") ||
+      (legacy.connectionProxyEnabled && legacy.connectionProxyUrl)
+    );
     /**
      * -----------------------------
      * Proxy Pool Resolution
@@ -144,6 +146,7 @@ export async function resolveConnectionProxyConfig(
             strictProxy: false,
             isDirect: true,
             directActive,
+            proxyIntended: true,
           };
         }
 
@@ -162,6 +165,7 @@ export async function resolveConnectionProxyConfig(
             strictProxy: proxyPool.strictProxy === true,
             vercelRelayUrl: proxyUrl,
             directActive,
+            proxyIntended: true,
           };
         }
 
@@ -177,6 +181,7 @@ export async function resolveConnectionProxyConfig(
           connectionNoProxy: noProxy,
           strictProxy: proxyPool.strictProxy === true,
           directActive,
+          proxyIntended: true,
         };
       }
     }
@@ -198,6 +203,7 @@ export async function resolveConnectionProxyConfig(
 
         strictProxy: poolStrictProxy,
         directActive,
+        proxyIntended: true,
         ...legacy,
       };
     }
@@ -215,6 +221,7 @@ export async function resolveConnectionProxyConfig(
 
       strictProxy: poolStrictProxy,
       directActive,
+      proxyIntended,
       ...legacy,
     };
   } catch (error) {
@@ -235,6 +242,7 @@ export async function resolveConnectionProxyConfig(
 
       strictProxy: false,
       directActive: true,
+      proxyIntended: false,
     };
   }
 }

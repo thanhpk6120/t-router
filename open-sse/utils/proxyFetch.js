@@ -370,6 +370,20 @@ async function createBypassRequest(parsedUrl, realIP, options) {
   });
 }
 
+function isProxyActiveForProvider(proxyOptions) {
+  if (!proxyOptions) return false;
+  if (proxyOptions.proxyIntended === true) return true;
+  if (proxyOptions.proxyIntended === false) return false;
+  if (proxyOptions.source === "none") return false;
+
+  const poolId = normalizeString(proxyOptions.proxyPoolId || proxyOptions.connectionProxyPoolId);
+  const hasPoolId = !!poolId && poolId !== "__none__";
+  const hasProxyUrl = !!normalizeString(proxyOptions.connectionProxyUrl || proxyOptions.url);
+  const hasRelayUrl = !!normalizeString(proxyOptions.vercelRelayUrl);
+  const isEnabled = proxyOptions.connectionProxyEnabled === true || proxyOptions.enabled === true;
+
+  return hasPoolId || (isEnabled && hasProxyUrl) || hasRelayUrl;
+}
 export async function proxyAwareFetch(url, options = {}, proxyOptions = null) {
   const targetUrl = typeof url === "string" ? url : url.toString();
 
@@ -392,6 +406,8 @@ export async function proxyAwareFetch(url, options = {}, proxyOptions = null) {
   const envProxyUrl = connectionProxyUrl ? null : normalizeProxyUrl(getEnvProxyUrl(targetUrl));
   const proxyUrl = connectionProxyUrl || envProxyUrl;
 
+  const isProxyActive = isProxyActiveForProvider(proxyOptions);
+
   // MITM DNS bypass: for known MITM-intercepted hosts, resolve real IP to avoid DNS spoof
   if (shouldBypassMitmDns(targetUrl)) {
     if (proxyUrl) {
@@ -402,17 +418,17 @@ export async function proxyAwareFetch(url, options = {}, proxyOptions = null) {
         if (proxyOptions?.strictProxy === true) {
           throw new Error(`[ProxyFetch] Proxy required but failed (strictProxy=true): ${proxyError.message}`);
         }
-        if (proxyOptions?.directActive === false) {
+        if (isProxyActive && proxyOptions?.directActive === false) {
           throw new Error(`[ProxyFetch] Proxy failed and Direct connection is disabled in Proxy Pools. Refusing direct bypass to prevent IP leak: ${proxyError.message}`);
         }
         console.warn(`[ProxyFetch] Proxy failed, falling back to direct bypass: ${proxyError.message}`);
       }
     }
-    // No proxy
-    if (proxyOptions?.directActive === false) {
-      throw new Error(`[ProxyFetch] Direct connection is disabled in Proxy Pools. Refusing direct MITM bypass to prevent IP leak.`);
+    // No proxy resolved
+    if (isProxyActive && proxyOptions?.directActive === false) {
+      throw new Error(`[ProxyFetch] Proxy is enabled for provider but none resolved, and Direct connection is disabled in Proxy Pools. Refusing direct MITM bypass to prevent IP leak.`);
     }
-    // No proxy — manually resolve real IP to bypass DNS spoof
+    // No proxy configured, or Direct fallback allowed — manually resolve real IP to bypass DNS spoof
     try {
       const parsedUrl = new URL(targetUrl);
       const realIP = await resolveRealIP(parsedUrl.hostname);
@@ -434,11 +450,11 @@ export async function proxyAwareFetch(url, options = {}, proxyOptions = null) {
       if (rotateLink) {
         triggerBackgroundRotate(rotateLink, proxyUrl);
       }
-      // If strictProxy is enabled or Direct is disabled, fail hard instead of leaking direct IP
+      // If strictProxy is enabled or Direct is disabled for this proxy-enabled provider, fail hard instead of leaking direct IP
       if (proxyOptions?.strictProxy === true) {
         throw new Error(`[ProxyFetch] Proxy required but failed (strictProxy=true): ${proxyError.message}`);
       }
-      if (proxyOptions?.directActive === false) {
+      if (isProxyActive && proxyOptions?.directActive === false) {
         throw new Error(`[ProxyFetch] Proxy failed and Direct connection is disabled in Proxy Pools. Refusing direct fallback to prevent IP leak: ${proxyError.message}`);
       }
       console.warn(`[ProxyFetch] Proxy failed, falling back to active Direct connection: ${proxyError.message}`);
@@ -456,19 +472,14 @@ export async function proxyAwareFetch(url, options = {}, proxyOptions = null) {
   // strictProxy to mean "do not replay this request directly if the proxy
   // fails" (a replayed COSY signature returns 403), not "a proxy is required".
   // With nothing configured they must keep working.
-  const proxyIntended = proxyOptions?.proxyPoolId
-    || proxyOptions?.enabled === true
-    || proxyOptions?.connectionProxyEnabled === true
-    || !!normalizeString(proxyOptions?.url ?? proxyOptions?.connectionProxyUrl);
-  if (proxyOptions?.strictProxy === true && proxyIntended) {
+  if (proxyOptions?.strictProxy === true && isProxyActive) {
     throw new Error("[ProxyFetch] Proxy required but none resolved (strictProxy=true)");
   }
-  if (proxyOptions?.directActive === false) {
-    throw new Error("[ProxyFetch] Direct connection is disabled in Proxy Pools. Refusing direct request to prevent IP leak.");
+  if (isProxyActive && proxyOptions?.directActive === false) {
+    throw new Error("[ProxyFetch] Proxy is enabled for provider but none resolved, and Direct connection is disabled in Proxy Pools. Refusing direct request to prevent IP leak.");
   }
 
-  // got-scraping disabled — use native fetch directly
-  // (Re-enable per-host by wrapping with tryGotScrapingFetch when needed)
+  // Provider does not use proxy (or Direct connection is active) — use native fetch directly
   return fetchWithTlsFallback(url, options, null);
 }
 

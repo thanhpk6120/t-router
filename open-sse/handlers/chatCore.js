@@ -388,12 +388,13 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
     vercelRelayUrl: credentials?.providerSpecificData?.vercelRelayUrl || "",
     // Strict pools must never silently fall back to a direct connection —
     // honored on the Cursor AgentService h2 path and in proxyFetch (#4333).
-    proxyPoolId: credentials?.providerSpecificData?.connectionProxyPoolId || null,
+    proxyPoolId: credentials?.providerSpecificData?.connectionProxyPoolId || credentials?.providerSpecificData?.proxyPoolId || null,
     strictProxy: credentials?.providerSpecificData?.strictProxy === true,
     directActive: credentials?.providerSpecificData?.directActive !== false,
     isDirect: credentials?.providerSpecificData?.isDirect === true,
     rotateLink: credentials?.providerSpecificData?.rotateLink || "",
     proxyPool: credentials?.providerSpecificData?.proxyPool || null,
+    proxyIntended: credentials?.providerSpecificData?.proxyIntended === true,
   };
 
   if (proxyOptions.vercelRelayUrl) {

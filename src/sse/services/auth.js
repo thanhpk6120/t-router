@@ -104,12 +104,16 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
       }
       const strategy = override.rotateStrategy || "none";
       let pickedId = override.proxyPoolId || null;
+      const proxyConfigured = (strategy !== "none" && strategy !== "fill-first") || Boolean(override.proxyPoolId && override.proxyPoolId !== "__none__");
       if (strategy !== "none") {
         const allPools = await getProxyPools({ isActive: true });
         const poolIds = resolveRotationPoolIds(allPools, override.proxyPoolIds, override.proxySource);
         pickedId = pickProxyPoolId(poolIds, strategy, providerId);
       }
-      const resolvedProxy = await resolveConnectionProxyConfig({ proxyPoolId: pickedId || "" });
+      const resolvedProxy = await resolveConnectionProxyConfig({
+        proxyPoolId: pickedId || (proxyConfigured ? "__unresolved__" : ""),
+        proxyIntended: proxyConfigured,
+      });
       return {
         id: "noauth",
         connectionName: "Public",
@@ -126,6 +130,7 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
           proxyPool: resolvedProxy.proxyPool || null,
           directActive: resolvedProxy.directActive !== false,
           isDirect: resolvedProxy.isDirect === true,
+          proxyIntended: resolvedProxy.proxyIntended === true,
         },
       };
     }
@@ -294,20 +299,34 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
     }
     // Resolve proxy configuration: connection-level first, then fallback to provider-level proxy pool & rotation
     let proxyPayload = connection.providerSpecificData || {};
-    if (!proxyPayload.connectionProxyUrl && !proxyPayload.proxyPoolId && !proxyPayload.connectionProxyPoolId) {
+    const connHasProxy = Boolean(
+      (proxyPayload.proxyPoolId && proxyPayload.proxyPoolId !== "__none__") ||
+      (proxyPayload.connectionProxyPoolId && proxyPayload.connectionProxyPoolId !== "__none__") ||
+      (proxyPayload.connectionProxyEnabled && proxyPayload.connectionProxyUrl)
+    );
+    let proxyConfigured = connHasProxy;
+
+    if (!connHasProxy) {
       const pStrategy = providerOverride.rotateStrategy || "none";
-      let pPoolId = providerOverride.proxyPoolId || null;
-      if (pStrategy !== "none") {
-        const allPools = await getProxyPools({ isActive: true });
-        const poolIds = resolveRotationPoolIds(allPools, providerOverride.proxyPoolIds, providerOverride.proxySource);
-        pPoolId = pickProxyPoolId(poolIds, pStrategy, providerId);
-      }
-      if (pPoolId) {
-        proxyPayload = { ...proxyPayload, proxyPoolId: pPoolId };
+      const hasProviderPool = Boolean(providerOverride.proxyPoolId && providerOverride.proxyPoolId !== "__none__");
+      if ((pStrategy !== "none" && pStrategy !== "fill-first") || hasProviderPool) {
+        proxyConfigured = true;
+        let pPoolId = providerOverride.proxyPoolId || null;
+        if (pStrategy !== "none") {
+          const allPools = await getProxyPools({ isActive: true });
+          const poolIds = resolveRotationPoolIds(allPools, providerOverride.proxyPoolIds, providerOverride.proxySource);
+          pPoolId = pickProxyPoolId(poolIds, pStrategy, providerId);
+        }
+        if (pPoolId) {
+          proxyPayload = { ...proxyPayload, proxyPoolId: pPoolId };
+        }
       }
     }
 
-    const resolvedProxy = await resolveConnectionProxyConfig(proxyPayload);
+    const resolvedProxy = await resolveConnectionProxyConfig({
+      ...proxyPayload,
+      proxyIntended: proxyConfigured,
+    });
     return {
       authType: connection.authType,
       apiKey: connection.apiKey,
@@ -332,8 +351,8 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
         proxyPool: resolvedProxy.proxyPool || null,
         directActive: resolvedProxy.directActive !== false,
         isDirect: resolvedProxy.isDirect === true,
+        proxyIntended: resolvedProxy.proxyIntended === true,
       },
-      connectionId: connection.id,
       // Include current status for optimization check
       testStatus: connection.testStatus,
       lastError: connection.lastError,

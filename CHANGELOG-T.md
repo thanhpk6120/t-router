@@ -25,6 +25,13 @@ Upstream changelogs (`CHANGELOG.md` and `CHANGELOG-PRO.md`) are kept intact for 
 
 ---
 
+## v0.5.109-pro.12-t.7 (2026-10-26)
+
+- **Proxy Direct Guard Condition Refinement**:
+  - Chỉ áp dụng logic chặn fallback về IP trực tiếp (Direct) khi provider đã chủ động bật/chọn sử dụng proxy (qua Proxy Pool, Rotation Strategy hoặc connection proxy).
+  - Đối với các provider không kích hoạt proxy, hệ thống tự động kết nối trực tiếp bình thường (kể cả khi pool 'Direct' trong Proxy Pools đang ở trạng thái tắt).
+  - Đảm bảo an toàn tuyệt đối chống leak IP cho các kết nối proxy nhưng không ảnh hưởng đến các provider chạy trực tiếp.
+
 ## v0.5.109-pro.12-t.6 (2026-10-26)
 
 - **Cố định Proxy Direct trong Proxy Pools & Chống rò rỉ IP (No Direct Leak)**:
