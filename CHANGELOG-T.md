@@ -5,6 +5,12 @@ Upstream changelogs (`CHANGELOG.md` and `CHANGELOG-PRO.md`) are kept intact for 
 
 ---
 
+## v0.5.111-pro.13-t.5 (2026-10-26)
+
+- **Release on NPM**: Published `t-router-proxy@0.5.111-pro.13-t.5` to npmjs registry with latest tag.
+
+---
+
 ## v0.5.111-pro.13-t.4 (2026-10-26)
 
 - **Robust Release Pipeline & Telegram Integration**:
