@@ -5,6 +5,15 @@ Upstream changelogs (`CHANGELOG.md` and `CHANGELOG-PRO.md`) are kept intact for 
 
 ---
 
+## v0.5.111-pro.13-t.6 (2026-10-26)
+
+- **Fix: "OpenAI completions stream closed before a finish_reason was received"**:
+  - **Guaranteed Terminal Finish Chunks**: Enforced `openAIFinishReasonSeen` tracking in `open-sse/utils/stream.js`. When any SSE stream to an OpenAI client concludes (in both passthrough and translate modes, or upon unexpected upstream EOF), automatically synthesize a fallback chunk with `finish_reason: "stop"` (or `"tool_calls"`) and ensure the trailing `data: [DONE]\n\n` sentinel is always dispatched before closing the controller.
+  - **Gemini & Claude Response Flush Handlers**: Implemented and registered `geminiToOpenAIFlush` and `claudeToOpenAIFlush` in `open-sse/translator/response/gemini-to-openai.js` and `claude-to-openai.js`, preventing truncated turns when upstream models emit tool calls or finish without an explicit `finishReason` candidate.
+  - **Stream Abort Error Framing**: Enhanced `buildStreamErrorBytes` to include a proper OpenAI-compatible choice with `finish_reason: "stop"` alongside error payloads so downstream client SDKs gracefully process error notices instead of throwing unhandled premature stream close exceptions.
+
+---
+
 ## v0.5.111-pro.13-t.5 (2026-10-26)
 
 - **Release on NPM**: Published `t-router-proxy@0.5.111-pro.13-t.5` to npmjs registry with latest tag.

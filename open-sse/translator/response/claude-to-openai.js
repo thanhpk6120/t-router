@@ -191,6 +191,19 @@ export function claudeToOpenAIResponse(chunk, state) {
 
 const convertStopReason = (reason) => toOpenAIFinish(reason, "claude");
 
-// Register
-register(FORMATS.CLAUDE, FORMATS.OPENAI, null, claudeToOpenAIResponse);
+export function claudeToOpenAIFlush(state) {
+  if (!state || state.finishReasonSent) return null;
+  state.finishReasonSent = true;
+  const finishReason = state.finishReason || (state.toolCalls?.size > 0 ? OPENAI_FINISH.TOOL_CALLS : OPENAI_FINISH.STOP);
+  const usageObj = (state.usage && typeof state.usage === "object") ? {
+    usage: {
+      prompt_tokens: state.usage.input_tokens || 0,
+      completion_tokens: state.usage.output_tokens || 0,
+      total_tokens: (state.usage.input_tokens || 0) + (state.usage.output_tokens || 0)
+    }
+  } : {};
+  return [{ ...createChunk(state, {}, finishReason), ...usageObj }];
+}
 
+// Register
+register(FORMATS.CLAUDE, FORMATS.OPENAI, claudeToOpenAIFlush, claudeToOpenAIResponse);

@@ -196,9 +196,26 @@ export function formatSSE(data, sourceFormat) {
 export function buildStreamErrorBytes(statusCode, message, clientFormat) {
   const { error } = buildErrorBody(statusCode, message);
 
-  const sse = clientFormat === FORMATS.CLAUDE
-    ? formatSSE({ type: "error", error }, FORMATS.CLAUDE)
-    : formatSSE({ error }, clientFormat) + SSE_DONE;
+  if (clientFormat === FORMATS.CLAUDE) {
+    return sharedEncoder.encode(formatSSE({ type: "error", error }, FORMATS.CLAUDE));
+  }
 
+  if (clientFormat === FORMATS.OPENAI) {
+    const errorChunk = {
+      id: `chatcmpl-err-${Date.now()}`,
+      object: "chat.completion.chunk",
+      created: Math.floor(Date.now() / 1000),
+      model: "error",
+      choices: [{
+        index: 0,
+        delta: { content: `\n\n[Error ${statusCode}: ${message}]` },
+        finish_reason: "stop"
+      }],
+      error
+    };
+    return sharedEncoder.encode(`data: ${JSON.stringify(errorChunk)}\n\n${SSE_DONE}`);
+  }
+
+  const sse = formatSSE({ error }, clientFormat) + SSE_DONE;
   return sharedEncoder.encode(sse);
 }

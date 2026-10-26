@@ -96,6 +96,7 @@ export function createSSEStream(options = {}) {
   let openAIResponsesTerminalSeen = false;
   let openAIResponsesDoneSent = false;
   let streamDoneSent = false;  // track duplicate [DONE] across transform + flush
+  let openAIFinishReasonSeen = false;
   let finalized = false;
   let completionFlushTimer = null;
 
@@ -276,6 +277,9 @@ export function createSSEStream(options = {}) {
               responsesTerminal = isOpenAIResponsesTerminalEvent(currentOpenAIResponsesEvent, parsed);
 
               const isFinishChunk = parsed.choices?.[0]?.finish_reason;
+              if (isFinishChunk) {
+                openAIFinishReasonSeen = true;
+              }
               if (isFinishChunk && !hasValidUsage(parsed.usage)) {
                 const estimated = estimateUsage(body, totalContentLength, FORMATS.OPENAI);
                 parsed.usage = filterUsageForFormat(estimated, FORMATS.OPENAI);
@@ -349,6 +353,31 @@ export function createSSEStream(options = {}) {
             controller.enqueue(sharedEncoder.encode(failedOutput));
             openAIResponsesTerminalSeen = true;
             sseEmittedCount++;
+          }
+
+          if (sourceFormat === FORMATS.OPENAI && !openAIFinishReasonSeen) {
+            const fallbackFinish = state?.finishReason || ((state?.geminiToolCallCount > 0 || state?.toolCalls?.size > 0 || state?.hadToolCalls) ? "tool_calls" : "stop");
+            const finishChunk = {
+              id: state?.messageId ? `chatcmpl-${state.messageId}` : `chatcmpl-${Date.now()}`,
+              object: "chat.completion.chunk",
+              created: Math.floor(Date.now() / 1000),
+              model: model || state?.model || "unknown",
+              choices: [{ index: 0, delta: {}, finish_reason: fallbackFinish, logprobs: null }]
+            };
+            if (state?.usage) {
+              finishChunk.usage = state.usage;
+            }
+            const finishOutput = `data: ${JSON.stringify(finishChunk)}\n\n`;
+            reqLogger?.appendConvertedChunk?.(finishOutput);
+            controller.enqueue(sharedEncoder.encode(finishOutput));
+            openAIFinishReasonSeen = true;
+          }
+
+          if (sourceFormat === FORMATS.OPENAI && !streamDoneSent) {
+            const doneOutput = "data: [DONE]\n\n";
+            reqLogger?.appendConvertedChunk?.(doneOutput);
+            controller.enqueue(sharedEncoder.encode(doneOutput));
+            streamDoneSent = true;
           }
 
           if (keepsOpenAIResponsesFormat && !streamDoneSent) {
@@ -437,6 +466,9 @@ export function createSSEStream(options = {}) {
 
             // Inject estimated usage if finish chunk has no valid usage
             const isFinishChunk = item.type === "message_delta" || item.choices?.[0]?.finish_reason;
+            if (item.choices?.[0]?.finish_reason || state?.finishReasonSent) {
+              openAIFinishReasonSeen = true;
+            }
             if (state.finishReason && isFinishChunk && !hasValidUsage(item.usage) && totalContentLength > 0) {
               const estimated = estimateUsage(body, totalContentLength, sourceFormat);
               item.usage = filterUsageForFormat(estimated, sourceFormat); // Filter + already has buffer
@@ -484,6 +516,22 @@ export function createSSEStream(options = {}) {
             }
             reqLogger?.appendConvertedChunk?.(output);
             controller.enqueue(sharedEncoder.encode(output));
+          }
+          // Ensure OpenAI clients always receive a chunk with finish_reason before [DONE]
+          const isOpenAIClient = targetFormat === FORMATS.OPENAI || sourceFormat === FORMATS.OPENAI;
+          if (isOpenAIClient && !openAIFinishReasonSeen) {
+            const fallbackFinish = (state?.geminiToolCallCount > 0 || state?.toolCalls?.size > 0 || state?.hadToolCalls) ? "tool_calls" : "stop";
+            const finishChunk = {
+              id: `chatcmpl-${Date.now()}`,
+              object: "chat.completion.chunk",
+              created: Math.floor(Date.now() / 1000),
+              model: model || "unknown",
+              choices: [{ index: 0, delta: {}, finish_reason: fallbackFinish, logprobs: null }]
+            };
+            const finishOutput = `data: ${JSON.stringify(finishChunk)}\n\n`;
+            reqLogger?.appendConvertedChunk?.(finishOutput);
+            controller.enqueue(sharedEncoder.encode(finishOutput));
+            openAIFinishReasonSeen = true;
           }
 
           // IMPORTANT: In passthrough mode we still must terminate the SSE stream.
@@ -554,6 +602,33 @@ export function createSSEStream(options = {}) {
             reqLogger?.appendConvertedChunk?.(output);
             controller.enqueue(sharedEncoder.encode(output));
           }
+        }
+
+        // Ensure OpenAI clients in translate mode always receive a finish_reason chunk and sentinel [DONE]
+        const isOpenAIClient = sourceFormat === FORMATS.OPENAI;
+        if (isOpenAIClient && !openAIFinishReasonSeen) {
+          const fallbackFinish = state?.finishReason || ((state?.geminiToolCallCount > 0 || state?.toolCalls?.size > 0 || state?.hadToolCalls) ? "tool_calls" : "stop");
+          const finishChunk = {
+            id: state?.messageId ? `chatcmpl-${state.messageId}` : `chatcmpl-${Date.now()}`,
+            object: "chat.completion.chunk",
+            created: Math.floor(Date.now() / 1000),
+            model: model || state?.model || "unknown",
+            choices: [{ index: 0, delta: {}, finish_reason: fallbackFinish, logprobs: null }]
+          };
+          if (state?.usage) {
+            finishChunk.usage = state.usage;
+          }
+          const finishOutput = `data: ${JSON.stringify(finishChunk)}\n\n`;
+          reqLogger?.appendConvertedChunk?.(finishOutput);
+          controller.enqueue(sharedEncoder.encode(finishOutput));
+          openAIFinishReasonSeen = true;
+        }
+
+        if (isOpenAIClient && !streamDoneSent) {
+          const doneOutput = "data: [DONE]\n\n";
+          reqLogger?.appendConvertedChunk?.(doneOutput);
+          controller.enqueue(sharedEncoder.encode(doneOutput));
+          streamDoneSent = true;
         }
 
         // Synthesize response.failed if a Responses passthrough stream never reached a terminal event

@@ -209,14 +209,25 @@ export function geminiToOpenAIResponse(chunk, state) {
     
     results.push(finalChunk);
     state.finishReason = finishReason;
+    state.finishReasonSent = true;
   }
 
   return results.length > 0 ? results : null;
 }
 
-// Register
-register(FORMATS.GEMINI, FORMATS.OPENAI, null, geminiToOpenAIResponse);
-register(FORMATS.GEMINI_CLI, FORMATS.OPENAI, null, geminiToOpenAIResponse);
-register(FORMATS.ANTIGRAVITY, FORMATS.OPENAI, null, geminiToOpenAIResponse);
-register(FORMATS.VERTEX, FORMATS.OPENAI, null, geminiToOpenAIResponse);
+export function geminiToOpenAIFlush(state) {
+  if (!state || state.finishReasonSent) return null;
+  state.finishReasonSent = true;
+  const finishReason = state.finishReason || (state.geminiToolCallCount > 0 ? OPENAI_FINISH.TOOL_CALLS : OPENAI_FINISH.STOP);
+  const finalChunk = buildChunk(chunkMeta(state), {}, finishReason);
+  if (state.usage) {
+    finalChunk.usage = state.usage;
+  }
+  return [finalChunk];
+}
 
+// Register
+register(FORMATS.GEMINI, FORMATS.OPENAI, geminiToOpenAIFlush, geminiToOpenAIResponse);
+register(FORMATS.GEMINI_CLI, FORMATS.OPENAI, geminiToOpenAIFlush, geminiToOpenAIResponse);
+register(FORMATS.ANTIGRAVITY, FORMATS.OPENAI, geminiToOpenAIFlush, geminiToOpenAIResponse);
+register(FORMATS.VERTEX, FORMATS.OPENAI, geminiToOpenAIFlush, geminiToOpenAIResponse);
