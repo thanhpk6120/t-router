@@ -25,7 +25,7 @@ Upstream changelogs (`CHANGELOG.md` and `CHANGELOG-PRO.md`) are kept intact for 
 
 ---
 
-## v0.5.109-pro.12-t.7 (2026-10-26)
+## v0.5.109-pro.12-t.8 (2026-10-26)
 
 - **Proxy Direct Guard Condition Refinement**:
   - Chỉ áp dụng logic chặn fallback về IP trực tiếp (Direct) khi provider đã chủ động bật/chọn sử dụng proxy (qua Proxy Pool, Rotation Strategy hoặc connection proxy).

@@ -353,6 +353,7 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
         isDirect: resolvedProxy.isDirect === true,
         proxyIntended: resolvedProxy.proxyIntended === true,
       },
+      connectionId: connection.id,
       // Include current status for optimization check
       testStatus: connection.testStatus,
       lastError: connection.lastError,
