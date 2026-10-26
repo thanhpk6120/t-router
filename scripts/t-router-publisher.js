@@ -13,7 +13,7 @@ const path = require('path');
 
 const PORT = 20129;
 const HOST = '127.0.0.1';
-const BOT_TOKEN = process.env.BOT_TOKEN || '8926237781:AAHVcHFw7jMa3eoYe_40-xt6sxS0Zn5tySo';
+const BOT_TOKEN = process.env.BOT_TOKEN || '8926237781:AAHUk79554mT7D_emM1EkefuD5LMvvUXAE8';
 const OWNER_ID = parseInt(process.env.OWNER_ID, 10) || 5657249049;
 const DIR_BASE = '/home/thanhpk/router-proxy-ai';
 const DIR_TROUTER = path.join(DIR_BASE, 't-router');
@@ -27,6 +27,7 @@ function log(msg) {
     fs.appendFileSync(LOG_FILE, line + '\n');
   } catch (e) {}
 }
+
 function escapeHtml(str) {
   if (!str || typeof str !== 'string') return '';
   return str
@@ -84,6 +85,21 @@ function getPublishedVersions() {
   }
 }
 
+function semverCompare(a, b) {
+  if (!a && !b) return 0;
+  if (!a) return -1;
+  if (!b) return 1;
+  const pa = (String(a).replace(/^v/, '').match(/\d+/g) || []).map(n => parseInt(n, 10));
+  const pb = (String(b).replace(/^v/, '').match(/\d+/g) || []).map(n => parseInt(n, 10));
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const na = pa[i] || 0;
+    const nb = pb[i] || 0;
+    if (na > nb) return 1;
+    if (na < nb) return -1;
+  }
+  return 0;
+}
+
 function parseVersion(v) {
   if (!v || typeof v !== 'string') return null;
   const clean = v.replace(/^v/, '').trim();
@@ -105,38 +121,63 @@ function parseVersion(v) {
       proVersion: `${proMatch[1]}-${proMatch[2]}`,
     };
   }
+  const plainMatch = clean.match(/^(\d+\.\d+\.\d+)/);
+  if (plainMatch) {
+    return {
+      upstreamBase: plainMatch[1],
+      proTag: null,
+      tNumber: 0,
+      proVersion: plainMatch[1],
+    };
+  }
   return null;
 }
 
-function resolveNextVersion(currentVer, upstreamProVersion = null) {
+function resolveNextVersion(currentVer, upstreamProVersion = null, upstream9RouterVersion = null, mergedFrom = null) {
   const published = new Set(getPublishedVersions());
   const curr = parseVersion(currentVer);
+
+  if (!upstream9RouterVersion && mergedFrom) {
+    const m = mergedFrom.match(/9router\s*\(([^)]+)\)/);
+    if (m) upstream9RouterVersion = m[1].trim();
+  }
+  if (!upstreamProVersion && mergedFrom) {
+    const m = mergedFrom.match(/9router-pro\s*\(([^)]+)\)/);
+    if (m) upstreamProVersion = m[1].trim();
+  }
+
   const upPro = parseVersion(upstreamProVersion);
+  const up9R = parseVersion(upstream9RouterVersion);
 
-  let targetPrefix = '';
+  const r9Base = up9R ? up9R.upstreamBase : null;
+  const proBase = upPro ? upPro.upstreamBase : null;
+  const currBase = curr ? curr.upstreamBase : null;
+
+  let effectiveBase = r9Base || proBase || currBase || '0.5.109';
+  if (r9Base && proBase) {
+    effectiveBase = semverCompare(r9Base, proBase) >= 0 ? r9Base : proBase;
+  }
+
+  const targetProTag = (upPro && upPro.proTag) || (curr && curr.proTag) || 'pro.13';
+  const targetBaseWithPro = `${effectiveBase}-${targetProTag}`;
+
   let startT = 1;
-
-  if (upPro && curr && upPro.proVersion !== curr.proVersion) {
-    // Upstream pro version changed (e.g. 0.5.109-pro.13): reset to -t.1
-    targetPrefix = `${upPro.proVersion}-t.`;
-    startT = 1;
-  } else if (upPro && !curr) {
-    targetPrefix = `${upPro.proVersion}-t.`;
-    startT = 1;
-  } else if (curr) {
-    // Same upstream pro version: increment trailing t number
-    targetPrefix = `${curr.proVersion}-t.`;
-    startT = curr.tNumber + 1;
+  if (curr) {
+    const currBaseWithPro = curr.proTag ? `${curr.upstreamBase}-${curr.proTag}` : curr.proVersion;
+    if (targetBaseWithPro === currBaseWithPro) {
+      startT = (curr.tNumber || 0) + 1;
+    } else {
+      startT = 1;
+    }
   } else {
-    targetPrefix = (currentVer || '0.5.109-pro.13') + '-t.';
     startT = 1;
   }
 
   let t = startT;
-  let candidate = `${targetPrefix}${t}`;
+  let candidate = `${targetBaseWithPro}-t.${t}`;
   while (published.has(candidate)) {
     t++;
-    candidate = `${targetPrefix}${t}`;
+    candidate = `${targetBaseWithPro}-t.${t}`;
   }
   return candidate;
 }
@@ -158,17 +199,19 @@ let isPublishing = false;
 
 async function doPublish(targetVersion) {
   if (isPublishing) {
-    await sendTelegram('⚠️ Đang có một tiến trình build/publish khác đang chạy, vui lòng chờ!');
+    await sendTelegram('⚠️ Có một tiến trình build/publish khác đang chạy, vui lòng chờ!');
     return;
   }
   isPublishing = true;
-
   try {
-    // 0. Check if targetVersion already exists on npmjs to prevent 403 Forbidden
     const published = new Set(getPublishedVersions());
     if (published.has(targetVersion)) {
       const orig = targetVersion;
-      targetVersion = resolveNextVersion(targetVersion);
+      let pending = null;
+      try {
+        if (fs.existsSync(STATE_FILE)) pending = JSON.parse(fs.readFileSync(STATE_FILE, 'utf8'));
+      } catch (e) {}
+      targetVersion = resolveNextVersion(targetVersion, pending?.upstreamProVersion, pending?.upstream9RouterVersion, pending?.mergedFrom);
       log(`Version ${orig} already published on npmjs, auto-bumped to ${targetVersion}`);
       await sendTelegram(
         `ℹ️ Phiên bản <code>${orig}</code> đã tồn tại trên npmjs.com! Tự động nâng lên: <code>${targetVersion}</code>`
@@ -177,77 +220,79 @@ async function doPublish(targetVersion) {
 
     log('Starting publish process for version: ' + targetVersion);
     await sendTelegram(
-      '⏳ <b>Bắt đầu publish T-Router lên npmjs!</b>\n━━━━━━━━━━━━━━━━━━━━\n📦 Phiên bản: <code>' + targetVersion + '</code>\n⚙️ Đang cập nhật metadata và đóng gói CLI với giới hạn tài nguyên CPU/RAM...'
+      `⏳ <b>Bắt đầu publish T-Router lên npmjs!</b>\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n📦 Phiên bản: <code>${targetVersion}</code>\n⚙️ Đang cập nhật metadata và đóng gói CLI với giới hạn tài nguyên CPU/RAM...`
     );
 
     // 1. Update version in package.json and cli/package.json
     const rootPkgPath = path.join(DIR_TROUTER, 'package.json');
     const cliPkgPath = path.join(DIR_TROUTER, 'cli', 'package.json');
-
     const rootPkg = JSON.parse(fs.readFileSync(rootPkgPath, 'utf8'));
-    rootPkg.version = targetVersion;
-    fs.writeFileSync(rootPkgPath, JSON.stringify(rootPkg, null, 2) + '\n', 'utf8');
-
     const cliPkg = JSON.parse(fs.readFileSync(cliPkgPath, 'utf8'));
+    rootPkg.version = targetVersion;
     cliPkg.version = targetVersion;
+    fs.writeFileSync(rootPkgPath, JSON.stringify(rootPkg, null, 2) + '\n', 'utf8');
     fs.writeFileSync(cliPkgPath, JSON.stringify(cliPkg, null, 2) + '\n', 'utf8');
 
     // Update CHANGELOG-T.md
     const changelogPath = path.join(DIR_TROUTER, 'CHANGELOG-T.md');
-    try {
-      if (fs.existsSync(changelogPath)) {
-        let cl = fs.readFileSync(changelogPath, 'utf8');
-        if (!cl.includes('## v' + targetVersion)) {
-          const entry = '## v' + targetVersion + ' (' + new Date().toISOString().slice(0, 10) + ')\n\n- Automated sync and release via Telegram Bot.\n\n';
-          cl = cl.replace(/(## v[^\n]+)/, entry + '$1');
-          fs.writeFileSync(changelogPath, cl, 'utf8');
-        }
+    if (fs.existsSync(changelogPath)) {
+      let cl = fs.readFileSync(changelogPath, 'utf8');
+      if (!cl.includes('## v' + targetVersion)) {
+        const entry = `## v${targetVersion} (${new Date().toISOString().slice(0, 10)})\n\n- Automated sync and release via Telegram Bot.\n\n`;
+        cl = cl.replace(/(## v[^\n]+)/, entry + '$1');
+        fs.writeFileSync(changelogPath, cl, 'utf8');
       }
-    } catch (clErr) {
-      log('Changelog update notice: ' + clErr.message);
     }
 
-    // 2. Build CLI with strict resource limits (nice -n 19, ionice -c 3, taskset -c 0,1, max-old-space-size=2048)
-    log('Executing resource-constrained build...');
-    const buildCmd = 'nice -n 19 ionice -c 3 taskset -c 0,1 node --max-old-space-size=2048 cli/scripts/build-cli.js';
-    await runExec(buildCmd, { cwd: DIR_TROUTER, timeout: 600000 });
+    // 2. Build CLI package under nice/cgexec
+    log('Building CLI package...');
+    await runExec('node cli/scripts/build-cli.js', {
+      cwd: DIR_TROUTER,
+      env: {
+        ...process.env,
+        NODE_OPTIONS: '--max-old-space-size=4096',
+      },
+      timeout: 300000,
+    });
 
-    // 3. Publish to npmjs (using --ignore-scripts because build-cli.js already ran)
-    log('Publishing to npmjs.com...');
-    const publishCmd = 'npm publish --access public --ignore-scripts';
-    await runExec(publishCmd, { cwd: path.join(DIR_TROUTER, 'cli'), timeout: 180000 });
+    // 3. Publish to npmjs
+    log('Publishing to npmjs with npm publish --access public...');
+    await runExec('npm publish --access public', {
+      cwd: path.join(DIR_TROUTER, 'cli'),
+      timeout: 120000,
+    });
 
-    // 4. Commit and push to git
-    log('Committing and pushing to git...');
-    const gitMsg = 'release: v' + targetVersion;
-    const gitCmd = 'git add package.json cli/package.json CHANGELOG-T.md && git commit -m "' + gitMsg + '" && git push origin main';
+    // 4. Commit and push bump
+    log('Committing and pushing release version to GitHub...');
     try {
-      await runExec(gitCmd, { cwd: DIR_TROUTER, timeout: 60000 });
+      await runExec(
+        `git add package.json cli/package.json CHANGELOG-T.md && git commit -m "release: v${targetVersion}" && git push origin main`,
+        { cwd: DIR_TROUTER, timeout: 60000 }
+      );
     } catch (gitErr) {
       log('Git push notice: ' + gitErr.message);
     }
-    // 4.1 Update .versions.json baseline
-    const versionsFilePath = path.join(DIR_BASE, '.versions.json');
+
+    // 5. Update .versions.json baseline
+    const versionsFile = path.join(DIR_BASE, '.versions.json');
     try {
       let vData = {};
-      if (fs.existsSync(versionsFilePath)) {
-        vData = JSON.parse(fs.readFileSync(versionsFilePath, 'utf8'));
+      if (fs.existsSync(versionsFile)) {
+        vData = JSON.parse(fs.readFileSync(versionsFile, 'utf8'));
       }
       vData.t_router = targetVersion;
+      vData.commit = execSync('git rev-parse HEAD', { cwd: DIR_TROUTER, encoding: 'utf8' }).trim();
       vData.updated_at = new Date().toISOString();
-      fs.writeFileSync(versionsFilePath, JSON.stringify(vData, null, 2) + '\n', 'utf8');
+      fs.writeFileSync(versionsFile, JSON.stringify(vData, null, 2), 'utf8');
       log('Updated .versions.json baseline to: ' + targetVersion);
-    } catch (ve) {
-      log('Update .versions.json notice: ' + ve.message);
+    } catch (e) {
+      log('Failed to update .versions.json: ' + e.message);
     }
 
-    // 5. Gracefully restart t-router.service on default port 20126
+    // 6. Reload t-router.service on 20126
     log('Reloading t-router.service on port 20126...');
-    await runExec('systemctl --user restart t-router.service', { timeout: 30000 });
-
-    // 6. Verify service health on port 20126
-    await new Promise((r) => setTimeout(r, 3000));
-    const isServiceActive = await runExec('systemctl --user is-active t-router.service').catch(() => 'unknown');
+    await runExec('systemctl --user reload-or-restart t-router.service', { timeout: 30000 });
+    const isServiceActive = await runExec('systemctl --user is-active t-router.service', { timeout: 5000 }).catch(() => 'unknown');
 
     // 7. Clear pending state
     try {
@@ -256,12 +301,12 @@ async function doPublish(targetVersion) {
 
     log('Publish completed successfully for version: ' + targetVersion);
     await sendTelegram(
-      '🎉 <b>T-Router Publish Thành Công!</b>\n━━━━━━━━━━━━━━━━━━━━\n📦 Package: <code>t-router-proxy@' + targetVersion + '</code>\n🚀 Binary: <code>t-router</code>\n🌐 Trạng thái service: <code>' + isServiceActive.trim() + '</code> (Port: 20126)\n\nCài đặt hoặc cập nhật mọi nơi bằng lệnh:\n<code>npm i -g t-router-proxy@' + targetVersion + '</code>'
+      `🎉 <b>T-Router Publish Thành Công!</b>\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n📦 Package: <code>t-router-proxy@${targetVersion}</code>\n▶️ Run Binary: <code>t-router</code>\n🖥️ Trạng thái service: <code>${isServiceActive.trim()}</code> (Port: 20126)\n\nCài đặt hoặc cập nhật mọi nơi bằng lệnh:\n<code>npm i -g t-router-proxy@${targetVersion}</code>`
     );
   } catch (err) {
     log('Publish failed: ' + err.message);
     await sendTelegram(
-      '❌ <b>Lỗi trong quá trình build/publish T-Router:</b>\n━━━━━━━━━━━━━━━━━━━━\n<code>' + escapeHtml(err.message.substring(0, 1000)) + '</code>'
+      `❌ <b>[FAIL] Lỗi trong quá trình build/publish T-Router:</b>\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n<code>${escapeHtml(err.message.substring(0, 1000))}</code>`
     );
   } finally {
     isPublishing = false;
@@ -270,40 +315,58 @@ async function doPublish(targetVersion) {
 
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://' + req.headers.host);
-
   const sendJson = (code, data) => {
     res.writeHead(code, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify(data));
   };
 
-  if (req.method === 'GET' && url.pathname === '/status') {
-    let pending = null;
-    try {
-      if (fs.existsSync(STATE_FILE)) {
-        pending = JSON.parse(fs.readFileSync(STATE_FILE, 'utf8'));
-      }
-    } catch (e) {}
-    return sendJson(200, { ok: true, isPublishing, pendingRelease: pending });
+  if (req.method === 'GET') {
+    if (url.pathname === '/health' || url.pathname === '/') {
+      let pending = null;
+      try {
+        if (fs.existsSync(STATE_FILE)) pending = JSON.parse(fs.readFileSync(STATE_FILE, 'utf8'));
+      } catch (e) {}
+      return sendJson(200, {
+        ok: true,
+        service: 't-router-publisher',
+        isPublishing,
+        pendingRelease: pending,
+      });
+    }
+
+    if (url.pathname === '/status') {
+      let pending = null;
+      try {
+        if (fs.existsSync(STATE_FILE)) pending = JSON.parse(fs.readFileSync(STATE_FILE, 'utf8'));
+      } catch (e) {}
+      return sendJson(200, {
+        isPublishing,
+        pendingRelease: pending,
+      });
+    }
   }
 
   if (req.method === 'POST') {
     let bodyStr = '';
-    req.on('data', (chunk) => { bodyStr += chunk; });
+    req.on('data', (chunk) => {
+      bodyStr += chunk;
+    });
     req.on('end', async () => {
       let body = {};
       try {
-        if (bodyStr) body = JSON.parse(bodyStr);
+        body = JSON.parse(bodyStr);
       } catch (e) {}
 
       if (url.pathname === '/notify-merge' || url.pathname === '/notify-release') {
-        const { currentVersion, nextVersion, upstreamProVersion, publishedVersion, mergedFrom, summary } = body;
+        const { currentVersion, nextVersion, upstreamProVersion, upstream9RouterVersion, publishedVersion, mergedFrom, summary } = body;
         log('Received notify: ' + JSON.stringify(body));
 
-        const targetVer = nextVersion || resolveNextVersion(currentVersion, upstreamProVersion);
+        const targetVer = nextVersion || resolveNextVersion(currentVersion, upstreamProVersion, upstream9RouterVersion, mergedFrom);
         const stateData = {
           currentVersion: currentVersion || '0.5.109-pro.12-t.0',
           nextVersion: targetVer,
           publishedVersion: publishedVersion || '',
+          upstream9RouterVersion: upstream9RouterVersion || '',
           upstreamProVersion: upstreamProVersion || '',
           mergedFrom: mergedFrom || 'Git origin/main',
           summary: summary || 'Bản cập nhật mới trên GitHub',
@@ -368,7 +431,7 @@ const server = http.createServer(async (req, res) => {
               const rootPkg = JSON.parse(fs.readFileSync(path.join(DIR_TROUTER, 'package.json'), 'utf8'));
               curr = rootPkg.version || curr;
             } catch (e) {}
-            targetVersion = resolveNextVersion(curr, pending?.upstreamProVersion);
+            targetVersion = resolveNextVersion(curr, pending?.upstreamProVersion, pending?.upstream9RouterVersion, pending?.mergedFrom);
           }
         }
 
