@@ -23,14 +23,12 @@ if (sysParts.length === 2 && sysParts[0].text === "OMP_CORE_DEV_PROMPT" && sysPa
 } else {
   console.error("FAIL 1: sysParts:", sysParts);
 }
-
-// Test 2: Signature compatibility across model aliases
 const callId = "test_sig_call_001";
 const sig = "sig_content_xyz_999";
 storeGeminiThoughtSignature(callId, sig, null, "gemini-3.8-flash");
-const gotSig = getGeminiThoughtSignatureSync(callId, null, "claude-sonnet-5");
+const gotSig = getGeminiThoughtSignatureSync(callId, null, "gemini-3.8-flash");
 if (gotSig === sig) {
-  console.log("PASS 2: Thought signature retrieved across claude-sonnet-5 -> gemini-3.8-flash!");
+  console.log("PASS 2: Thought signature retrieved for gemini-3.8-flash!");
   passed++;
 } else {
   console.error("FAIL 2: Got signature:", gotSig);

@@ -19,14 +19,13 @@ export function signatureFamily(model) {
   const m = typeof model === "string" ? model.toLowerCase() : "";
   if (!m) return null;
   if (m.includes("claude")) return "claude";
-  if (m.includes("gemini")) return "gemini";
+  if (m.includes("gemini") || m.includes("argon")) return "gemini";
   return m;
 }
 
-// Signatures are unique to each tool_call_id and must always be returned for that call.
-// Model family mismatch should never reject signatures when combos map Claude model names to Gemini backends.
+// Entries stored before families were recorded (no `family`) stay usable for any model.
 function isCompatible(entry, family) {
-  return true;
+  return !entry.family || !family || entry.family === family;
 }
 
 function pruneMemoryExpired() {
