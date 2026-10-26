@@ -84,22 +84,59 @@ function getPublishedVersions() {
   }
 }
 
-// Calculate next version by incrementing the trailing number: e.g. 0.5.109-pro.12-t.1 -> 0.5.109-pro.12-t.2
-function bumpTrailingVersion(currentVer) {
-  const match = (currentVer || '').match(/^(.*[^\d])(\d+)$/);
-  if (match) {
-    const prefix = match[1];
-    const num = parseInt(match[2], 10) + 1;
-    return prefix + num;
+function parseVersion(v) {
+  if (!v || typeof v !== 'string') return null;
+  const clean = v.replace(/^v/, '').trim();
+  const fullMatch = clean.match(/^([^-]+)-(pro\.\d+)-t\.(\d+)$/);
+  if (fullMatch) {
+    return {
+      upstreamBase: fullMatch[1],
+      proTag: fullMatch[2],
+      tNumber: parseInt(fullMatch[3], 10),
+      proVersion: `${fullMatch[1]}-${fullMatch[2]}`,
+    };
   }
-  return (currentVer || '0.5.109-pro.12-t') + '.1';
+  const proMatch = clean.match(/^([^-]+)-(pro\.\d+)$/);
+  if (proMatch) {
+    return {
+      upstreamBase: proMatch[1],
+      proTag: proMatch[2],
+      tNumber: 0,
+      proVersion: `${proMatch[1]}-${proMatch[2]}`,
+    };
+  }
+  return null;
 }
 
-function resolveNextVersion(currentVer) {
+function resolveNextVersion(currentVer, upstreamProVersion = null) {
   const published = new Set(getPublishedVersions());
-  let candidate = bumpTrailingVersion(currentVer);
+  const curr = parseVersion(currentVer);
+  const upPro = parseVersion(upstreamProVersion);
+
+  let targetPrefix = '';
+  let startT = 1;
+
+  if (upPro && curr && upPro.proVersion !== curr.proVersion) {
+    // Upstream pro version changed (e.g. 0.5.109-pro.13): reset to -t.1
+    targetPrefix = `${upPro.proVersion}-t.`;
+    startT = 1;
+  } else if (upPro && !curr) {
+    targetPrefix = `${upPro.proVersion}-t.`;
+    startT = 1;
+  } else if (curr) {
+    // Same upstream pro version: increment trailing t number
+    targetPrefix = `${curr.proVersion}-t.`;
+    startT = curr.tNumber + 1;
+  } else {
+    targetPrefix = (currentVer || '0.5.109-pro.13') + '-t.';
+    startT = 1;
+  }
+
+  let t = startT;
+  let candidate = `${targetPrefix}${t}`;
   while (published.has(candidate)) {
-    candidate = bumpTrailingVersion(candidate);
+    t++;
+    candidate = `${targetPrefix}${t}`;
   }
   return candidate;
 }
@@ -262,7 +299,7 @@ const server = http.createServer(async (req, res) => {
         const { currentVersion, nextVersion, upstreamProVersion, publishedVersion, mergedFrom, summary } = body;
         log('Received notify: ' + JSON.stringify(body));
 
-        const targetVer = nextVersion || currentVersion || resolveNextVersion(currentVersion, upstreamProVersion);
+        const targetVer = nextVersion || resolveNextVersion(currentVersion, upstreamProVersion);
         const stateData = {
           currentVersion: currentVersion || '0.5.109-pro.12-t.0',
           nextVersion: targetVer,

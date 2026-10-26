@@ -45,7 +45,7 @@ Upstream changelogs (`CHANGELOG.md` and `CHANGELOG-PRO.md`) are kept intact for 
 
 ---
 
-## v0.5.109-pro.12-t.9 (2026-10-26)
+## v0.5.109-pro.13-t.1 (2026-10-26)
 
 - **Fix Antigravity / Gemini Multi-turn Function Calling & System Instruction Loss**:
   - Hỗ trợ đầy đủ `role: "developer"` (OMP, Codex) khi chuyển đổi sang Gemini/Antigravity (`openaiToGeminiRequest`), tránh việc rơi rụng toàn bộ system prompt cốt lõi của agent.
