@@ -5,6 +5,14 @@ Upstream changelogs (`CHANGELOG.md` and `CHANGELOG-PRO.md`) are kept intact for 
 
 ---
 
+## v0.5.111-pro.14-t.6 (2026-10-27)
+
+- **Hardened Runtime Dependency Loader (`lazyRuntime.js`)**:
+  - Added `/* webpackIgnore: true */` comments to all dynamic `import(pathToFileURL(...))` calls to prevent Webpack from wrapping them with context modules that fail on `file://` URLs in bundled environments.
+  - Ensured `<DATA_DIR>/runtime/package.json` exists before running `npm install`, isolating the runtime directory and preventing npm from traversing parent directories.
+
+---
+
 ## v0.5.111-pro.14-t.5 (2026-10-27)
 
 - **Fix: OpenCode Free 502 (wreq-js `Cannot read properties of undefined (reading 'resolve')`)**:

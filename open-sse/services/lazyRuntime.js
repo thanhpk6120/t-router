@@ -20,9 +20,30 @@ const LAZY_DEP_VERSIONS = {
 };
 
 function getRuntimeDir() {
-  return path.join(getWritableDataDir(), "runtime");
+  const dir = path.join(getWritableDataDir(), "runtime");
+  if (!fs.existsSync(dir)) {
+    try { fs.mkdirSync(dir, { recursive: true }); } catch {}
+  }
+  const pkgPath = path.join(dir, "package.json");
+  if (!fs.existsSync(pkgPath)) {
+    try {
+      fs.writeFileSync(
+        pkgPath,
+        JSON.stringify(
+          {
+            name: "t-router-runtime",
+            version: "1.0.0",
+            private: true,
+            description: "User-writable runtime deps for t-router",
+          },
+          null,
+          2
+        )
+      );
+    } catch {}
+  }
+  return dir;
 }
-
 function isModuleMissing(error) {
   const code = String(error?.code || "");
   const msg = String(error?.message || "");
@@ -132,7 +153,7 @@ async function load(pkg) {
   const existingPath = resolvePackagePath(dir, pkg);
   if (existingPath) {
     try {
-      return await import(pathToFileURL(existingPath).href);
+      return await import(/* webpackIgnore: true */ pathToFileURL(existingPath).href);
     } catch (error) {
       if (!isModuleMissing(error)) throw error;
     }
@@ -153,7 +174,7 @@ async function load(pkg) {
   if (!installedPath) {
     throw new Error(`${pkg} was installed into "${dir}" but could not be resolved.`);
   }
-  return import(pathToFileURL(installedPath).href);
+  return import(/* webpackIgnore: true */ pathToFileURL(installedPath).href);
 }
 export function loadRuntimeDep(pkg) {
   if (!inflight.has(pkg)) {
