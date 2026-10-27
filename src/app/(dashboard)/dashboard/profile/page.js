@@ -2094,6 +2094,7 @@ export default function ProfilePage() {
                 </span>
                 {copiedCmd ? "Đã sao chép" : "Sao chép lệnh"}
               </Button>
+            </div>
           )}
 
           <div className="flex gap-2">
