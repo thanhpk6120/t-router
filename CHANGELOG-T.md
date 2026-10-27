@@ -5,6 +5,14 @@ Upstream changelogs (`CHANGELOG.md` and `CHANGELOG-PRO.md`) are kept intact for 
 
 ---
 
+## v0.5.111-pro.13-t.7 (2026-10-26)
+
+- **Fix: "Cannot create property 'finishReasonSent' on string 'claude-sonnet-5'"**:
+  - **Resolved Translator Registration Signature Collision**: In `open-sse/translator/index.js`, `register` expects `(from, to, requestFn, responseFn)`. Fixed the argument order in `response/claude-to-openai.js` and `response/gemini-to-openai.js` where flush functions were inadvertently registered as `requestFn`, which overwrote the inbound Claude/Gemini request translator and received the model string as its first argument.
+  - **Standardized In-Stream Flush on `!chunk`**: Consolidated terminal turn synthesis directly inside `claudeToOpenAIResponse` and `geminiToOpenAIResponse` when `!chunk` is passed, safely validating `typeof state === "object"` before accessing state fields.
+
+---
+
 ## v0.5.111-pro.13-t.6 (2026-10-26)
 
 - **Fix: "OpenAI completions stream closed before a finish_reason was received"**:

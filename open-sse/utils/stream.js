@@ -469,11 +469,11 @@ export function createSSEStream(options = {}) {
             if (item.choices?.[0]?.finish_reason || state?.finishReasonSent) {
               openAIFinishReasonSeen = true;
             }
-            if (state.finishReason && isFinishChunk && !hasValidUsage(item.usage) && totalContentLength > 0) {
+            if (state?.finishReason && isFinishChunk && !hasValidUsage(item.usage) && totalContentLength > 0) {
               const estimated = estimateUsage(body, totalContentLength, sourceFormat);
               item.usage = filterUsageForFormat(estimated, sourceFormat); // Filter + already has buffer
-              state.usage = estimated;
-            } else if (state.finishReason && isFinishChunk && state.usage) {
+              if (state && typeof state === "object") state.usage = estimated;
+            } else if (state?.finishReason && isFinishChunk && state?.usage) {
               // Add buffer and filter usage for client (but keep original in state.usage for logging)
               const buffered = addBufferToUsage(state.usage);
               item.usage = filterUsageForFormat(buffered, sourceFormat);

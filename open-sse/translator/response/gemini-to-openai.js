@@ -76,7 +76,16 @@ function emitFunctionCall(functionCall, state, signature = null) {
 
 // Convert Gemini response chunk to OpenAI format
 export function geminiToOpenAIResponse(chunk, state) {
-  if (!chunk) return null;
+  if (!chunk) {
+    if (!state || typeof state !== "object" || state.finishReasonSent) return null;
+    state.finishReasonSent = true;
+    const finishReason = state.finishReason || (state.geminiToolCallCount > 0 ? OPENAI_FINISH.TOOL_CALLS : OPENAI_FINISH.STOP);
+    const finalChunk = buildChunk(chunkMeta(state), {}, finishReason);
+    if (state.usage) {
+      finalChunk.usage = state.usage;
+    }
+    return [finalChunk];
+  }
   
   // Handle Antigravity wrapper
   const response = chunk.response || chunk;
@@ -215,19 +224,8 @@ export function geminiToOpenAIResponse(chunk, state) {
   return results.length > 0 ? results : null;
 }
 
-export function geminiToOpenAIFlush(state) {
-  if (!state || state.finishReasonSent) return null;
-  state.finishReasonSent = true;
-  const finishReason = state.finishReason || (state.geminiToolCallCount > 0 ? OPENAI_FINISH.TOOL_CALLS : OPENAI_FINISH.STOP);
-  const finalChunk = buildChunk(chunkMeta(state), {}, finishReason);
-  if (state.usage) {
-    finalChunk.usage = state.usage;
-  }
-  return [finalChunk];
-}
-
 // Register
-register(FORMATS.GEMINI, FORMATS.OPENAI, geminiToOpenAIFlush, geminiToOpenAIResponse);
-register(FORMATS.GEMINI_CLI, FORMATS.OPENAI, geminiToOpenAIFlush, geminiToOpenAIResponse);
-register(FORMATS.ANTIGRAVITY, FORMATS.OPENAI, geminiToOpenAIFlush, geminiToOpenAIResponse);
-register(FORMATS.VERTEX, FORMATS.OPENAI, geminiToOpenAIFlush, geminiToOpenAIResponse);
+register(FORMATS.GEMINI, FORMATS.OPENAI, null, geminiToOpenAIResponse);
+register(FORMATS.GEMINI_CLI, FORMATS.OPENAI, null, geminiToOpenAIResponse);
+register(FORMATS.ANTIGRAVITY, FORMATS.OPENAI, null, geminiToOpenAIResponse);
+register(FORMATS.VERTEX, FORMATS.OPENAI, null, geminiToOpenAIResponse);
