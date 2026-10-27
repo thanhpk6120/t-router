@@ -20,6 +20,10 @@ Upstream changelogs (`CHANGELOG.md` and `CHANGELOG-PRO.md`) are kept intact for 
 
 ---
 
+## v0.5.111-pro.14-t.1 (2026-10-27)
+
+- Automated sync and release via Telegram Bot.
+
 ## v0.5.111-pro.13-t.7 (2026-10-26)
 
 - **Fix: "Cannot create property 'finishReasonSent' on string 'claude-sonnet-5'"**:
