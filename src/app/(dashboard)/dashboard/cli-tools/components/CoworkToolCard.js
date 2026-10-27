@@ -47,10 +47,10 @@ export default function CoworkToolCard({
   const [modelAliases, setModelAliases] = useState({});
   const [comboModalOpen, setComboModalOpen] = useState(false);
   const [modelSelectOpen, setModelSelectOpen] = useState(false);
+  const [availableCombos, setAvailableCombos] = useState([]);
   const [marketplaceOpen, setMarketplaceOpen] = useState(false);
   const [addMcpOpen, setAddMcpOpen] = useState(false);
   const [addMcpForm, setAddMcpForm] = useState({ name: "", url: "" });
-
   useEffect(() => {
     if (apiKeys?.length > 0 && !selectedApiKey) {
       setSelectedApiKey(apiKeys[0].key);
@@ -71,6 +71,12 @@ export default function CoworkToolCard({
       .then((r) => r.ok ? r.json() : null)
       .then((data) => {
         if (data) setModelAliases(data.aliases || {});
+      })
+      .catch(() => {});
+    fetch("/api/combos")
+      .then((r) => r.ok ? r.json() : null)
+      .then((data) => {
+        if (data?.combos) setAvailableCombos(data.combos);
       })
       .catch(() => {});
   }, [isExpanded]);
@@ -174,14 +180,31 @@ export default function CoworkToolCard({
       });
       if (!res.ok) {
         const err = await res.json();
+        // If combo already exists, directly adopt it into selected models
+        if (err.error && (err.error.includes("already exists") || res.status === 400)) {
+          if (!selectedModels.includes(name)) {
+            setSelectedModels((prev) => [...prev, name]);
+          }
+          setComboModalOpen(false);
+          setMessage({ type: "success", text: `Existing combo "${name}" selected.` });
+          fetch("/api/combos")
+            .then((r) => r.ok ? r.json() : null)
+            .then((data) => { if (data?.combos) setAvailableCombos(data.combos); })
+            .catch(() => {});
+          return;
+        }
         setMessage({ type: "error", text: err.error || "Failed to create combo" });
         return;
       }
       if (!selectedModels.includes(name)) {
-        setSelectedModels([...selectedModels, name]);
+        setSelectedModels((prev) => [...prev, name]);
       }
       setComboModalOpen(false);
       setMessage({ type: "success", text: `Combo "${name}" created and added.` });
+      fetch("/api/combos")
+        .then((r) => r.ok ? r.json() : null)
+        .then((data) => { if (data?.combos) setAvailableCombos(data.combos); })
+        .catch(() => {});
     } catch (error) {
       setMessage({ type: "error", text: error.message });
     }
@@ -331,27 +354,115 @@ export default function CoworkToolCard({
                   <ApiKeySelect value={selectedApiKey} onChange={setSelectedApiKey} apiKeys={apiKeys} cloudEnabled={cloudEnabled} />
                 </div>
 
-                <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-[8rem_auto_1fr] sm:items-center sm:gap-2">
-                  <span className="w-32 shrink-0 text-sm font-semibold text-text-main text-right">Models</span>
-                  <span className="material-symbols-outlined text-text-muted text-[14px]">arrow_forward</span>
-                  <div className="flex-1 flex items-center gap-2">
-                    <div className="flex-1 flex flex-wrap gap-1.5 min-h-[28px] px-2 py-1.5 bg-surface rounded border border-border">
-                      {selectedModels.length === 0 ? (
-                        <span className="text-xs text-text-muted">No models selected</span>
-                      ) : (
-                        selectedModels.map((m) => (
-                          <span key={m} className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs bg-black/5 dark:bg-white/5 text-text-muted border border-transparent hover:border-border">
-                            {m}
-                            <button onClick={() => handleRemoveModel(m)} className="ml-0.5 hover:text-red-500">
-                              <span className="material-symbols-outlined text-[12px]">close</span>
-                            </button>
+                <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-[8rem_auto_1fr] sm:items-start sm:gap-2">
+                  <span className="w-32 shrink-0 text-sm font-semibold text-text-main text-right pt-1.5">Models / Combos</span>
+                  <span className="material-symbols-outlined text-text-muted text-[14px] mt-2">arrow_forward</span>
+                  <div className="flex-1 flex flex-col gap-2">
+                    <div className="flex items-center gap-2">
+                      <div
+                        onClick={() => setModelSelectOpen(true)}
+                        className="flex-1 flex flex-wrap gap-1.5 min-h-[32px] px-2 py-1.5 bg-surface rounded border border-border cursor-pointer hover:border-primary/50 transition-colors"
+                        title="Click to browse and select models or combos"
+                      >
+                        {selectedModels.length === 0 ? (
+                          <span className="text-xs text-text-muted flex items-center gap-1 py-0.5">
+                            <span className="material-symbols-outlined text-[14px]">search</span>
+                            Click to select models or combos...
                           </span>
-                        ))
-                      )}
-                    </div>
-                    <button onClick={() => setComboModalOpen(true)} disabled={!hasActiveProviders} className={`shrink-0 px-2 py-1.5 rounded border text-xs whitespace-nowrap transition-colors ${hasActiveProviders ? "bg-primary/10 border-primary/40 text-primary hover:bg-primary/20 cursor-pointer" : "opacity-50 cursor-not-allowed border-border"}`}>+ Combo</button>
-                  </div>
-                </div>
+                        ) : (
+                          selectedModels.map((m) => {
+                            const isCombo = availableCombos.some((c) => c.name === m);
+                            return (
+                              <span
+                                key={m}
+                                className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs border transition-colors ${
+                                  isCombo
+                                    ? "bg-primary/10 text-primary border-primary/30 font-medium"
+                                    : "bg-black/5 dark:bg-white/5 text-text-muted border-transparent hover:border-border"
+                                }`}
+                              >
+                                {isCombo && <span className="material-symbols-outlined text-[12px]">layers</span>}
+                                {m}
+                                <button
+                                  type="button"
+                                   onClick={(e) => {
+                                     e.stopPropagation();
+                                     handleRemoveModel(m);
+                                   }}
+                                   className="ml-0.5 hover:text-red-500"
+                                 >
+                                   <span className="material-symbols-outlined text-[12px]">close</span>
+                                 </button>
+                               </span>
+                             );
+                           })
+                         )}
+                       </div>
+
+                       <button
+                         type="button"
+                         onClick={() => setModelSelectOpen(true)}
+                         className="shrink-0 px-2.5 py-1.5 rounded border border-primary/40 bg-primary/10 text-primary hover:bg-primary/20 text-xs font-medium whitespace-nowrap transition-colors cursor-pointer flex items-center gap-1"
+                         title="Browse and select models or existing combos"
+                       >
+                         <span className="material-symbols-outlined text-[14px]">search</span>
+                         Select / Browse
+                       </button>
+
+                       <button
+                         type="button"
+                         onClick={() => setComboModalOpen(true)}
+                         disabled={!hasActiveProviders}
+                         className={`shrink-0 px-2.5 py-1.5 rounded border text-xs whitespace-nowrap transition-colors flex items-center gap-1 ${
+                           hasActiveProviders
+                             ? "bg-surface border-border text-text-muted hover:border-primary hover:text-primary cursor-pointer"
+                             : "opacity-50 cursor-not-allowed border-border"
+                         }`}
+                         title="Create a new combo"
+                       >
+                         <span className="material-symbols-outlined text-[14px]">add</span>
+                         New Combo
+                       </button>
+                     </div>
+
+                     {/* Quick pick existing combos */}
+                     {availableCombos.length > 0 && (
+                       <div className="flex items-center gap-1.5 flex-wrap">
+                         <span className="text-[10px] text-text-muted font-medium flex items-center gap-0.5">
+                           <span className="material-symbols-outlined text-[12px] text-primary">layers</span>
+                           Quick Combos:
+                         </span>
+                         {availableCombos.map((combo) => {
+                           const isSelected = selectedModels.includes(combo.name);
+                           return (
+                             <button
+                               key={combo.name}
+                               type="button"
+                               onClick={() => {
+                                 if (isSelected) {
+                                   handleRemoveModel(combo.name);
+                                 } else {
+                                   handleAddModel(combo.name);
+                                 }
+                               }}
+                               className={`text-[11px] px-2 py-0.5 rounded border transition-all cursor-pointer flex items-center gap-1 ${
+                                 isSelected
+                                   ? "bg-primary text-black font-semibold border-primary shadow-xs"
+                                   : "bg-surface hover:bg-surface-elevated text-text-muted hover:text-text-main border-border"
+                               }`}
+                               title={isSelected ? `Click to remove combo "${combo.name}"` : `Click to add combo "${combo.name}": ${combo.models?.join(", ") || ""}`}
+                             >
+                               <span>{combo.name}</span>
+                               <span className="text-[10px] opacity-70">
+                                 {isSelected ? "✓" : `(${combo.models?.length || 0})`}
+                               </span>
+                             </button>
+                           );
+                         })}
+                       </div>
+                     )}
+                   </div>
+                 </div>
 
                 <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-[8rem_auto_1fr] sm:items-start sm:gap-2">
                   <span className="w-32 shrink-0 text-sm font-semibold text-text-main text-right pt-2">MCP</span>
@@ -540,7 +651,7 @@ export default function CoworkToolCard({
           onDeselect={handleRemoveModel}
           activeProviders={activeProviders}
           modelAliases={modelAliases}
-          title="Select Cowork Model"
+          title="Select Cowork Model or Combo"
           addedModelValues={selectedModels}
           closeOnSelect={false}
         />

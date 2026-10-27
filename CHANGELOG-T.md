@@ -5,6 +5,18 @@ Upstream changelogs (`CHANGELOG.md` and `CHANGELOG-PRO.md`) are kept intact for 
 
 ---
 
+## v0.5.111-pro.14-t.5 (2026-10-27)
+
+- **Fix: OpenCode Free 502 (wreq-js `Cannot read properties of undefined (reading 'resolve')`)**:
+  - Replaced Webpack-broken dynamic `createRequire` in `open-sse/services/lazyRuntime.js` with direct filesystem package entry resolution (`resolvePackageEntry`), reading package metadata and resolving exports/main paths natively.
+  - Completely eliminated Webpack compilation warning `module.createRequire failed parsing argument` and runtime `TypeError` when lazy-loading `wreq-js` or `playwright-core`.
+- **Fix: Claude Cowork Combo Selection in CLI Tools**:
+  - Added **Quick Combos** shelf directly on the Cowork tool card for 1-click selection of existing combos.
+  - Added dedicated **Select / Browse** button and click-to-browse trigger on the model box to open `ModelSelectModal`, enabling selection of any existing combo or provider model.
+  - Enhanced `handleCreateCombo` to automatically adopt and select an existing combo if the entered name already exists, preventing duplicate creation errors.
+
+---
+
 ## v0.5.111-pro.14-t.4 (2026-10-27)
 
 - **Fix: Prevent Triple-Count Stats on noAuth Providers**:
