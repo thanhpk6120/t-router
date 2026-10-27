@@ -422,20 +422,19 @@ export default function ProvidersPage() {
   // (and sometimes "api_key"). Card stats must count both so totals match detail.
   // kiro has no authModes in registry but accepts both (headless uses "api_key").
   const dualAuthTypes = (info, key) => {
-    if (key === "kiro") return ["oauth", "apikey", "api_key"];
-    if (info?.noAuth || key in FREE_PROVIDERS || key === "opencode") {
-      return ["free", "none", "oauth", "apikey", "api_key"];
+    if (info?.noAuth || key === "opencode") {
+      return ["free"];
     }
+    if (key === "kiro") return ["oauth", "apikey", "api_key"];
     const modes = info?.authModes;
     if (!Array.isArray(modes)) {
       return key in FREE_TIER_PROVIDERS || key in APIKEY_PROVIDERS
         ? ["oauth", "apikey", "api_key"]
-        : ["oauth", "free", "none"];
+        : "oauth";
     }
     const types = [];
     if (modes.includes("oauth")) types.push("oauth");
     if (modes.includes("apikey") || modes.includes("api_key")) types.push("apikey", "api_key");
-    if (modes.includes("none")) types.push("none", "free");
     return types.length ? types : ["oauth", "apikey", "api_key"];
   };
 

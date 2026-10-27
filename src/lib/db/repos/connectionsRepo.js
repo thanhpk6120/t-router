@@ -152,7 +152,7 @@ export async function getProviderConnectionStats() {
     for (const pId of noAuthProviders) {
       const override = providerStrategies[pId] || {};
       const isDisabled = override.disabled === true || override.isActive === false;
-      const statObj = {
+      stats[`${pId}|free`] = {
         provider: pId,
         authType: "free",
         total: 1,
@@ -161,9 +161,6 @@ export async function getProviderConnectionStats() {
         allDisabled: isDisabled,
         latestError: null,
       };
-      stats[`${pId}|free`] = statObj;
-      stats[`${pId}|none`] = statObj;
-      stats[`${pId}|oauth`] = statObj;
     }
   } catch {}
   return stats;

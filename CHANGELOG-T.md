@@ -5,6 +5,14 @@ Upstream changelogs (`CHANGELOG.md` and `CHANGELOG-PRO.md`) are kept intact for 
 
 ---
 
+## v0.5.111-pro.14-t.4 (2026-10-27)
+
+- **Fix: Prevent Triple-Count Stats on noAuth Providers**:
+  - Standardized `noAuth` provider stat entries to a single key `${pId}|free` in `src/lib/db/repos/connectionsRepo.js`.
+  - Restricted `dualAuthTypes` in `src/app/(dashboard)/dashboard/providers/page.js` to return `["free"]` for `noAuth` providers, ensuring accurate connection counts and status displays without over-aggregation.
+
+---
+
 ## v0.5.111-pro.14-t.3 (2026-10-27)
 
 - **Fix: TypeError on bulk-toggling providers**:
