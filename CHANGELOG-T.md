@@ -5,6 +5,13 @@ Upstream changelogs (`CHANGELOG.md` and `CHANGELOG-PRO.md`) are kept intact for 
 
 ---
 
+## v0.5.111-pro.14-t.3 (2026-10-27)
+
+- **Fix: TypeError on bulk-toggling providers**:
+  - Corrected `getSettings` and `updateSettings` import target in `src/app/api/providers/route.js` from `@/models` to `@/lib/localDb`.
+
+---
+
 ## v0.5.111-pro.14-t.2 (2026-10-27)
 
 - **Provider Toggle & OpenCode Free Fixes**:

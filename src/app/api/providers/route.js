@@ -153,7 +153,7 @@ export async function PATCH(request) {
 
     const isFreeOrNoAuth = !!(FREE_PROVIDERS[provider]?.noAuth || FREE_TIER_PROVIDERS[provider]?.noAuth || provider === "opencode" || AI_PROVIDERS[provider]?.noAuth);
     if (isFreeOrNoAuth) {
-      const { getSettings, updateSettings } = await import("@/models");
+      const { getSettings, updateSettings } = await import("@/lib/localDb");
       const settings = await getSettings();
       const current = settings.providerStrategies || {};
       const override = { ...(current[provider] || {}) };
