@@ -1,10 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useRef, useEffect } from "react";
 import PropTypes from "prop-types";
 import { Button, Badge, Input, Modal, Select } from "@/shared/components";
 import { AI_PROVIDERS } from "@/shared/constants/providers";
-import { planBulkAdd } from "@/shared/utils/bulkAdd";
+import { planBulkAdd, runBulkPool } from "@/shared/utils/bulkAdd";
 
 const BULK_PLACEHOLDER = `name1|sk-key1\nname2|sk-key2\nsk-key-only-auto-named`;
 
@@ -65,6 +65,12 @@ export default function AddApiKeyModal({ isOpen, provider, providerName, isCompa
   const [bulkText, setBulkText] = useState("");
   const [bulkResult, setBulkResult] = useState(null); // { success, failed }
   const [bulkProgress, setBulkProgress] = useState(null); // { done, total, current } while adding
+  const bulkCloseTimer = useRef(null);
+  // Auto-close timer must not fire after the modal unmounts (e.g. the user
+  // closes it manually during the result flash).
+  useEffect(() => () => {
+    if (bulkCloseTimer.current) clearTimeout(bulkCloseTimer.current);
+  }, []);
 
   const buildProviderSpecificData = () => {
     if (isOllamaLocal && formData.ollamaHostUrl.trim()) {
@@ -174,53 +180,57 @@ export default function AddApiKeyModal({ isOpen, provider, providerName, isCompa
     // Plan collision-free names against existing connections so a generated
     // "Key N" never matches a saved name (which the backend would upsert /
     // overwrite instead of inserting). See bulkAdd.js for the full rationale.
+    // Pre-planned unique names are also what makes parallel inserts safe.
     const plan = planBulkAdd(lines, existingNames, { isCloudflareAi });
     if (!plan.length) return;
     setSaving(true);
     setBulkResult(null);
     setBulkProgress({ done: 0, total: plan.length, current: plan[0].name });
-    let success = 0;
-    let failed = 0;
-    for (const entry of plan) {
-      setBulkProgress({ done: success + failed, total: plan.length, current: entry.name });
+
+    // Bounded worker pool (6 parallel): same per-key validate+save work,
+    // but overlapped instead of sequential. Safe because planBulkAdd
+    // pre-assigned collision-free names (no two workers insert the same name).
+    const worker = async (entry) => {
+      let isValid = false;
       try {
-        // Validate each key before saving so bulk-added connections get a
-        // real status (active/unknown) like single adds, instead of a
-        // hardcoded "unknown" that never flips until a manual test.
-        let isValid = false;
-        try {
-          const vres = await fetch("/api/providers/validate", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ provider, apiKey: entry.apiKey }),
-          });
-          const vdata = await vres.json().catch(() => ({}));
-          isValid = !!vdata.valid;
-        } catch {
-          isValid = false;
-        }
-        const res = await fetch("/api/providers", {
+        const vres = await fetch("/api/providers/validate", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            provider,
-            apiKey: entry.apiKey,
-            name: entry.name,
-            priority: 1,
-            testStatus: isValid ? "active" : "unknown",
-            ...(entry.providerSpecificData ? { providerSpecificData: entry.providerSpecificData } : {}),
-          }),
+          body: JSON.stringify({ provider, apiKey: entry.apiKey }),
         });
-        if (res.ok) success++;
-        else failed++;
+        const vdata = await vres.json().catch(() => ({}));
+        isValid = !!vdata.valid;
       } catch {
-        failed++;
+        isValid = false;
       }
-    }
+      const res = await fetch("/api/providers", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          provider,
+          apiKey: entry.apiKey,
+          name: entry.name,
+          priority: 1,
+          testStatus: isValid ? "active" : "unknown",
+          ...(entry.providerSpecificData ? { providerSpecificData: entry.providerSpecificData } : {}),
+        }),
+      });
+      return res.ok;
+    };
+
+    const result = await runBulkPool(plan, worker, {
+      concurrency: 6,
+      onProgress: setBulkProgress,
+    });
     setSaving(false);
     setBulkProgress(null);
-    setBulkResult({ success, failed });
-    if (success > 0 && onBulkDone) onBulkDone();
+    setBulkResult(result);
+    if (result.success > 0 && onBulkDone) onBulkDone();
+    if (result.failed === 0 && result.success > 0) {
+      bulkCloseTimer.current = setTimeout(() => {
+        onClose?.();
+      }, 1200);
+    }
   };
 
   if (!provider) return null;

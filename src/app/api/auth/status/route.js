@@ -4,6 +4,7 @@ import { getSettings } from "@/lib/localDb";
 import { isOidcConfigured } from "@/lib/auth/oidc";
 import { isSamlConfigured } from "@/lib/auth/saml.js";
 import { getDashboardAuthSession } from "@/lib/auth/dashboardSession";
+import { isTotpEnabled } from "@/lib/auth/totp.js";
 import bcrypt from "bcryptjs";
 
 export async function GET() {
@@ -48,6 +49,7 @@ export async function GET() {
       hasPassword: !isDefaultPassword,
       isDefaultPassword,
       defaultPassword: isDefaultPassword ? defaultPassword : null,
+      totpEnabled: await isTotpEnabled(),
       displayName,
       loginMethod,
       authenticated: !!session,
@@ -70,6 +72,7 @@ export async function GET() {
       hasPassword: false,
       isDefaultPassword: true,
       defaultPassword: process.env.INITIAL_PASSWORD || "123456",
+      totpEnabled: false,
       displayName: "Password user",
       loginMethod: "Password",
       authenticated: false,

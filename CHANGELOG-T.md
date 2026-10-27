@@ -5,6 +5,21 @@ Upstream changelogs (`CHANGELOG.md` and `CHANGELOG-PRO.md`) are kept intact for 
 
 ---
 
+## Upstream Sync (9router 0.5.111, 9router-pro 0.5.109-pro.14) (2026-10-27)
+
+- **Automation Menu**:
+  - **Outbound Notifications**: Added configurable Telegram bot and generic webhook alerts with HMAC signature verification (`X-TRouter-Signature` and `X-9Router-Signature`) for silent automated tasks such as scheduled backup success and failure.
+  - **Response Cache**: Exact replay cache for non-streaming chat completions (opt-in, tools/streaming bypassed, bounded LRU/TTL).
+  - **Two-Factor Authentication (TOTP)**: Added RFC 6238 TOTP two-factor authentication for password dashboard login with secure backup code generation and consumption.
+  - **Database Maintenance**: Scheduled daily maintenance to prune historical per-request logs and expired cache rows while preserving daily usage aggregates and optimizing space.
+- **Performance & Usability Enhancements**:
+  - **Latency Statistics Card**: Integrated TTFT and total latency percentile stats (p50/p95) into the Usage dashboard.
+  - **Concurrent Bulk Key Import**: Sped up bulk API key addition using a bounded 6-worker pool with pre-planned unique collision-free naming.
+  - **Capacity Adapter Variant Resolution**: Extended capability checks and context-window stripping for custom model variants by resolving backing models.
+  - **Schema Migration & Safety**: Bumped schema to version 3 with safety backups and verified test coverage.
+
+---
+
 ## v0.5.111-pro.13-t.7 (2026-10-26)
 
 - **Fix: "Cannot create property 'finishReasonSent' on string 'claude-sonnet-5'"**:
