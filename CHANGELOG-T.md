@@ -10,12 +10,14 @@ Upstream changelogs (`CHANGELOG.md` and `CHANGELOG-PRO.md`) are kept intact for 
 - **Advanced Proxy Rotation, Fallback & Bad Exit Range Cache (Aligned with `opencode2api` Standard)**:
   - **Multi-Proxy In-Pool Fallback**: When a proxy fails or receives HTTP 429/403/502/503 from upstream, `proxyAwareFetch` now automatically falls back to subsequent active candidate proxies in the pool instead of throwing an immediate 502 or prematurely falling back to direct connection.
   - **Rotating Proxies First (`RotatingFirst`)**: In mixed (`both`) proxy source mode, rotating proxies (pools with a `rotateLink` / `rotateUrl`) are always prioritized ahead of static proxies across candidate generation and rotation selection.
+  - **Auto-Adopt Active Proxies when Direct Disabled**: When Direct is disabled (`directActive === false`), if a provider/connection has no valid proxy assigned or was pointing to `direct`, it automatically adopts active real proxies from Proxy Pools (rotating first, then static) rather than throwing an immediate 502 IP leak prevention error.
   - **Subnet Normalization & Known-Bad Range Cache (`proxyRotator.js`)**:
-    - Extracted exit IPs to network ranges: IPv4 to `/24` (e.g. `1.2.3.0/24`) and IPv6 to `/48`.
-    - Maintained bounded FIFO cache of known-bad exit ranges. When a rotating proxy fails, its exit range is recorded before renewal.
+    - Extracted exit IPs to network ranges: IPv4 to `/24` (e.g. `1.2.3.0/24`) and IPv6 to `/48` with full 8-group expansion of compressed `::` notation.
+    - Maintained bounded FIFO cache of known-bad exit ranges. When a rotating proxy fails, its exit range is recorded before renewal to eliminate race conditions.
     - During IP rotation, probes the new exit IP via proxy; if the new IP lands in a known-bad range, automatically re-rotates (up to 5 attempts with backoff) to guarantee clean egress.
-  - **Safe Direct Fallback Handling**: Refuses direct fallback to prevent IP leak only after all active candidate proxies in the pool have been attempted.
-
+  - **Per-Pool Rotating Proxy Configuration**: Added configuration for `minIntervalSeconds` (cooldown between rotations, default 60s), `maxIntervalSeconds` (auto-rotate interval, default 1800s), `failedIpCacheSize` (max bad IPs to cache, default 10), and `autoRotate` toggle in Proxy Pools UI and API.
+- **Direct 1-Click Update Screen**: Clicking **Update now** now opens the Copy & Shutdown install panel directly without an intermediate instructional dialog.
+- **Claude Cowork CLI Tool Styling**: Adjusted height and alignment of the Model/Combos input area in `CoworkToolCard` to match the exact dimensions and spacing of the API Key input.
 ---
 
 ## v0.5.111-pro.14-t.6 (2026-10-27)

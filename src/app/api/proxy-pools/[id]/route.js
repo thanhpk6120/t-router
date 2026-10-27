@@ -54,6 +54,24 @@ function normalizeProxyPoolUpdate(body = {}) {
     const validTypes = ["http", "vercel", "cloudflare", "deno", "netlify"];
     updates.type = validTypes.includes(body?.type) ? body.type : "http";
   }
+  if (Object.prototype.hasOwnProperty.call(body, "autoRotate")) {
+    updates.autoRotate = Boolean(body.autoRotate);
+  }
+
+  if (Object.prototype.hasOwnProperty.call(body, "minIntervalSeconds") || Object.prototype.hasOwnProperty.call(body, "min_interval_seconds")) {
+    const val = Number(body.minIntervalSeconds ?? body.min_interval_seconds);
+    updates.minIntervalSeconds = Number.isFinite(val) ? Math.max(1, val) : 60;
+  }
+
+  if (Object.prototype.hasOwnProperty.call(body, "maxIntervalSeconds") || Object.prototype.hasOwnProperty.call(body, "max_interval_seconds")) {
+    const val = Number(body.maxIntervalSeconds ?? body.max_interval_seconds);
+    updates.maxIntervalSeconds = Number.isFinite(val) ? Math.max(0, val) : 1800;
+  }
+
+  if (Object.prototype.hasOwnProperty.call(body, "failedIpCacheSize") || Object.prototype.hasOwnProperty.call(body, "failed_ip_cache_size")) {
+    const val = Number(body.failedIpCacheSize ?? body.failed_ip_cache_size);
+    updates.failedIpCacheSize = Number.isFinite(val) ? Math.max(1, Math.min(100, val)) : 10;
+  }
 
   return { updates };
 }

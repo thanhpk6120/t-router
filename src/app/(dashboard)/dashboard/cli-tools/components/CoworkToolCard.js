@@ -355,18 +355,18 @@ export default function CoworkToolCard({
                 </div>
 
                 <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-[8rem_auto_1fr] sm:items-start sm:gap-2">
-                  <span className="w-32 shrink-0 text-sm font-semibold text-text-main text-right pt-1.5">Models / Combos</span>
-                  <span className="material-symbols-outlined text-text-muted text-[14px] mt-2">arrow_forward</span>
-                  <div className="flex-1 flex flex-col gap-2">
+                  <span className="text-xs font-semibold text-text-main sm:text-right sm:text-sm pt-1">Models / Combos</span>
+                  <span className="material-symbols-outlined hidden text-text-muted text-[14px] mt-1.5 sm:inline">arrow_forward</span>
+                  <div className="flex-1 flex flex-col gap-1.5">
                     <div className="flex items-center gap-2">
                       <div
                         onClick={() => setModelSelectOpen(true)}
-                        className="flex-1 flex flex-wrap gap-1.5 min-h-[32px] px-2 py-1.5 bg-surface rounded border border-border cursor-pointer hover:border-primary/50 transition-colors"
+                        className="flex-1 flex flex-wrap items-center gap-1.5 min-h-[28px] sm:min-h-[30px] px-2 py-1 bg-surface rounded border border-border cursor-pointer hover:border-primary/50 transition-colors"
                         title="Click to browse and select models or combos"
                       >
                         {selectedModels.length === 0 ? (
-                          <span className="text-xs text-text-muted flex items-center gap-1 py-0.5">
-                            <span className="material-symbols-outlined text-[14px]">search</span>
+                          <span className="text-xs text-text-muted flex items-center gap-1">
+                            <span className="material-symbols-outlined text-[13px]">search</span>
                             Click to select models or combos...
                           </span>
                         ) : (
@@ -375,55 +375,55 @@ export default function CoworkToolCard({
                             return (
                               <span
                                 key={m}
-                                className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs border transition-colors ${
+                                className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] leading-tight border transition-colors ${
                                   isCombo
                                     ? "bg-primary/10 text-primary border-primary/30 font-medium"
                                     : "bg-black/5 dark:bg-white/5 text-text-muted border-transparent hover:border-border"
                                 }`}
                               >
-                                {isCombo && <span className="material-symbols-outlined text-[12px]">layers</span>}
+                                {isCombo && <span className="material-symbols-outlined text-[11px]">layers</span>}
                                 {m}
                                 <button
                                   type="button"
-                                   onClick={(e) => {
-                                     e.stopPropagation();
-                                     handleRemoveModel(m);
-                                   }}
-                                   className="ml-0.5 hover:text-red-500"
-                                 >
-                                   <span className="material-symbols-outlined text-[12px]">close</span>
-                                 </button>
-                               </span>
-                             );
-                           })
-                         )}
-                       </div>
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleRemoveModel(m);
+                                  }}
+                                  className="ml-0.5 hover:text-red-500"
+                                >
+                                  <span className="material-symbols-outlined text-[11px]">close</span>
+                                </button>
+                              </span>
+                            );
+                          })
+                        )}
+                      </div>
 
-                       <button
-                         type="button"
-                         onClick={() => setModelSelectOpen(true)}
-                         className="shrink-0 px-2.5 py-1.5 rounded border border-primary/40 bg-primary/10 text-primary hover:bg-primary/20 text-xs font-medium whitespace-nowrap transition-colors cursor-pointer flex items-center gap-1"
-                         title="Browse and select models or existing combos"
-                       >
-                         <span className="material-symbols-outlined text-[14px]">search</span>
-                         Select / Browse
-                       </button>
+                      <button
+                        type="button"
+                        onClick={() => setModelSelectOpen(true)}
+                        className="shrink-0 h-[28px] sm:h-[30px] px-2.5 rounded border border-primary/40 bg-primary/10 text-primary hover:bg-primary/20 text-xs font-medium whitespace-nowrap transition-colors cursor-pointer flex items-center gap-1"
+                        title="Browse and select models or existing combos"
+                      >
+                        <span className="material-symbols-outlined text-[14px]">search</span>
+                        Select / Browse
+                      </button>
 
-                       <button
-                         type="button"
-                         onClick={() => setComboModalOpen(true)}
-                         disabled={!hasActiveProviders}
-                         className={`shrink-0 px-2.5 py-1.5 rounded border text-xs whitespace-nowrap transition-colors flex items-center gap-1 ${
-                           hasActiveProviders
-                             ? "bg-surface border-border text-text-muted hover:border-primary hover:text-primary cursor-pointer"
-                             : "opacity-50 cursor-not-allowed border-border"
-                         }`}
-                         title="Create a new combo"
-                       >
-                         <span className="material-symbols-outlined text-[14px]">add</span>
-                         New Combo
-                       </button>
-                     </div>
+                      <button
+                        type="button"
+                        onClick={() => setComboModalOpen(true)}
+                        disabled={!hasActiveProviders}
+                        className={`shrink-0 h-[28px] sm:h-[30px] px-2.5 rounded border text-xs whitespace-nowrap transition-colors flex items-center gap-1 ${
+                          hasActiveProviders
+                            ? "bg-surface border-border text-text-muted hover:border-primary hover:text-primary cursor-pointer"
+                            : "opacity-50 cursor-not-allowed border-border"
+                        }`}
+                        title="Create a new combo"
+                      >
+                        <span className="material-symbols-outlined text-[14px]">add</span>
+                        New Combo
+                      </button>
+                    </div>
 
                      {/* Quick pick existing combos */}
                      {availableCombos.length > 0 && (

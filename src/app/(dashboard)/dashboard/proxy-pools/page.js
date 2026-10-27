@@ -26,6 +26,10 @@ function normalizeFormData(data = {}) {
     noProxy: data.noProxy || "",
     isActive: data.isActive !== false,
     strictProxy: data.strictProxy === true,
+    autoRotate: data.autoRotate !== false,
+    minIntervalSeconds: data.minIntervalSeconds ?? (data.min_interval_seconds ?? 60),
+    maxIntervalSeconds: data.maxIntervalSeconds ?? (data.max_interval_seconds ?? 1800),
+    failedIpCacheSize: data.failedIpCacheSize ?? (data.failed_ip_cache_size ?? 10),
   };
 }
 
@@ -147,8 +151,11 @@ export default function ProxyPoolsPage() {
       noProxy: formData.noProxy.trim(),
       isActive: formData.isActive === true,
       strictProxy: formData.strictProxy === true,
+      autoRotate: formData.autoRotate === true,
+      minIntervalSeconds: Number(formData.minIntervalSeconds || 60),
+      maxIntervalSeconds: Number(formData.maxIntervalSeconds || 1800),
+      failedIpCacheSize: Number(formData.failedIpCacheSize || 10),
     };
-
     if (!payload.name || !payload.proxyUrl) return;
 
     setSaving(true);
@@ -1361,6 +1368,61 @@ export default function ProxyPoolsPage() {
             placeholder="https://api.proxyservice.com/rotate?key=xyz"
             hint="HTTP endpoint to trigger dynamic IP change (e.g. 4G/residential proxy rotation URL)"
           />
+
+          {Boolean(formData.rotateLink.trim()) && (
+            <div className="flex flex-col gap-3 p-3 rounded-lg border border-primary/20 bg-primary/5">
+              <div className="flex items-center gap-2">
+                <span className="material-symbols-outlined text-primary text-[18px]">sync</span>
+                <span className="text-xs font-semibold text-text-main">Rotating Proxy Settings (opencode2api standard)</span>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <Input
+                  label="Min Rotate Interval (s)"
+                  type="number"
+                  min="1"
+                  value={formData.minIntervalSeconds}
+                  onChange={(e) => setFormData((prev) => ({ ...prev, minIntervalSeconds: e.target.value }))}
+                  placeholder="60"
+                  hint="Thời gian tối thiểu giữa 2 lần xoay IP (giây)"
+                />
+                <Input
+                  label="Max Rotate Interval (s)"
+                  type="number"
+                  min="0"
+                  value={formData.maxIntervalSeconds}
+                  onChange={(e) => setFormData((prev) => ({ ...prev, maxIntervalSeconds: e.target.value }))}
+                  placeholder="1800"
+                  hint="Tự động xoay IP định kỳ (giây, 0 = tắt)"
+                />
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <Input
+                  label="Failed IP Cache Size"
+                  type="number"
+                  min="1"
+                  max="100"
+                  value={formData.failedIpCacheSize}
+                  onChange={(e) => setFormData((prev) => ({ ...prev, failedIpCacheSize: e.target.value }))}
+                  placeholder="10"
+                  hint="Số lượng IP lỗi cache để tự động bỏ qua khi xoay"
+                />
+
+                <div className="flex items-center justify-between rounded-lg border border-border/50 p-2.5 bg-surface/50">
+                  <div>
+                    <p className="font-medium text-xs">Auto Rotate</p>
+                    <p className="text-[10px] text-text-muted">Tự động xoay định kỳ khi đạt max interval</p>
+                  </div>
+                  <Toggle
+                    checked={formData.autoRotate === true}
+                    onChange={() => setFormData((prev) => ({ ...prev, autoRotate: !prev.autoRotate }))}
+                    disabled={saving}
+                  />
+                </div>
+              </div>
+            </div>
+          )}
           <Input
             label="No Proxy"
             value={formData.noProxy}

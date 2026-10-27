@@ -46,7 +46,6 @@ export default function Sidebar({ onClose }) {
   const [mediaOpen, setMediaOpen] = useState(false);
   const [isDisconnected, setIsDisconnected] = useState(false);
   const [updateInfo, setUpdateInfo] = useState(null);
-  const [showUpdateModal, setShowUpdateModal] = useState(false);
   const [isUpdating, setIsUpdating] = useState(false);
   const [shutdownCountdown, setShutdownCountdown] = useState(0);
   const [enableTranslator, setEnableTranslator] = useState(false);
@@ -80,10 +79,6 @@ export default function Sidebar({ onClose }) {
     return pathname.startsWith(href);
   };
 
-  const handleStartManualUpdate = () => {
-    setShowUpdateModal(false);
-    setIsUpdating(true);
-  };
   // Triggered by Copy button inside ManualUpdatePanel: copy + countdown + shutdown
   const handleCopyAndShutdown = async () => {
     try { await navigator.clipboard.writeText(INSTALL_CMD); } catch { /* clipboard blocked */ }
@@ -141,7 +136,7 @@ export default function Sidebar({ onClose }) {
               </div>
               <div className="flex items-center gap-2">
                 <button
-                  onClick={() => setShowUpdateModal(true)}
+                  onClick={() => setIsUpdating(true)}
                   className="px-2.5 py-1 rounded bg-brand-500 hover:bg-brand-600 text-slate-950 text-[11px] font-bold transition-colors cursor-pointer shadow-sm"
                 >
                   Update now
@@ -364,71 +359,6 @@ export default function Sidebar({ onClose }) {
       </aside>
 
 
-      {/* Update Instructions Modal */}
-      <Modal
-        isOpen={showUpdateModal}
-        onClose={() => setShowUpdateModal(false)}
-        title="Update T Router"
-        size="md"
-      >
-        <div className="flex flex-col gap-4">
-          <div className="flex items-center gap-3 p-3 rounded-lg bg-brand-500/10 border border-brand-500/20">
-            <div className="flex items-center justify-center size-10 rounded-full bg-brand-500/20 text-brand-500 shrink-0">
-              <span className="material-symbols-outlined text-[24px]">system_update</span>
-            </div>
-            <div className="text-xs sm:text-sm">
-              <p className="font-semibold text-text-main">
-                Phiên bản mới: <span className="font-mono text-brand-500 font-bold">v{updateInfo?.latestVersion}</span>
-              </p>
-              <p className="text-text-muted mt-0.5">
-                Phiên bản hiện tại: <span className="font-mono">v{updateInfo?.currentVersion || APP_CONFIG.version}</span>
-              </p>
-            </div>
-          </div>
-
-          <div className="flex flex-col gap-2">
-            <label className="text-xs font-medium text-text-muted">
-              Chạy lệnh sau trong Terminal để nâng cấp:
-            </label>
-            <div className="flex items-center justify-between gap-2 p-2.5 rounded-lg bg-black/5 dark:bg-white/5 border border-border">
-              <code className="text-xs font-mono text-brand-600 dark:text-brand-400 select-all overflow-x-auto whitespace-nowrap">
-                {INSTALL_CMD}
-              </code>
-              <Button
-                size="sm"
-                variant="primary"
-                onClick={() => copy(INSTALL_CMD)}
-                className="shrink-0"
-              >
-                <span className="material-symbols-outlined text-[16px] mr-1">
-                  {copied ? "check" : "content_copy"}
-                </span>
-                {copied ? "Đã chép" : "Sao chép"}
-              </Button>
-            </div>
-          </div>
-
-          <div className="flex flex-col gap-1.5 p-3 rounded-lg bg-surface-2 text-xs text-text-muted">
-            <p className="font-medium text-text-main">Hướng dẫn các môi trường:</p>
-            <p>• <b>NPM Global:</b> Chạy lệnh trên rồi chạy lại <code>t-router</code>.</p>
-            <p>• <b>Linux Service (systemd):</b> Cài xong chạy <code>systemctl --user restart t-router</code>.</p>
-            <p>• <b>Git Source:</b> Chạy <code>git pull origin main</code> trong thư mục dự án.</p>
-          </div>
-
-          <div className="flex justify-between items-center pt-2 border-t border-border">
-            <button
-              type="button"
-              onClick={handleStartManualUpdate}
-              className="text-xs text-red-500 hover:text-red-600 hover:underline cursor-pointer"
-            >
-              Tắt server để cập nhật
-            </button>
-            <Button variant="secondary" size="sm" onClick={() => setShowUpdateModal(false)}>
-              Đóng
-            </Button>
-          </div>
-        </div>
-      </Modal>
 
       {/* Disconnected / Updating Overlay */}
       {(isDisconnected || isUpdating) && (

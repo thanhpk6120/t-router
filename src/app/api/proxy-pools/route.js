@@ -50,6 +50,16 @@ function normalizeProxyPoolInput(body = {}) {
   const isActive = body?.isActive === undefined ? true : body.isActive === true;
   const strictProxy = body?.strictProxy === true;
   const type = VALID_PROXY_TYPES.includes(body?.type) ? body.type : "http";
+  const autoRotate = body?.autoRotate === undefined ? true : Boolean(body.autoRotate);
+  const minIntervalSeconds = Number.isFinite(Number(body?.minIntervalSeconds))
+    ? Math.max(1, Number(body.minIntervalSeconds))
+    : (Number.isFinite(Number(body?.min_interval_seconds)) ? Math.max(1, Number(body.min_interval_seconds)) : 60);
+  const maxIntervalSeconds = Number.isFinite(Number(body?.maxIntervalSeconds))
+    ? Math.max(0, Number(body.maxIntervalSeconds))
+    : (Number.isFinite(Number(body?.max_interval_seconds)) ? Math.max(0, Number(body.max_interval_seconds)) : 1800);
+  const failedIpCacheSize = Number.isFinite(Number(body?.failedIpCacheSize))
+    ? Math.max(1, Math.min(100, Number(body.failedIpCacheSize)))
+    : (Number.isFinite(Number(body?.failed_ip_cache_size)) ? Math.max(1, Math.min(100, Number(body.failed_ip_cache_size))) : 10);
 
   if (!name) {
     return { error: "Name is required" };
@@ -59,9 +69,8 @@ function normalizeProxyPoolInput(body = {}) {
     return { error: "Proxy URL is required" };
   }
 
-  return { name, proxyUrl, noProxy, rotateLink, isActive, strictProxy, type };
+  return { name, proxyUrl, noProxy, rotateLink, isActive, strictProxy, type, autoRotate, minIntervalSeconds, maxIntervalSeconds, failedIpCacheSize };
 }
-
 function buildUsageMap(connections = []) {
   const usageMap = new Map();
 

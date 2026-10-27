@@ -64,16 +64,24 @@ export async function startProxyHealthJob(ids) {
 /**
  * Periodically rotate proxies whose last rotation is older than maxIntervalSec (opencode2api standard)
  */
-export async function rotateDueProxies(maxIntervalSec = 1800) {
+export async function rotateDueProxies(defaultMaxIntervalSec = 1800) {
   const all = await getProxyPools({ isActive: true });
   const now = Date.now();
   for (const pool of all) {
     const rotateLink = pool.rotateLink || pool.rotateUrl;
     if (!rotateLink) continue;
+    if (pool.autoRotate === false) continue; // Respect disabled autoRotate
+
+    const maxIntervalSec = pool.maxIntervalSeconds !== undefined ? Number(pool.maxIntervalSeconds) : defaultMaxIntervalSec;
+    if (maxIntervalSec <= 0) continue; // 0 disables periodic auto-rotation
+
     const lastRotated = pool.lastRotatedAt ? new Date(pool.lastRotatedAt).getTime() : 0;
     if (now - lastRotated >= maxIntervalSec * 1000) {
       try {
-        const result = await rotateProxyWithRangeCheck(rotateLink, pool.proxyUrl);
+        const result = await rotateProxyWithRangeCheck(rotateLink, pool.proxyUrl, {
+          minIntervalSeconds: pool.minIntervalSeconds,
+          failedIpCacheSize: pool.failedIpCacheSize,
+        });
         if (result.ok) {
           await updateProxyPool(pool.id, {
             lastRotatedAt: new Date().toISOString(),
