@@ -5,6 +5,16 @@ Upstream changelogs (`CHANGELOG.md` and `CHANGELOG-PRO.md`) are kept intact for 
 
 ---
 
+## v0.5.111-pro.14-t.9 (2026-10-28)
+
+- **Proxy-Aware TLS Impersonation for OpenCode Free Tier**:
+  +- **`wreq-js` Proxy Routing**: Enabled native proxy passing into `wreq.createSession({ proxy })` with isolated session caching per proxy URL (`opencodeTlsClient.js`).
+  +- **`proxyAwareDirectFetch` Support**: Updated `proxyFetch.js` to delegate to `options.directFetch` even when routed through a proxy pool if `options.proxyAwareDirectFetch === true`.
+  +- **Bypass Free Gate Over Proxy Pools**: Requests to OpenCode Free routed through Proxy Pools or when Direct is disabled now maintain the required BoringSSL TLS ClientHello fingerprint over the proxy tunnel, avoiding `429 FreeUsageLimitError`.
+  +- **Proxy Eviction Sync**: Integrated `resetOpencodeTlsSession(proxyUrl)` into `evictProxyDispatcher(proxyUrl)` so IP rotation closes and clears the cached session tunnel cleanly.
+
+---
+
 ## v0.5.111-pro.14-t.8 (2026-10-28)
 
 - **Hardened Proxy Pool Configuration & Execution Pipeline**:

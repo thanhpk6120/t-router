@@ -85,4 +85,20 @@ describe("opencodeTlsClient", () => {
 
     expect(fetchMock.mock.calls[0][1].signal).toBe(controller.signal);
   });
+
+  it("configures wreq-js proxy and creates separate sessions per proxy URL", async () => {
+    const fetchMock = vi.fn().mockImplementation(async () => new Response("ok", { status: 200 }));
+    createSessionMock.mockResolvedValue({ fetch: fetchMock, close: vi.fn() });
+
+    const { opencodeTlsFetch } = await import("../../open-sse/services/opencodeTlsClient.js");
+    await opencodeTlsFetch("https://opencode.ai/a", {}, { proxy: "http://127.0.0.1:8080" });
+    await opencodeTlsFetch("https://opencode.ai/b", {}, { proxy: "http://127.0.0.1:8080" });
+    await opencodeTlsFetch("https://opencode.ai/c", {}, { proxy: "http://127.0.0.1:9090" });
+
+    // 2 sessions: one for port 8080, one for port 9090
+    expect(createSessionMock).toHaveBeenCalledTimes(2);
+    expect(createSessionMock.mock.calls[0][0].proxy).toBe("http://127.0.0.1:8080");
+    expect(createSessionMock.mock.calls[1][0].proxy).toBe("http://127.0.0.1:9090");
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
 });

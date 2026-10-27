@@ -37,7 +37,7 @@ const OPENCODE_CIPHER_LIST = [
 
 const DEFAULT_TIMEOUT_MS = 120000;
 
-let sessionPromise = null;
+const sessionCache = new Map(); // proxyUrl -> Promise<session>
 
 export class OpencodeTlsUnavailableError extends Error {
   constructor(message) {
@@ -46,31 +46,44 @@ export class OpencodeTlsUnavailableError extends Error {
   }
 }
 
-async function loadSession() {
-  if (!sessionPromise) {
-    sessionPromise = (async () => {
+async function loadSession(proxyUrl = "") {
+  const key = proxyUrl || "direct";
+  if (!sessionCache.has(key)) {
+    const p = (async () => {
       const wreq = await loadRuntimeDep("wreq-js");
       if (typeof wreq.createSession !== "function") {
         throw new Error("wreq-js runtime is missing createSession");
       }
-      return wreq.createSession({
+      const config = {
         emulation: { tlsOptions: { cipherList: OPENCODE_CIPHER_LIST } },
-      });
+      };
+      if (proxyUrl) {
+        config.proxy = proxyUrl;
+      }
+      return wreq.createSession(config);
     })().catch((error) => {
-      sessionPromise = null;
+      sessionCache.delete(key);
       throw error;
     });
+    sessionCache.set(key, p);
   }
-  return sessionPromise;
+  return sessionCache.get(key);
 }
 
-/** Drop the cached session so the next call builds a fresh one. */
-export function resetOpencodeTlsSession() {
-  const pending = sessionPromise;
-  sessionPromise = null;
-  pending?.then((session) => session.close?.()).catch(() => {});
+/** Drop cached sessions. If proxyUrl is provided, drop only that session; otherwise drop all. */
+export function resetOpencodeTlsSession(proxyUrl = null) {
+  if (proxyUrl) {
+    const key = proxyUrl || "direct";
+    const pending = sessionCache.get(key);
+    sessionCache.delete(key);
+    pending?.then((session) => session.close?.()).catch(() => {});
+  } else {
+    for (const pending of sessionCache.values()) {
+      pending?.then((session) => session.close?.()).catch(() => {});
+    }
+    sessionCache.clear();
+  }
 }
-
 /**
  * Fetch through the impersonated-TLS session. Returns a native Response so
  * downstream `.body` / `.text()` / `.json()` consumers keep working unchanged.
@@ -78,16 +91,16 @@ export function resetOpencodeTlsSession() {
  * Streaming is preserved: the response body is handed over as the live
  * ReadableStream, never buffered.
  */
-export async function opencodeTlsFetch(url, init = {}, { signal, timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
+export async function opencodeTlsFetch(url, init = {}, { signal, timeoutMs = DEFAULT_TIMEOUT_MS, proxy = null } = {}) {
+  const proxyUrl = proxy || init.proxy || null;
   let session;
   try {
-    session = await loadSession();
+    session = await loadSession(proxyUrl);
   } catch (error) {
     throw new OpencodeTlsUnavailableError(
       `wreq-js unavailable (${error instanceof Error ? error.message : "unknown"}) — install the optional wreq-js dependency to reach the OpenCode free tier`
     );
   }
-
   const options = {
     method: init.method || "GET",
     headers: init.headers,
