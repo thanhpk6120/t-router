@@ -121,7 +121,7 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
       if (strategy !== "none") {
         const allPools = await getProxyPools({ isActive: true });
         const poolIds = resolveRotationPoolIds(allPools, override.proxyPoolIds, override.proxySource);
-        pickedId = pickProxyPoolId(poolIds, strategy, providerId);
+        pickedId = pickProxyPoolId(poolIds, strategy, providerId, allPools);
       }
       const resolvedProxy = await resolveConnectionProxyConfig({
         proxyPoolId: pickedId || (proxyConfigured ? "__unresolved__" : ""),
@@ -350,7 +350,7 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
         if (pStrategy !== "none") {
           const allPools = await getProxyPools({ isActive: true });
           const poolIds = resolveRotationPoolIds(allPools, providerOverride.proxyPoolIds, providerOverride.proxySource);
-          pPoolId = pickProxyPoolId(poolIds, pStrategy, providerId);
+          pPoolId = pickProxyPoolId(poolIds, pStrategy, providerId, allPools);
         }
         if (pPoolId) {
           proxyPayload = { ...proxyPayload, proxyPoolId: pPoolId };

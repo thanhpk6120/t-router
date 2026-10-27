@@ -15,25 +15,75 @@ const rotateState = new Map(); // providerId → { index }
  * random:      uniform random pick
  * none/single: return first entry
  */
-export function pickProxyPoolId(poolIds, strategy, providerId) {
+export function pickProxyPoolId(poolIds, strategy, providerId, allPools = null) {
   if (!poolIds || poolIds.length === 0) return null;
   if (poolIds.length === 1) return poolIds[0];
 
+  // In mixed mode: prioritize picking rotating proxies first
+  let targetIds = poolIds;
+  if (Array.isArray(allPools) && allPools.length > 0) {
+    const rotatingIds = poolIds.filter((id) => {
+      const p = allPools.find((item) => item?.id === id);
+      return Boolean(p?.rotateLink || p?.rotateUrl);
+    });
+    if (rotatingIds.length > 0) {
+      targetIds = rotatingIds;
+    }
+  }
+
   if (strategy === "round-robin") {
     const state = rotateState.get(providerId) || { index: -1 };
-    state.index = (state.index + 1) % poolIds.length;
+    state.index = (state.index + 1) % targetIds.length;
     rotateState.set(providerId, state);
-    return poolIds[state.index];
+    return targetIds[state.index];
   }
 
   if (strategy === "random") {
-    return poolIds[Math.floor(Math.random() * poolIds.length)];
+    return targetIds[Math.floor(Math.random() * targetIds.length)];
   }
 
   if (strategy === "fallback") {
-    return poolIds[0];
+    return targetIds[0];
   }
-  return poolIds[0]; // "none" or unknown
+  return targetIds[0]; // "none" or unknown
+}
+
+function buildCandidateProxies(primaryPool, otherPools = [], proxySource = "both") {
+  const combined = [];
+  if (primaryPool && primaryPool.id !== "direct" && primaryPool.proxyUrl !== "direct") {
+    combined.push(primaryPool);
+  }
+  for (const p of otherPools || []) {
+    if (p && p.id !== "direct" && p.proxyUrl !== "direct" && !combined.some((x) => x.id === p.id)) {
+      combined.push(p);
+    }
+  }
+
+  if (combined.length === 0) return [];
+
+  // In mixed ("both") mode: ensure all rotating proxies are at the front
+  if (proxySource === "both") {
+    combined.sort((a, b) => {
+      const aRot = Boolean(a.rotateLink || a.rotateUrl);
+      const bRot = Boolean(b.rotateLink || b.rotateUrl);
+      if (aRot && !bRot) return -1;
+      if (!aRot && bRot) return 1;
+      return 0;
+    });
+  }
+
+  return combined.map((p) => ({
+    id: p.id,
+    name: p.name || p.id,
+    proxyUrl: normalizeString(p.proxyUrl),
+    rotateLink: normalizeString(p.rotateLink || p.rotateUrl),
+    noProxy: normalizeString(p.noProxy),
+    strictProxy: p.strictProxy === true,
+    type: p.type || "http",
+    isDirect: false,
+    vercelRelayUrl: ["vercel", "cloudflare", "deno", "netlify"].includes(p.type) ? normalizeString(p.proxyUrl) : "",
+    proxyPool: p,
+  })).filter(Boolean);
 }
 
 /**
@@ -156,51 +206,51 @@ export async function resolveConnectionProxyConfig(
       poolStrictProxy = proxyPool?.strictProxy === true;
 
       if (isValidPool) {
-        // Collect candidate proxies for in-pool fallback (rotating first, then static)
-        let candidateProxies = [];
-        try {
-          const allActivePools = await getProxyPools({ isActive: true }).catch(() => []);
-          let otherPools = allActivePools.filter((p) => p && p.id !== proxyPool.id && p.id !== "direct" && p.proxyUrl);
-          if (Array.isArray(providerSpecificData?.providerProxyPoolIds) && providerSpecificData.providerProxyPoolIds.length > 0) {
-            const allowed = new Set(providerSpecificData.providerProxyPoolIds);
-            otherPools = otherPools.filter((p) => allowed.has(p.id));
-          }
-          otherPools.sort((a, b) => {
-            const aRot = Boolean(a.rotateLink || a.rotateUrl);
-            const bRot = Boolean(b.rotateLink || b.rotateUrl);
-            if (aRot && !bRot) return -1;
-            if (!aRot && bRot) return 1;
-            return 0;
-          });
-          const ordered = [proxyPool, ...otherPools];
-          candidateProxies = ordered.map((p) => ({
-            id: p.id,
-            name: p.name || p.id,
-            proxyUrl: normalizeString(p.proxyUrl),
-            rotateLink: normalizeString(p.rotateLink || p.rotateUrl),
-            noProxy: normalizeString(p.noProxy),
-            strictProxy: p.strictProxy === true,
-            type: p.type || "http",
-            isDirect: p.id === "direct" || p.type === "direct" || p.proxyUrl === "direct",
-            vercelRelayUrl: ["vercel", "cloudflare", "deno", "netlify"].includes(p.type) ? normalizeString(p.proxyUrl) : "",
-            proxyPool: p,
-          })).filter(Boolean);
-        } catch {}
+        const proxySource = providerSpecificData?.proxySource || "both";
+        const allActivePools = await getProxyPools({ isActive: true }).catch(() => []);
+        let otherPools = allActivePools.filter((p) => p && p.id !== proxyPool.id && p.id !== "direct" && p.proxyUrl !== "direct");
+        if (Array.isArray(providerSpecificData?.providerProxyPoolIds) && providerSpecificData.providerProxyPoolIds.length > 0) {
+          const allowed = new Set(providerSpecificData.providerProxyPoolIds);
+          otherPools = otherPools.filter((p) => allowed.has(p.id));
+        }
+
+        const candidateProxies = buildCandidateProxies(proxyPool, otherPools, proxySource);
 
         if (proxyPool.id === "direct" || proxyPool.type === "direct" || proxyPool.proxyUrl === "direct") {
-          return {
-            source: "direct",
-            proxyPoolId: "direct",
-            proxyPool,
-            connectionProxyEnabled: false,
-            connectionProxyUrl: "",
-            connectionNoProxy: noProxy,
-            strictProxy: false,
-            isDirect: true,
-            directActive,
-            proxyIntended: true,
-            candidateProxies: candidateProxies.length > 0 ? candidateProxies : null,
-          };
+          // If direct is active, direct is primary with other pools as candidates
+          if (directActive) {
+            return {
+              source: "direct",
+              proxyPoolId: "direct",
+              proxyPool,
+              connectionProxyEnabled: false,
+              connectionProxyUrl: "",
+              connectionNoProxy: noProxy,
+              strictProxy: false,
+              isDirect: true,
+              directActive: true,
+              proxyIntended: true,
+              candidateProxies: candidateProxies.length > 0 ? candidateProxies : null,
+            };
+          }
+          // Direct connection is disabled by user: fallback to active real proxies
+          if (candidateProxies.length > 0) {
+            const firstReal = candidateProxies[0];
+            return {
+              source: firstReal.vercelRelayUrl ? (firstReal.type || "relay") : "pool",
+              proxyPoolId: firstReal.id,
+              proxyPool: firstReal.proxyPool || proxyPool,
+              connectionProxyEnabled: !firstReal.vercelRelayUrl,
+              connectionProxyUrl: firstReal.proxyUrl,
+              connectionNoProxy: firstReal.noProxy,
+              strictProxy: firstReal.strictProxy,
+              vercelRelayUrl: firstReal.vercelRelayUrl || "",
+              isDirect: false,
+              directActive: false,
+              proxyIntended: true,
+              candidateProxies,
+            };
+          }
         }
 
         /**
@@ -238,6 +288,39 @@ export async function resolveConnectionProxyConfig(
           proxyIntended: true,
           candidateProxies: candidateProxies.length > 0 ? candidateProxies : null,
         };
+      }
+    }
+
+    // If Direct is disabled (!directActive) and no valid proxy was resolved yet,
+    // auto-adopt active real proxies from Proxy Pools to prevent 502 IP leak failures.
+    if (!directActive) {
+      const allActive = await getProxyPools({ isActive: true }).catch(() => []);
+      let realActive = allActive.filter((p) => p && p.id !== "direct" && p.proxyUrl !== "direct");
+      if (Array.isArray(providerSpecificData?.providerProxyPoolIds) && providerSpecificData.providerProxyPoolIds.length > 0) {
+        const allowed = new Set(providerSpecificData.providerProxyPoolIds);
+        const subset = realActive.filter((p) => allowed.has(p.id));
+        if (subset.length > 0) realActive = subset;
+      }
+      if (realActive.length > 0) {
+        const proxySource = providerSpecificData?.proxySource || "both";
+        const candidates = buildCandidateProxies(null, realActive, proxySource);
+        if (candidates.length > 0) {
+          const primary = candidates[0];
+          return {
+            source: primary.vercelRelayUrl ? (primary.type || "relay") : "pool",
+            proxyPoolId: primary.id,
+            proxyPool: primary.proxyPool,
+            connectionProxyEnabled: !primary.vercelRelayUrl,
+            connectionProxyUrl: primary.proxyUrl,
+            connectionNoProxy: primary.noProxy,
+            strictProxy: primary.strictProxy,
+            vercelRelayUrl: primary.vercelRelayUrl || "",
+            isDirect: false,
+            directActive: false,
+            proxyIntended: true,
+            candidateProxies: candidates,
+          };
+        }
       }
     }
     /**

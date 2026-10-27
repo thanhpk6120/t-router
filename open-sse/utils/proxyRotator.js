@@ -4,7 +4,7 @@ import { dbg } from "./debugLog.js";
 
 // ─── Subnet & IP Range Normalization (mirroring opencode2api standard) ───────
 // IPv4 is mapped to /24 (e.g. 1.2.3.4 -> 1.2.3.0/24)
-// IPv6 is mapped to /48 (e.g. 2402:800:61c3:1234:: -> 2402:800:61c3::/48)
+// IPv6 is mapped to /48 (e.g. 2001:db8:1234:5678:: -> 2001:db8:1234::/48)
 export function exitRange(address) {
   if (!address || typeof address !== "string") return "";
   const clean = address.trim();
@@ -19,9 +19,28 @@ export function exitRange(address) {
 
   // Check IPv6
   if (clean.includes(":")) {
-    const parts = clean.split(":").filter(Boolean);
-    if (parts.length >= 3) {
-      return `${parts[0]}:${parts[1]}:${parts[2]}::/48`.toLowerCase();
+    try {
+      // Expand compressed :: notation into full 8 groups
+      let parts = [];
+      if (clean.includes("::")) {
+        const [left, right] = clean.split("::");
+        const leftParts = left ? left.split(":") : [];
+        const rightParts = right ? right.split(":") : [];
+        const missingCount = 8 - (leftParts.length + rightParts.length);
+        const middleParts = Array(Math.max(0, missingCount)).fill("0");
+        parts = [...leftParts, ...middleParts, ...rightParts];
+      } else {
+        parts = clean.split(":");
+      }
+
+      if (parts.length >= 8) {
+        const g0 = (parseInt(parts[0], 16) || 0).toString(16);
+        const g1 = (parseInt(parts[1], 16) || 0).toString(16);
+        const g2 = (parseInt(parts[2], 16) || 0).toString(16);
+        return `${g0}:${g1}:${g2}::/48`.toLowerCase();
+      }
+    } catch {
+      // Fallback
     }
   }
 
@@ -39,7 +58,7 @@ export function markBadRange(rangeKey) {
 
   const idx = badExitRanges.indexOf(key);
   if (idx !== -1) {
-    // Already in cache, move to end (MRU)
+    // Move to end (MRU)
     badExitRanges.splice(idx, 1);
   }
   badExitRanges.push(key);
@@ -60,6 +79,40 @@ export function getBadRanges() {
 
 export function clearBadRanges() {
   badExitRanges.length = 0;
+}
+
+// ─── Active Refreshing Proxies Tracking ───────────────────────────────────────
+const refreshingProxies = new Set(); // Set of proxyUrl currently in renewal
+
+export function isProxyRefreshing(proxyUrl) {
+  if (!proxyUrl) return false;
+  return refreshingProxies.has(proxyUrl);
+}
+
+export function setProxyRefreshing(proxyUrl, isRefreshing) {
+  if (!proxyUrl) return;
+  if (isRefreshing) refreshingProxies.add(proxyUrl);
+  else refreshingProxies.delete(proxyUrl);
+}
+
+// ─── Last Known Exit Ranges ───────────────────────────────────────────────────
+const lastKnownRanges = new Map(); // proxyUrl -> last known exit range
+
+export function setKnownProxyRange(proxyUrl, range) {
+  if (proxyUrl && range) lastKnownRanges.set(proxyUrl, range);
+}
+
+export function getKnownProxyRange(proxyUrl) {
+  if (!proxyUrl) return "";
+  return lastKnownRanges.get(proxyUrl) || "";
+}
+
+export function isProxyBadOrRefreshing(proxyUrl) {
+  if (!proxyUrl) return false;
+  if (isProxyRefreshing(proxyUrl)) return true;
+  const known = lastKnownRanges.get(proxyUrl);
+  if (known && isBadRange(known)) return true;
+  return false;
 }
 
 // ─── Probe Exit IP through Proxy ──────────────────────────────────────────────
@@ -104,6 +157,7 @@ export async function probeExitRange(proxyUrl, timeoutMs = 6000) {
 
       if (ip) {
         const range = exitRange(ip);
+        lastKnownRanges.set(proxyUrl, range);
         dbg("ProxyRotator", `Probed proxy ${proxyUrl} exit range: ${range} (raw IP: ${ip})`);
         return range;
       }
@@ -117,35 +171,33 @@ export async function probeExitRange(proxyUrl, timeoutMs = 6000) {
 }
 
 // ─── Note Failure Range Before Rotation ───────────────────────────────────────
-const lastKnownRanges = new Map(); // proxyUrl -> last known exit range
-
-export function setKnownProxyRange(proxyUrl, range) {
-  if (proxyUrl && range) lastKnownRanges.set(proxyUrl, range);
-}
-
-export function noteFailureRange(proxyUrl, exitIp = null) {
-  if (!proxyUrl) return;
+// Synchronously/awaitable records the failing exit range BEFORE changing it (opencode2api standard)
+export async function noteFailureRange(proxyUrl, exitIp = null) {
+  if (!proxyUrl) return "";
   if (exitIp) {
     const range = exitRange(exitIp);
+    lastKnownRanges.set(proxyUrl, range);
     markBadRange(range);
-    return;
+    return range;
   }
 
   const cachedRange = lastKnownRanges.get(proxyUrl);
   if (cachedRange) {
     markBadRange(cachedRange);
-    return;
+    return cachedRange;
   }
 
-  // Probe in background so we remember the failing exit range
-  probeExitRange(proxyUrl, 5000)
-    .then((range) => {
-      if (range) {
-        lastKnownRanges.set(proxyUrl, range);
-        markBadRange(range);
-      }
-    })
-    .catch(() => {});
+  // Probe before rotateLink changes the IP
+  try {
+    const range = await probeExitRange(proxyUrl, 4000);
+    if (range) {
+      lastKnownRanges.set(proxyUrl, range);
+      markBadRange(range);
+      return range;
+    }
+  } catch {}
+
+  return "";
 }
 
 // ─── Smart Rotating Proxy Renewal with Range Verification ────────────────────
@@ -159,11 +211,19 @@ function sleep(ms) {
 }
 
 /**
- * Rotate proxy exit IP using rotateLink.
- * If the resulting IP is in the known-bad range cache, rotates again up to 5 times.
+ * Rotate proxy exit IP using rotateLink with Bad Range avoidance.
+ * 1. Suspends proxy (refreshing = true).
+ * 2. Remembers failing exit range before rotateLink is called.
+ * 3. Calls rotateLink and probes new exit address.
+ * 4. If new exit address is known-bad, automatically rotates again up to 5 times.
+ * 5. Returns proxy to service when clean exit is verified.
  */
 export async function rotateProxyWithRangeCheck(rotateLink, proxyUrl = null, options = {}) {
   if (!rotateLink) return { ok: false, error: "no_rotate_link" };
+
+  if (proxyUrl) {
+    setProxyRefreshing(proxyUrl, true);
+  }
 
   // Deduplicate concurrent rotations for the same link
   if (inflightRotations.has(rotateLink)) {
@@ -173,6 +233,11 @@ export async function rotateProxyWithRangeCheck(rotateLink, proxyUrl = null, opt
 
   const rotationPromise = (async () => {
     try {
+      // Step A: Note failure range of the old exit before rotateLink changes it
+      if (proxyUrl) {
+        await noteFailureRange(proxyUrl).catch(() => {});
+      }
+
       const now = Date.now();
       const last = lastRotationTimestamps.get(rotateLink) || 0;
       if (now - last < ROTATE_SLOT_MIN_INTERVAL_MS) {
@@ -182,7 +247,7 @@ export async function rotateProxyWithRangeCheck(rotateLink, proxyUrl = null, opt
 
       for (let attempt = 0; attempt < MAX_ROTATE_ATTEMPTS; attempt++) {
         if (attempt > 0) {
-          // Delay between retries to avoid overwhelming provider rotation endpoint
+          // Space out retry rotations
           await sleep(ROTATE_SLOT_MIN_INTERVAL_MS);
         }
 
@@ -206,15 +271,14 @@ export async function rotateProxyWithRangeCheck(rotateLink, proxyUrl = null, opt
           continue;
         }
 
-        // Close kept-alive tunnels so new requests bind to the new exit IP
+        // Close kept-alive tunnels so next connections use the new exit IP
         if (proxyUrl) {
           evictProxyDispatcher(proxyUrl);
         }
 
-        // Wait brief moment for the proxy backend to switch route
+        // Wait brief moment for the proxy provider network to switch egress IP
         await sleep(1500);
 
-        // If no proxyUrl provided (just rotate link), accept success directly
         if (!proxyUrl) {
           return { ok: true, attempts: attempt + 1 };
         }
@@ -241,6 +305,9 @@ export async function rotateProxyWithRangeCheck(rotateLink, proxyUrl = null, opt
       console.warn(`[ProxyRotator] Proxy ${proxyUrl} rotation exhausted after ${MAX_ROTATE_ATTEMPTS} attempts landing on bad ranges`);
       return { ok: false, error: "exhausted_bad_ranges" };
     } finally {
+      if (proxyUrl) {
+        setProxyRefreshing(proxyUrl, false);
+      }
       inflightRotations.delete(rotateLink);
     }
   })();
@@ -257,7 +324,6 @@ export function triggerBackgroundRotate(rotateLink, proxyUrl = null, pool = null
   rotateProxyWithRangeCheck(rotateLink, proxyUrl)
     .then((result) => {
       if (result.ok && pool?.id) {
-        // Try updating database if running inside full Next.js context
         tryUpdatePoolDb(pool.id, result.exitRange).catch(() => {});
       }
     })
@@ -268,7 +334,7 @@ export function triggerBackgroundRotate(rotateLink, proxyUrl = null, pool = null
 
 async function tryUpdatePoolDb(poolId, exitRange) {
   try {
-    const { updateProxyPool } = await import("../../src/lib/db/repos/proxyPoolsRepo.js");
+    const { updateProxyPool } = await import(/* webpackIgnore: true */ "../../src/lib/db/repos/proxyPoolsRepo.js");
     if (typeof updateProxyPool === "function") {
       await updateProxyPool(poolId, {
         lastRotatedAt: new Date().toISOString(),

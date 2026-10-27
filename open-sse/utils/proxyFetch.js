@@ -268,8 +268,8 @@ export function evictProxyDispatcher(proxyUrl) {
   }
 }
 
-import { triggerBackgroundRotate, noteFailureRange } from "./proxyRotator.js";
-export { triggerBackgroundRotate, noteFailureRange };
+import { triggerBackgroundRotate, noteFailureRange, isProxyBadOrRefreshing } from "./proxyRotator.js";
+export { triggerBackgroundRotate, noteFailureRange, isProxyBadOrRefreshing };
 
 async function fetchWithTlsFallback(url, options, proxyUrl) {
   try {
@@ -278,7 +278,7 @@ async function fetchWithTlsFallback(url, options, proxyUrl) {
     if (!proxyUrl && options.directFetch) return await options.directFetch(url, options);
     const dispatcher = proxyUrl ? await getDispatcher(proxyUrl) : undefined;
     const fetchFn = (globalThis.fetch && globalThis.fetch !== patchedFetch) ? globalThis.fetch : originalFetch;
-    return await fetchFn(url, dispatcher ? { ...options, dispatcher } : options);
+    return await fetchFn(url, dispatcher ? { ...options, dispatcher, _proxyUrl: proxyUrl } : options);
   } catch (err) {
     const isStrictSsl = options.strictTls === true || process.env.STRICT_SSL === "true" || process.env.STRICT_SSL === "1";
     if (!isStrictSsl && isTlsCertError(err)) {
@@ -289,7 +289,7 @@ async function fetchWithTlsFallback(url, options, proxyUrl) {
       console.warn(`[ProxyFetch] TLS cert verification failed (${err.cause?.code || err.code}), retrying with insecure TLS: ${url}`);
       const insecureDispatcher = await getDispatcher(proxyUrl, true);
       const fetchFn = (globalThis.fetch && globalThis.fetch !== patchedFetch) ? globalThis.fetch : originalFetch;
-      return await fetchFn(url, { ...options, dispatcher: insecureDispatcher });
+      return await fetchFn(url, { ...options, dispatcher: insecureDispatcher, _proxyUrl: proxyUrl });
     }
     throw err;
   }
@@ -425,8 +425,10 @@ export async function proxyAwareFetch(url, options = {}, proxyOptions = null) {
   // Extract candidate proxies if available, otherwise construct from current single proxy
   let candidateList = [];
   if (Array.isArray(proxyOptions?.candidateProxies) && proxyOptions.candidateProxies.length > 0) {
-    candidateList = proxyOptions.candidateProxies.filter((p) => p && (p.proxyUrl || p.vercelRelayUrl));
-  } else if (proxyUrl) {
+    candidateList = proxyOptions.candidateProxies.filter(
+      (p) => p && (p.proxyUrl || p.vercelRelayUrl) && p.id !== "direct" && p.proxyUrl !== "direct"
+    );
+  } else if (proxyUrl && proxyUrl !== "direct") {
     candidateList = [{
       proxyUrl,
       rotateLink: proxyOptions?.proxyPool?.rotateLink || proxyOptions?.proxyPool?.rotateUrl || proxyOptions?.rotateLink || "",
@@ -435,6 +437,17 @@ export async function proxyAwareFetch(url, options = {}, proxyOptions = null) {
       proxyPool: proxyOptions?.proxyPool || null,
       vercelRelayUrl: proxyOptions?.vercelRelayUrl || "",
     }];
+  }
+
+  // Sort candidate proxies: non-refreshing & non-bad exit ranges first
+  if (candidateList.length > 1) {
+    candidateList.sort((a, b) => {
+      const aBad = isProxyBadOrRefreshing(a.proxyUrl);
+      const bBad = isProxyBadOrRefreshing(b.proxyUrl);
+      if (!aBad && bBad) return -1;
+      if (aBad && !bBad) return 1;
+      return 0;
+    });
   }
 
   if (candidateList.length > 0) {
