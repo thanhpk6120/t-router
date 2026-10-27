@@ -126,6 +126,8 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
       const resolvedProxy = await resolveConnectionProxyConfig({
         proxyPoolId: pickedId || (proxyConfigured ? "__unresolved__" : ""),
         proxyIntended: proxyConfigured,
+        providerProxyPoolIds: override.proxyPoolIds || null,
+        proxySource: override.proxySource || "both",
       });
       return {
         id: "noauth",
@@ -144,6 +146,7 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
           directActive: resolvedProxy.directActive !== false,
           isDirect: resolvedProxy.isDirect === true,
           proxyIntended: resolvedProxy.proxyIntended === true,
+          candidateProxies: resolvedProxy.candidateProxies || null,
         },
       };
     }
@@ -358,6 +361,8 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
     const resolvedProxy = await resolveConnectionProxyConfig({
       ...proxyPayload,
       proxyIntended: proxyConfigured,
+      providerProxyPoolIds: providerOverride.proxyPoolIds || null,
+      proxySource: providerOverride.proxySource || "both",
     });
     return {
       authType: connection.authType,
@@ -384,6 +389,7 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
         directActive: resolvedProxy.directActive !== false,
         isDirect: resolvedProxy.isDirect === true,
         proxyIntended: resolvedProxy.proxyIntended === true,
+        candidateProxies: resolvedProxy.candidateProxies || null,
       },
       connectionId: connection.id,
       // Include current status for optimization check

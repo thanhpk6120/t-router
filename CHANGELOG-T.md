@@ -5,6 +5,19 @@ Upstream changelogs (`CHANGELOG.md` and `CHANGELOG-PRO.md`) are kept intact for 
 
 ---
 
+## v0.5.111-pro.14-t.7 (2026-10-28)
+
+- **Advanced Proxy Rotation, Fallback & Bad Exit Range Cache (Aligned with `opencode2api` Standard)**:
+  - **Multi-Proxy In-Pool Fallback**: When a proxy fails or receives HTTP 429/403/502/503 from upstream, `proxyAwareFetch` now automatically falls back to subsequent active candidate proxies in the pool instead of throwing an immediate 502 or prematurely falling back to direct connection.
+  - **Rotating Proxies First (`RotatingFirst`)**: In mixed (`both`) proxy source mode, rotating proxies (pools with a `rotateLink` / `rotateUrl`) are always prioritized ahead of static proxies across candidate generation and rotation selection.
+  - **Subnet Normalization & Known-Bad Range Cache (`proxyRotator.js`)**:
+    - Extracted exit IPs to network ranges: IPv4 to `/24` (e.g. `1.2.3.0/24`) and IPv6 to `/48`.
+    - Maintained bounded FIFO cache of known-bad exit ranges. When a rotating proxy fails, its exit range is recorded before renewal.
+    - During IP rotation, probes the new exit IP via proxy; if the new IP lands in a known-bad range, automatically re-rotates (up to 5 attempts with backoff) to guarantee clean egress.
+  - **Safe Direct Fallback Handling**: Refuses direct fallback to prevent IP leak only after all active candidate proxies in the pool have been attempted.
+
+---
+
 ## v0.5.111-pro.14-t.6 (2026-10-27)
 
 - **Hardened Runtime Dependency Loader (`lazyRuntime.js`)**:

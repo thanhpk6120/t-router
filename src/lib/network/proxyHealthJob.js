@@ -1,6 +1,6 @@
 import { getProxyPools, updateProxyPool } from "@/lib/db/repos/proxyPoolsRepo";
 import { testProxyUrl, testRelayUrl } from "@/lib/network/proxyTest";
-import { evictProxyDispatcher } from "open-sse/utils/proxyFetch.js";
+import { rotateProxyWithRangeCheck } from "open-sse/utils/proxyRotator.js";
 
 // Server-side bulk proxy health check. The dashboard used to test pools one
 // HTTP request per pool from the browser, which falls apart at thousands of
@@ -73,13 +73,12 @@ export async function rotateDueProxies(maxIntervalSec = 1800) {
     const lastRotated = pool.lastRotatedAt ? new Date(pool.lastRotatedAt).getTime() : 0;
     if (now - lastRotated >= maxIntervalSec * 1000) {
       try {
-        const res = await fetch(rotateLink, { method: "GET", signal: AbortSignal.timeout(10000) });
-        const text = await res.text();
-        if (res.ok) {
-          if (pool.proxyUrl) evictProxyDispatcher(pool.proxyUrl);
+        const result = await rotateProxyWithRangeCheck(rotateLink, pool.proxyUrl);
+        if (result.ok) {
           await updateProxyPool(pool.id, {
             lastRotatedAt: new Date().toISOString(),
-            lastRotateResponse: text.slice(0, 500),
+            lastRotateResponse: `Auto-rotate due (${result.attempts || 1} attempts)${result.exitRange ? ` -> ${result.exitRange}` : ""}`,
+            lastExitRange: result.exitRange || undefined,
           });
         }
       } catch (err) {

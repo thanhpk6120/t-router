@@ -268,26 +268,8 @@ export function evictProxyDispatcher(proxyUrl) {
   }
 }
 
-const rotateCooldownMap = new Map();
-const ROTATE_MIN_COOLDOWN_MS = 60 * 1000; // 60s minimum interval
-
-export function triggerBackgroundRotate(rotateLink, proxyUrl = null) {
-  if (!rotateLink) return;
-  const now = Date.now();
-  const last = rotateCooldownMap.get(rotateLink) || 0;
-  if (now - last < ROTATE_MIN_COOLDOWN_MS) {
-    dbg("ProxyFetch", `Auto-rotate skipped: cooldown active (${Math.round((now - last) / 1000)}s < 60s)`);
-    return;
-  }
-  rotateCooldownMap.set(rotateLink, now);
-  originalFetch(rotateLink, { method: "GET", signal: AbortSignal.timeout(10000) })
-    .then((r) => {
-      dbg("ProxyFetch", `Auto-rotated IP: status=${r.status}`);
-      if (proxyUrl) evictProxyDispatcher(proxyUrl);
-    })
-    .catch((e) => console.warn(`[ProxyFetch] Auto-rotate failed: ${e.message}`));
-}
-
+import { triggerBackgroundRotate, noteFailureRange } from "./proxyRotator.js";
+export { triggerBackgroundRotate, noteFailureRange };
 
 async function fetchWithTlsFallback(url, options, proxyUrl) {
   try {
@@ -295,7 +277,8 @@ async function fetchWithTlsFallback(url, options, proxyUrl) {
     // Keep proxy/no-proxy resolution and strict-proxy enforcement here.
     if (!proxyUrl && options.directFetch) return await options.directFetch(url, options);
     const dispatcher = proxyUrl ? await getDispatcher(proxyUrl) : undefined;
-    return await originalFetch(url, dispatcher ? { ...options, dispatcher } : options);
+    const fetchFn = (globalThis.fetch && globalThis.fetch !== patchedFetch) ? globalThis.fetch : originalFetch;
+    return await fetchFn(url, dispatcher ? { ...options, dispatcher } : options);
   } catch (err) {
     const isStrictSsl = options.strictTls === true || process.env.STRICT_SSL === "true" || process.env.STRICT_SSL === "1";
     if (!isStrictSsl && isTlsCertError(err)) {
@@ -305,7 +288,8 @@ async function fetchWithTlsFallback(url, options, proxyUrl) {
       // ponytail: in-memory insecure agent fallback for self-signed MITM corporate/antivirus certs
       console.warn(`[ProxyFetch] TLS cert verification failed (${err.cause?.code || err.code}), retrying with insecure TLS: ${url}`);
       const insecureDispatcher = await getDispatcher(proxyUrl, true);
-      return await originalFetch(url, { ...options, dispatcher: insecureDispatcher });
+      const fetchFn = (globalThis.fetch && globalThis.fetch !== patchedFetch) ? globalThis.fetch : originalFetch;
+      return await fetchFn(url, { ...options, dispatcher: insecureDispatcher });
     }
     throw err;
   }
@@ -438,30 +422,95 @@ export async function proxyAwareFetch(url, options = {}, proxyOptions = null) {
     }
   }
 
-  if (proxyUrl) {
-    const rotateLink = proxyOptions?.proxyPool?.rotateLink || proxyOptions?.proxyPool?.rotateUrl || proxyOptions?.rotateLink;
-    try {
-      const res = await fetchWithTlsFallback(url, options, proxyUrl);
-      if (res && (res.status === 429 || res.status === 403) && rotateLink) {
-        triggerBackgroundRotate(rotateLink, proxyUrl);
-      }
-      return res;
-    } catch (proxyError) {
-      if (rotateLink) {
-        triggerBackgroundRotate(rotateLink, proxyUrl);
-      }
-      // If strictProxy is enabled or Direct is disabled for this proxy-enabled provider, fail hard instead of leaking direct IP
-      if (proxyOptions?.strictProxy === true) {
-        throw new Error(`[ProxyFetch] Proxy required but failed (strictProxy=true): ${proxyError.message}`);
-      }
-      if (isProxyActive && proxyOptions?.directActive === false) {
-        throw new Error(`[ProxyFetch] Proxy failed and Direct connection is disabled in Proxy Pools. Refusing direct fallback to prevent IP leak: ${proxyError.message}`);
-      }
-      console.warn(`[ProxyFetch] Proxy failed, falling back to active Direct connection: ${proxyError.message}`);
-      return fetchWithTlsFallback(url, options, null);
-    }
+  // Extract candidate proxies if available, otherwise construct from current single proxy
+  let candidateList = [];
+  if (Array.isArray(proxyOptions?.candidateProxies) && proxyOptions.candidateProxies.length > 0) {
+    candidateList = proxyOptions.candidateProxies.filter((p) => p && (p.proxyUrl || p.vercelRelayUrl));
+  } else if (proxyUrl) {
+    candidateList = [{
+      proxyUrl,
+      rotateLink: proxyOptions?.proxyPool?.rotateLink || proxyOptions?.proxyPool?.rotateUrl || proxyOptions?.rotateLink || "",
+      noProxy: proxyOptions?.noProxy || proxyOptions?.connectionNoProxy || "",
+      strictProxy: proxyOptions?.strictProxy === true,
+      proxyPool: proxyOptions?.proxyPool || null,
+      vercelRelayUrl: proxyOptions?.vercelRelayUrl || "",
+    }];
   }
 
+  if (candidateList.length > 0) {
+    let lastError = null;
+    let lastResponse = null;
+
+    for (let i = 0; i < candidateList.length; i++) {
+      const candidate = candidateList[i];
+      const curProxyUrl = candidate.proxyUrl;
+      const curRotateLink = candidate.rotateLink || candidate.proxyPool?.rotateLink || candidate.proxyPool?.rotateUrl || "";
+
+      // Check noProxy for this candidate
+      if (candidate.noProxy && shouldBypassByNoProxy(targetUrl, candidate.noProxy)) {
+        continue;
+      }
+
+      try {
+        let res;
+        if (candidate.vercelRelayUrl) {
+          const parsed = new URL(targetUrl);
+          const baseHeaders = options.headers instanceof Headers
+            ? Object.fromEntries(options.headers.entries())
+            : { ...(options.headers || {}) };
+          const relayHeaders = {
+            ...baseHeaders,
+            "x-relay-target": `${parsed.protocol}//${parsed.host}`,
+            "x-relay-path": `${parsed.pathname}${parsed.search}`,
+          };
+          res = await originalFetch(candidate.vercelRelayUrl, { ...options, headers: relayHeaders });
+        } else {
+          res = await fetchWithTlsFallback(url, options, curProxyUrl);
+        }
+
+        // If upstream or proxy rejected with 429/403/502/503 and has rotateLink
+        if (res && (res.status === 429 || res.status === 403 || res.status === 502 || res.status === 503)) {
+          if (curRotateLink) {
+            noteFailureRange(curProxyUrl);
+            triggerBackgroundRotate(curRotateLink, curProxyUrl, candidate.proxyPool || candidate);
+          }
+          // If there is another active candidate proxy in the pool, fallback to it!
+          if (i + 1 < candidateList.length) {
+            console.warn(`[ProxyFetch] Proxy HTTP ${res.status} on ${curProxyUrl}, falling back to next candidate proxy (${i + 2}/${candidateList.length})`);
+            lastResponse = res;
+            continue;
+          }
+        }
+
+        return res;
+      } catch (proxyError) {
+        lastError = proxyError;
+        if (curRotateLink) {
+          noteFailureRange(curProxyUrl);
+          triggerBackgroundRotate(curRotateLink, curProxyUrl, candidate.proxyPool || candidate);
+        }
+
+        // Fallback to next candidate proxy if available
+        if (i + 1 < candidateList.length) {
+          const nextCandidate = candidateList[i + 1];
+          const nextProxyUrl = nextCandidate.proxyUrl || nextCandidate.vercelRelayUrl;
+          console.warn(`[ProxyFetch] Proxy failed (${proxyError.message}) on ${curProxyUrl}, falling back to next active proxy ${nextProxyUrl} (${i + 2}/${candidateList.length})`);
+          continue;
+        }
+      }
+    }
+
+    // All candidate proxies in the pool were attempted and failed
+    if (proxyOptions?.strictProxy === true) {
+      throw new Error(`[ProxyFetch] All ${candidateList.length} proxies failed (strictProxy=true): ${lastError?.message || `HTTP ${lastResponse?.status}`}`);
+    }
+    if (isProxyActive && proxyOptions?.directActive === false) {
+      throw new Error(`[ProxyFetch] All ${candidateList.length} active proxies failed and Direct connection is disabled in Proxy Pools. Refusing direct fallback to prevent IP leak: ${lastError?.message || `HTTP ${lastResponse?.status}`}`);
+    }
+
+    console.warn(`[ProxyFetch] All ${candidateList.length} active proxies failed, falling back to active Direct connection: ${lastError?.message || `HTTP ${lastResponse?.status}`}`);
+    return fetchWithTlsFallback(url, options, null);
+  }
   // Strict mode means "never leave over the direct IP". Reaching here with a
   // proxy configured but unresolved is exactly that case — an inactive or
   // empty pool, or every proxy removed — so refuse instead of silently

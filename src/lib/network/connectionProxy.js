@@ -50,18 +50,39 @@ export function resolveRotationPoolIds(allPools, selectedIds, proxySource = "bot
   } else if (proxySource === "rotating") {
     const rotatingOnly = sourcePools.filter((p) => p.rotateLink || p.rotateUrl);
     if (rotatingOnly.length > 0) sourcePools = rotatingOnly;
+  } else if (proxySource === "both") {
+    // Rotating proxies first: always prioritize rotating proxies over static ones
+    sourcePools.sort((a, b) => {
+      const aRot = Boolean(a.rotateLink || a.rotateUrl);
+      const bRot = Boolean(b.rotateLink || b.rotateUrl);
+      if (aRot && !bRot) return -1;
+      if (!aRot && bRot) return 1;
+      return 0;
+    });
   }
 
   const hasCustomProxies = sourcePools.some((p) => p.id !== "direct");
+  let filtered = sourcePools;
   if (!Array.isArray(selectedIds) || selectedIds.length === 0) {
     if (hasCustomProxies) {
-      return sourcePools.filter((p) => p.id !== "direct").map((p) => p.id);
+      filtered = sourcePools.filter((p) => p.id !== "direct");
     }
-    return sourcePools.map((p) => p.id);
+  } else {
+    const wanted = new Set(selectedIds);
+    filtered = sourcePools.filter((p) => wanted.has(p.id));
   }
 
-  const wanted = new Set(selectedIds);
-  return sourcePools.map((p) => p.id).filter((id) => wanted.has(id));
+  if (proxySource === "both") {
+    filtered.sort((a, b) => {
+      const aRot = Boolean(a.rotateLink || a.rotateUrl);
+      const bRot = Boolean(b.rotateLink || b.rotateUrl);
+      if (aRot && !bRot) return -1;
+      if (!aRot && bRot) return 1;
+      return 0;
+    });
+  }
+
+  return filtered.map((p) => p.id);
 }
 
 /**
@@ -135,6 +156,37 @@ export async function resolveConnectionProxyConfig(
       poolStrictProxy = proxyPool?.strictProxy === true;
 
       if (isValidPool) {
+        // Collect candidate proxies for in-pool fallback (rotating first, then static)
+        let candidateProxies = [];
+        try {
+          const allActivePools = await getProxyPools({ isActive: true }).catch(() => []);
+          let otherPools = allActivePools.filter((p) => p && p.id !== proxyPool.id && p.id !== "direct" && p.proxyUrl);
+          if (Array.isArray(providerSpecificData?.providerProxyPoolIds) && providerSpecificData.providerProxyPoolIds.length > 0) {
+            const allowed = new Set(providerSpecificData.providerProxyPoolIds);
+            otherPools = otherPools.filter((p) => allowed.has(p.id));
+          }
+          otherPools.sort((a, b) => {
+            const aRot = Boolean(a.rotateLink || a.rotateUrl);
+            const bRot = Boolean(b.rotateLink || b.rotateUrl);
+            if (aRot && !bRot) return -1;
+            if (!aRot && bRot) return 1;
+            return 0;
+          });
+          const ordered = [proxyPool, ...otherPools];
+          candidateProxies = ordered.map((p) => ({
+            id: p.id,
+            name: p.name || p.id,
+            proxyUrl: normalizeString(p.proxyUrl),
+            rotateLink: normalizeString(p.rotateLink || p.rotateUrl),
+            noProxy: normalizeString(p.noProxy),
+            strictProxy: p.strictProxy === true,
+            type: p.type || "http",
+            isDirect: p.id === "direct" || p.type === "direct" || p.proxyUrl === "direct",
+            vercelRelayUrl: ["vercel", "cloudflare", "deno", "netlify"].includes(p.type) ? normalizeString(p.proxyUrl) : "",
+            proxyPool: p,
+          })).filter(Boolean);
+        } catch {}
+
         if (proxyPool.id === "direct" || proxyPool.type === "direct" || proxyPool.proxyUrl === "direct") {
           return {
             source: "direct",
@@ -147,6 +199,7 @@ export async function resolveConnectionProxyConfig(
             isDirect: true,
             directActive,
             proxyIntended: true,
+            candidateProxies: candidateProxies.length > 0 ? candidateProxies : null,
           };
         }
 
@@ -166,6 +219,7 @@ export async function resolveConnectionProxyConfig(
             vercelRelayUrl: proxyUrl,
             directActive,
             proxyIntended: true,
+            candidateProxies: candidateProxies.length > 0 ? candidateProxies : null,
           };
         }
 
@@ -182,10 +236,10 @@ export async function resolveConnectionProxyConfig(
           strictProxy: proxyPool.strictProxy === true,
           directActive,
           proxyIntended: true,
+          candidateProxies: candidateProxies.length > 0 ? candidateProxies : null,
         };
       }
     }
-
     /**
      * -----------------------------
      * Legacy Proxy Fallback

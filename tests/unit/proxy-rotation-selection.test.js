@@ -5,7 +5,7 @@ vi.mock("@/models", () => ({
   getProxyPools: vi.fn(async () => []),
 }));
 
-import { resolveRotationPoolIds } from "@/lib/network/connectionProxy";
+import { resolveRotationPoolIds } from "../../src/lib/network/connectionProxy.js";
 
 const pools = [
   { id: "a", proxyUrl: "http://a:1" },
