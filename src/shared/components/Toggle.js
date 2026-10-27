@@ -17,7 +17,9 @@ export default function Toggle({
     lg: { track: "w-14 h-7", thumb: "size-6", translate: "translate-x-7" },
   };
 
-  const handleClick = () => {
+  const handleClick = (e) => {
+    e?.stopPropagation?.();
+    e?.preventDefault?.();
     if (!disabled && onChange) onChange(!checked);
   };
 

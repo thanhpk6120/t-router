@@ -257,8 +257,9 @@ export default function ProvidersPage() {
 
   // Stats come pre-aggregated from /api/providers?summary=1 (T Router) —
   // the page no longer downloads every connection just to count them.
-  const getProviderStats = (providerId, authType) => {
+  const getProviderStats = (providerId, authType, isNoAuth = false) => {
     const authTypes = Array.isArray(authType) ? authType : [authType];
+    const noAuth = isNoAuth || !!AI_PROVIDERS[providerId]?.noAuth || providerId === "opencode";
     let connected = 0;
     let error = 0;
     let total = 0;
@@ -293,7 +294,7 @@ export default function ProvidersPage() {
       total,
       errorCode,
       errorTime,
-      allDisabled: anyEntry && total > 0 ? allDisabled : false,
+      allDisabled: anyEntry && (total > 0 || noAuth) ? allDisabled : false,
     };
   };
 
@@ -309,16 +310,38 @@ export default function ProvidersPage() {
       const next = { ...prev };
       for (const t of authTypes) {
         const key = `${providerId}|${t}`;
-        if (next[key]) next[key] = { ...next[key], allDisabled: !newActive };
+        if (next[key]) {
+          next[key] = { ...next[key], allDisabled: !newActive };
+        } else {
+          next[key] = {
+            provider: providerId,
+            authType: t,
+            total: 1,
+            connected: newActive ? 1 : 0,
+            error: 0,
+            allDisabled: !newActive,
+            latestError: null,
+          };
+        }
       }
       return next;
     });
-    // One bulk UPDATE server-side (was: one PUT per connection).
-    await fetch("/api/providers", {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ provider: providerId, authTypes, isActive: newActive }),
-    }).catch(() => {});
+    try {
+      const res = await fetch("/api/providers", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ provider: providerId, authTypes, isActive: newActive }),
+      });
+      if (res.ok) {
+        const summaryRes = await fetch("/api/providers?summary=1", { cache: "no-store" });
+        if (summaryRes.ok) {
+          const freshData = await summaryRes.json();
+          if (freshData?.stats) setStatsMap(freshData.stats);
+        }
+      }
+    } catch (e) {
+      console.error("Error toggling provider:", e);
+    }
   };
 
   const batchJobRef = useRef(null);
@@ -399,17 +422,20 @@ export default function ProvidersPage() {
   // kiro has no authModes in registry but accepts both (headless uses "api_key").
   const dualAuthTypes = (info, key) => {
     if (key === "kiro") return ["oauth", "apikey", "api_key"];
+    if (info?.noAuth || key in FREE_PROVIDERS || key === "opencode") {
+      return ["free", "none", "oauth", "apikey", "api_key"];
+    }
     const modes = info?.authModes;
-    // Free-tier and API-key providers default to supporting apikey even when the
-    // registry entry omits authModes (e.g. cloudflare-ai, byteplus, ollama,
-    // vertex) — otherwise their apikey connections are invisible on the grid card.
     if (!Array.isArray(modes)) {
       return key in FREE_TIER_PROVIDERS || key in APIKEY_PROVIDERS
         ? ["oauth", "apikey", "api_key"]
-        : "oauth";
+        : ["oauth", "free", "none"];
     }
-    if (!modes.includes("apikey")) return "oauth";
-    return ["oauth", "apikey", "api_key"];
+    const types = [];
+    if (modes.includes("oauth")) types.push("oauth");
+    if (modes.includes("apikey") || modes.includes("api_key")) types.push("apikey", "api_key");
+    if (modes.includes("none")) types.push("none", "free");
+    return types.length ? types : ["oauth", "apikey", "api_key"];
   };
 
   const oauthEntries = sortByPriority(
@@ -1035,19 +1061,20 @@ function ProviderCard({ providerId, provider, stats, authType, onToggle }) {
             </div>
           </div>
           <div className="flex shrink-0 items-center gap-2">
-            {stats.total > 0 && (
+            {(stats.total > 0 || isNoAuth) && (
               <div
                 className="opacity-100 transition-opacity sm:opacity-0 sm:group-hover:opacity-100"
                 onClick={(e) => {
                   e.preventDefault();
                   e.stopPropagation();
-                  onToggle(!allDisabled ? false : true);
                 }}
               >
                 <Toggle
                   size="sm"
                   checked={!allDisabled}
-                  onChange={() => {}}
+                  onChange={(active) => {
+                    onToggle(active);
+                  }}
                   title={allDisabled ? "Enable provider" : "Disable provider"}
                 />
               </div>
@@ -1085,6 +1112,7 @@ function ApiKeyProviderCard({
   onToggle,
 }) {
   const { connected, error, errorCode, errorTime, allDisabled } = stats;
+  const isNoAuth = !!provider.noAuth;
   const isCompatible = providerId.startsWith(OPENAI_COMPATIBLE_PREFIX);
   const isAnthropicCompatible = providerId.startsWith(
     ANTHROPIC_COMPATIBLE_PREFIX,
@@ -1173,19 +1201,20 @@ function ApiKeyProviderCard({
             </div>
           </div>
           <div className="flex shrink-0 items-center gap-2">
-            {stats.total > 0 && (
+            {(stats.total > 0 || isNoAuth) && (
               <div
                 className="opacity-100 transition-opacity sm:opacity-0 sm:group-hover:opacity-100"
                 onClick={(e) => {
                   e.preventDefault();
                   e.stopPropagation();
-                  onToggle(!allDisabled ? false : true);
                 }}
               >
                 <Toggle
                   size="sm"
                   checked={!allDisabled}
-                  onChange={() => {}}
+                  onChange={(active) => {
+                    onToggle(active);
+                  }}
                   title={allDisabled ? "Enable provider" : "Disable provider"}
                 />
               </div>

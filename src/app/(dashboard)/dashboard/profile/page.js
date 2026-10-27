@@ -78,7 +78,7 @@ export default function ProfilePage() {
   const [settings, setSettings] = useState({ requireLogin: true, fallbackStrategy: "balanced" });
   const [updateInfo, setUpdateInfo] = useState(null);
   const [checkingUpdate, setCheckingUpdate] = useState(false);
-  const [updatingSystem, setUpdatingSystem] = useState(false);
+  const [copiedCmd, setCopiedCmd] = useState(false);
   const [loading, setLoading] = useState(true);
   const [passwords, setPasswords] = useState({ current: "", new: "", confirm: "" });
   const [passStatus, setPassStatus] = useState({ type: "", message: "" });
@@ -206,30 +206,10 @@ export default function ProfilePage() {
     setCheckingUpdate(false);
   };
 
-  const triggerAutoUpdate = async () => {
-    setUpdatingSystem(true);
-    try {
-      const res = await fetch("/api/version/update", { method: "POST" });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        alert(data.message || "Không thể tự động cập nhật. Vui lòng cập nhật qua terminal.");
-        setUpdatingSystem(false);
-        return;
-      }
-      // Poll until server restarts
-      const interval = setInterval(async () => {
-        try {
-          const check = await fetch("/api/version?refresh=1");
-          if (check.ok) {
-            clearInterval(interval);
-            globalThis.location.reload();
-          }
-        } catch {}
-      }, 2500);
-    } catch (err) {
-      alert("Lỗi cập nhật: " + err.message);
-      setUpdatingSystem(false);
-    }
+  const handleCopyInstallCmd = (cmd) => {
+    try { navigator.clipboard.writeText(cmd); } catch {}
+    setCopiedCmd(true);
+    setTimeout(() => setCopiedCmd(false), 2000);
   };
 
   const updateOutboundProxy = async (e) => {
@@ -2106,13 +2086,14 @@ export default function ProfilePage() {
               <Button
                 variant="primary"
                 size="sm"
-                loading={updatingSystem}
-                onClick={triggerAutoUpdate}
+                onClick={() => handleCopyInstallCmd(updateInfo.installCmd || "npm i -g t-router-proxy@latest")}
                 className="whitespace-nowrap"
               >
-                {updatingSystem ? "Đang cập nhật..." : "Cập nhật ngay"}
+                <span className="material-symbols-outlined text-[16px] mr-1">
+                  {copiedCmd ? "check" : "content_copy"}
+                </span>
+                {copiedCmd ? "Đã sao chép" : "Sao chép lệnh"}
               </Button>
-            </div>
           )}
 
           <div className="flex gap-2">

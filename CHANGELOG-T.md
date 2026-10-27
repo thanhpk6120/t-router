@@ -5,6 +5,16 @@ Upstream changelogs (`CHANGELOG.md` and `CHANGELOG-PRO.md`) are kept intact for 
 
 ---
 
+## v0.5.111-pro.14-t.2 (2026-10-27)
+
+- **Provider Toggle & OpenCode Free Fixes**:
+  - **Instant & Reliable Provider Disable/Enable**: Fixed provider toggle switch in `src/app/(dashboard)/dashboard/providers/page.js` by isolating event propagation in `Toggle.js`, wiring direct boolean change handlers, and re-fetching server summary state after `PATCH /api/providers` to prevent state drift or requiring multiple clicks/reloads.
+  - **OpenCode Free Toggle Support**: Added toggle disable/enable support for OpenCode Free (`opencode`) and other `noAuth` providers. Fixed `FREE_PROVIDERS` import in `src/app/api/providers/route.js` and registered `opencode` across all authType queries in `connectionsRepo.js` and `dualAuthTypes`.
+- **Simplified & Reliable Update Workflow**:
+  - Replaced the brittle in-process 1-click detached auto-updater with an informative, clean Update Instructions Modal featuring instant command copying (`npm i -g t-router-proxy@latest`), copy feedback, and concise environment instructions (NPM Global, systemd, Git).
+
+---
+
 ## Upstream Sync (9router 0.5.111, 9router-pro 0.5.109-pro.14) (2026-10-27)
 
 - **Automation Menu**:

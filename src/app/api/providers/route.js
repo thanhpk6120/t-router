@@ -10,7 +10,7 @@ import {
   getProxyPoolById,
 } from "@/models";
 import { APIKEY_PROVIDERS } from "@/shared/constants/config";
-import { AI_PROVIDERS, FREE_TIER_PROVIDERS, WEB_COOKIE_PROVIDERS, isOpenAICompatibleProvider, isAnthropicCompatibleProvider, isCustomEmbeddingProvider } from "@/shared/constants/providers";
+import { AI_PROVIDERS, FREE_PROVIDERS, FREE_TIER_PROVIDERS, WEB_COOKIE_PROVIDERS, isOpenAICompatibleProvider, isAnthropicCompatibleProvider, isCustomEmbeddingProvider } from "@/shared/constants/providers";
 import { normalizeProviderId, normalizeProviderSpecificData } from "@/lib/providerNormalization";
 import { toProviderConnectionResponse } from "@/lib/providerConnectionResponse";
 
@@ -151,7 +151,8 @@ export async function PATCH(request) {
       return NextResponse.json({ error: "provider and authTypes are required" }, { status: 400 });
     }
 
-    if (FREE_PROVIDERS[provider]?.noAuth) {
+    const isFreeOrNoAuth = !!(FREE_PROVIDERS[provider]?.noAuth || FREE_TIER_PROVIDERS[provider]?.noAuth || provider === "opencode" || AI_PROVIDERS[provider]?.noAuth);
+    if (isFreeOrNoAuth) {
       const { getSettings, updateSettings } = await import("@/models");
       const settings = await getSettings();
       const current = settings.providerStrategies || {};

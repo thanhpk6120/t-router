@@ -148,12 +148,11 @@ export async function getProviderConnectionStats() {
     const settingsRow = db.get("SELECT data FROM settings WHERE id = 1 OR id = 'main'");
     const settings = settingsRow ? parseJson(settingsRow.data, {}) : {};
     const providerStrategies = settings.providerStrategies || {};
-    const noAuthProviders = ["opencode"];
+    const noAuthProviders = ["opencode", "mimo-free", "devin-cli"];
     for (const pId of noAuthProviders) {
       const override = providerStrategies[pId] || {};
       const isDisabled = override.disabled === true || override.isActive === false;
-      const key = `${pId}|free`;
-      stats[key] = {
+      const statObj = {
         provider: pId,
         authType: "free",
         total: 1,
@@ -162,6 +161,9 @@ export async function getProviderConnectionStats() {
         allDisabled: isDisabled,
         latestError: null,
       };
+      stats[`${pId}|free`] = statObj;
+      stats[`${pId}|none`] = statObj;
+      stats[`${pId}|oauth`] = statObj;
     }
   } catch {}
   return stats;

@@ -49,9 +49,6 @@ export default function Sidebar({ onClose }) {
   const [showUpdateModal, setShowUpdateModal] = useState(false);
   const [isUpdating, setIsUpdating] = useState(false);
   const [shutdownCountdown, setShutdownCountdown] = useState(0);
-  const [updateMode, setUpdateMode] = useState("auto"); // "auto" | "manual"
-  const [autoUpdateStatus, setAutoUpdateStatus] = useState("");
-  const [autoUpdateError, setAutoUpdateError] = useState("");
   const [enableTranslator, setEnableTranslator] = useState(false);
   const { copied, copy } = useCopyToClipboard(2000);
 
@@ -83,50 +80,10 @@ export default function Sidebar({ onClose }) {
     return pathname.startsWith(href);
   };
 
-  const handleStartAutoUpdate = async () => {
-    setShowUpdateModal(false);
-    setIsUpdating(true);
-    setUpdateMode("auto");
-    setAutoUpdateError("");
-    setAutoUpdateStatus(`Đang tiến hành tự động cập nhật T Router lên v${updateInfo?.latestVersion || ""}...`);
-
-    try {
-      const res = await fetch("/api/version/update", { method: "POST" });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        setAutoUpdateError(data.message || "Không thể kích hoạt tự động cập nhật. Vui lòng cập nhật qua terminal.");
-        return;
-      }
-
-      setAutoUpdateStatus(`Đang cài đặt v${updateInfo?.latestVersion || ""} qua npm và khởi động lại server...`);
-      let attempts = 0;
-      const pollTimer = setInterval(async () => {
-        attempts++;
-        try {
-          const check = await fetch("/api/version?refresh=1", { cache: "no-store" });
-          if (check.ok) {
-            clearInterval(pollTimer);
-            setAutoUpdateStatus("Cập nhật thành công! Đang tải lại trang...");
-            setTimeout(() => globalThis.location.reload(), 1000);
-          }
-        } catch {
-          if (attempts > 50) {
-            clearInterval(pollTimer);
-            setAutoUpdateError("Server đang cập nhật hoặc cần khởi động lại thủ công. Vui lòng tải lại trang sau.");
-          }
-        }
-      }, 2500);
-    } catch (err) {
-      setAutoUpdateError("Lỗi cập nhật: " + err.message);
-    }
-  };
-
   const handleStartManualUpdate = () => {
     setShowUpdateModal(false);
     setIsUpdating(true);
-    setUpdateMode("manual");
   };
-
   // Triggered by Copy button inside ManualUpdatePanel: copy + countdown + shutdown
   const handleCopyAndShutdown = async () => {
     try { await navigator.clipboard.writeText(INSTALL_CMD); } catch { /* clipboard blocked */ }
@@ -407,7 +364,7 @@ export default function Sidebar({ onClose }) {
       </aside>
 
 
-      {/* Update Choice Modal */}
+      {/* Update Instructions Modal */}
       <Modal
         isOpen={showUpdateModal}
         onClose={() => setShowUpdateModal(false)}
@@ -429,47 +386,46 @@ export default function Sidebar({ onClose }) {
             </div>
           </div>
 
-          <p className="text-xs sm:text-sm text-text-muted">
-            Chọn phương thức cập nhật phù hợp với bạn:
-          </p>
+          <div className="flex flex-col gap-2">
+            <label className="text-xs font-medium text-text-muted">
+              Chạy lệnh sau trong Terminal để nâng cấp:
+            </label>
+            <div className="flex items-center justify-between gap-2 p-2.5 rounded-lg bg-black/5 dark:bg-white/5 border border-border">
+              <code className="text-xs font-mono text-brand-600 dark:text-brand-400 select-all overflow-x-auto whitespace-nowrap">
+                {INSTALL_CMD}
+              </code>
+              <Button
+                size="sm"
+                variant="primary"
+                onClick={() => copy(INSTALL_CMD)}
+                className="shrink-0"
+              >
+                <span className="material-symbols-outlined text-[16px] mr-1">
+                  {copied ? "check" : "content_copy"}
+                </span>
+                {copied ? "Đã chép" : "Sao chép"}
+              </Button>
+            </div>
+          </div>
 
-          <div className="grid grid-cols-1 gap-2.5">
-            <button
-              type="button"
-              onClick={handleStartAutoUpdate}
-              className="flex items-start gap-3 p-3 rounded-xl border border-brand-500/30 hover:border-brand-500 bg-brand-500/5 hover:bg-brand-500/10 text-left transition-all group cursor-pointer"
-            >
-              <div className="p-2 rounded-lg bg-brand-500 text-slate-950 font-bold mt-0.5">
-                <span className="material-symbols-outlined text-[20px]">bolt</span>
-              </div>
-              <div className="flex-1">
-                <p className="font-semibold text-sm text-text-main flex items-center gap-1.5">
-                  Tự động cập nhật 1-Click
-                  <span className="text-[10px] px-1.5 py-0.2 rounded bg-brand-500/20 text-brand-500 font-medium">Khuyên dùng</span>
-                </p>
-                <p className="text-xs text-text-muted mt-0.5">
-                  Chạy updater ngầm, nâng cấp qua npm và tự khởi động lại t-router.
-                </p>
-              </div>
-            </button>
+          <div className="flex flex-col gap-1.5 p-3 rounded-lg bg-surface-2 text-xs text-text-muted">
+            <p className="font-medium text-text-main">Hướng dẫn các môi trường:</p>
+            <p>• <b>NPM Global:</b> Chạy lệnh trên rồi chạy lại <code>t-router</code>.</p>
+            <p>• <b>Linux Service (systemd):</b> Cài xong chạy <code>systemctl --user restart t-router</code>.</p>
+            <p>• <b>Git Source:</b> Chạy <code>git pull origin main</code> trong thư mục dự án.</p>
+          </div>
 
+          <div className="flex justify-between items-center pt-2 border-t border-border">
             <button
               type="button"
               onClick={handleStartManualUpdate}
-              className="flex items-start gap-3 p-3 rounded-xl border border-border hover:border-border-subtle bg-surface-2 hover:bg-surface-3 text-left transition-all cursor-pointer"
+              className="text-xs text-red-500 hover:text-red-600 hover:underline cursor-pointer"
             >
-              <div className="p-2 rounded-lg bg-surface-3 text-text-muted mt-0.5">
-                <span className="material-symbols-outlined text-[20px]">terminal</span>
-              </div>
-              <div className="flex-1">
-                <p className="font-semibold text-sm text-text-main">
-                  Sao chép lệnh & Tắt server
-                </p>
-                <p className="text-xs text-text-muted mt-0.5">
-                  Hiển thị lệnh npm/pnpm để bạn tự dán và thực thi trong terminal.
-                </p>
-              </div>
+              Tắt server để cập nhật
             </button>
+            <Button variant="secondary" size="sm" onClick={() => setShowUpdateModal(false)}>
+              Đóng
+            </Button>
           </div>
         </div>
       </Modal>
@@ -478,43 +434,15 @@ export default function Sidebar({ onClose }) {
       {(isDisconnected || isUpdating) && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-6">
           {isUpdating ? (
-            updateMode === "auto" ? (
-              <div className="w-full max-w-md rounded-xl bg-neutral-900/95 border border-white/10 p-6 text-white text-center">
-                <div className="flex items-center justify-center size-14 rounded-full bg-brand-500/20 text-brand-400 mx-auto mb-4 animate-pulse">
-                  <span className="material-symbols-outlined text-[32px]">sync</span>
-                </div>
-                <h2 className="text-lg font-semibold mb-2">Updating T Router...</h2>
-                <p className="text-xs text-white/70 mb-4">{autoUpdateStatus}</p>
-                {autoUpdateError ? (
-                  <div className="p-3 rounded-lg bg-red-500/20 border border-red-500/30 text-red-300 text-xs mb-4">
-                    {autoUpdateError}
-                    <div className="mt-3 flex gap-2 justify-center">
-                      <Button variant="secondary" size="sm" onClick={() => setIsUpdating(false)}>
-                        Đóng
-                      </Button>
-                      <Button variant="primary" size="sm" onClick={handleStartManualUpdate}>
-                        Cập nhật thủ công
-                      </Button>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="flex items-center justify-center gap-2 text-xs text-white/50">
-                    <div className="w-2 h-2 rounded-full bg-brand-500 animate-ping" />
-                    <span>Đang chờ server nạp phiên bản mới...</span>
-                  </div>
-                )}
-              </div>
-            ) : (
-              <ManualUpdatePanel
-                latestVersion={updateInfo?.latestVersion}
-                installCmd={INSTALL_CMD}
-                copied={copied}
-                onCopyAndShutdown={handleCopyAndShutdown}
-                onCancel={handleCancelUpdate}
-                countdown={shutdownCountdown}
-                isDisconnected={isDisconnected}
-              />
-            )
+            <ManualUpdatePanel
+              latestVersion={updateInfo?.latestVersion}
+              installCmd={INSTALL_CMD}
+              copied={copied}
+              onCopyAndShutdown={handleCopyAndShutdown}
+              onCancel={handleCancelUpdate}
+              countdown={shutdownCountdown}
+              isDisconnected={isDisconnected}
+            />
           ) : (
             <div className="text-center p-8">
               <div className="flex items-center justify-center size-16 rounded-full bg-red-500/20 text-red-500 mx-auto mb-4">
