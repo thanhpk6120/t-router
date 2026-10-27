@@ -5,6 +5,17 @@ Upstream changelogs (`CHANGELOG.md` and `CHANGELOG-PRO.md`) are kept intact for 
 
 ---
 
+## v0.5.111-pro.14-t.8 (2026-10-28)
+
+- **Hardened Proxy Pool Configuration & Execution Pipeline**:
+  +- **Database Persistence**: Ensured `autoRotate`, `minIntervalSeconds`, `maxIntervalSeconds`, and `failedIpCacheSize` are fully retained and saved upon new proxy pool creation (`createProxyPool`).
+  +- **Configured Parameter Enforcement**: Applied each pool's custom `minIntervalSeconds` (cooldown) and `failedIpCacheSize` directly in `rotateProxyWithRangeCheck`, eliminating hardcoded limits.
+  +- **AutoRotate Guard**: Respected `autoRotate: false` during runtime failures — records the failed exit range to prevent bad-range recurrence without firing unwanted background rotation calls.
+  +- **Eliminated Redundant Exit Range Probes**: Removed un-awaited duplicate `noteFailureRange` calls from `proxyFetch.js`, ensuring sequential range-probing before `rotateLink` execution.
+  +- **Candidate Proxy Source Filtering**: Filtered candidate pool list strictly by `proxySource` (`static`, `rotating`, or `both`) across all resolution and fallback branches.
+
+---
+
 ## v0.5.111-pro.14-t.7 (2026-10-28)
 
 - **Advanced Proxy Rotation, Fallback & Bad Exit Range Cache (Aligned with `opencode2api` Standard)**:

@@ -48,13 +48,17 @@ export function exitRange(address) {
 }
 
 // ─── Bounded FIFO Cache for Known-Bad Exit Ranges ─────────────────────────────
-const MAX_BAD_RANGES = 100;
+const DEFAULT_BAD_CACHE_SIZE = 10;
 const badExitRanges = []; // FIFO array of known-bad range keys
 
-export function markBadRange(rangeKey) {
+export function markBadRange(rangeKey, maxCacheSize = DEFAULT_BAD_CACHE_SIZE) {
   if (!rangeKey || typeof rangeKey !== "string") return;
   const key = rangeKey.trim();
   if (!key) return;
+
+  const limit = Number.isFinite(Number(maxCacheSize)) && Number(maxCacheSize) > 0
+    ? Number(maxCacheSize)
+    : DEFAULT_BAD_CACHE_SIZE;
 
   const idx = badExitRanges.indexOf(key);
   if (idx !== -1) {
@@ -62,10 +66,10 @@ export function markBadRange(rangeKey) {
     badExitRanges.splice(idx, 1);
   }
   badExitRanges.push(key);
-  if (badExitRanges.length > MAX_BAD_RANGES) {
-    badExitRanges.shift();
+  if (badExitRanges.length > limit) {
+    badExitRanges.splice(0, badExitRanges.length - limit);
   }
-  dbg("ProxyRotator", `Marked exit range as bad: ${key} (total bad: ${badExitRanges.length})`);
+  dbg("ProxyRotator", `Marked exit range as bad: ${key} (total bad: ${badExitRanges.length}/${limit})`);
 }
 
 export function isBadRange(rangeKey) {
@@ -172,18 +176,18 @@ export async function probeExitRange(proxyUrl, timeoutMs = 6000) {
 
 // ─── Note Failure Range Before Rotation ───────────────────────────────────────
 // Synchronously/awaitable records the failing exit range BEFORE changing it (opencode2api standard)
-export async function noteFailureRange(proxyUrl, exitIp = null) {
+export async function noteFailureRange(proxyUrl, exitIp = null, maxCacheSize = DEFAULT_BAD_CACHE_SIZE) {
   if (!proxyUrl) return "";
   if (exitIp) {
     const range = exitRange(exitIp);
     lastKnownRanges.set(proxyUrl, range);
-    markBadRange(range);
+    markBadRange(range, maxCacheSize);
     return range;
   }
 
   const cachedRange = lastKnownRanges.get(proxyUrl);
   if (cachedRange) {
-    markBadRange(cachedRange);
+    markBadRange(cachedRange, maxCacheSize);
     return cachedRange;
   }
 
@@ -192,7 +196,7 @@ export async function noteFailureRange(proxyUrl, exitIp = null) {
     const range = await probeExitRange(proxyUrl, 4000);
     if (range) {
       lastKnownRanges.set(proxyUrl, range);
-      markBadRange(range);
+      markBadRange(range, maxCacheSize);
       return range;
     }
   } catch {}
@@ -235,22 +239,26 @@ export async function rotateProxyWithRangeCheck(rotateLink, proxyUrl = null, opt
     try {
       // Step A: Note failure range of the old exit before rotateLink changes it
       if (proxyUrl) {
-        await noteFailureRange(proxyUrl).catch(() => {});
+        await noteFailureRange(proxyUrl, null, options?.failedIpCacheSize).catch(() => {});
       }
+
+      const minIntervalSec = Number.isFinite(Number(options?.minIntervalSeconds)) && Number(options.minIntervalSeconds) > 0
+        ? Number(options.minIntervalSeconds)
+        : 60;
+      const minIntervalMs = Math.max(ROTATE_SLOT_MIN_INTERVAL_MS, minIntervalSec * 1000);
 
       const now = Date.now();
       const last = lastRotationTimestamps.get(rotateLink) || 0;
-      if (now - last < ROTATE_SLOT_MIN_INTERVAL_MS) {
-        const waitMs = ROTATE_SLOT_MIN_INTERVAL_MS - (now - last);
+      if (now - last < minIntervalMs) {
+        const waitMs = minIntervalMs - (now - last);
         await sleep(waitMs);
       }
 
       for (let attempt = 0; attempt < MAX_ROTATE_ATTEMPTS; attempt++) {
         if (attempt > 0) {
-          // Space out retry rotations
-          await sleep(ROTATE_SLOT_MIN_INTERVAL_MS);
+          // Space out retry rotations by minIntervalMs (or slot interval)
+          await sleep(Math.min(minIntervalMs, 5000));
         }
-
         lastRotationTimestamps.set(rotateLink, Date.now());
         dbg("ProxyRotator", `Calling rotate link (attempt ${attempt + 1}/${MAX_ROTATE_ATTEMPTS}): ${rotateLink}`);
 
@@ -321,7 +329,21 @@ export async function rotateProxyWithRangeCheck(rotateLink, proxyUrl = null, opt
  */
 export function triggerBackgroundRotate(rotateLink, proxyUrl = null, pool = null) {
   if (!rotateLink) return;
-  rotateProxyWithRangeCheck(rotateLink, proxyUrl)
+  if (pool?.autoRotate === false) {
+    if (proxyUrl) {
+      noteFailureRange(proxyUrl, null, pool?.failedIpCacheSize).catch(() => {});
+    }
+    dbg("ProxyRotator", `Auto-rotate skipped for pool ${pool?.name || pool?.id}: autoRotate disabled`);
+    return;
+  }
+
+  const options = {
+    minIntervalSeconds: pool?.minIntervalSeconds,
+    maxIntervalSeconds: pool?.maxIntervalSeconds,
+    failedIpCacheSize: pool?.failedIpCacheSize,
+  };
+
+  rotateProxyWithRangeCheck(rotateLink, proxyUrl, options)
     .then((result) => {
       if (result.ok && pool?.id) {
         tryUpdatePoolDb(pool.id, result.exitRange).catch(() => {});

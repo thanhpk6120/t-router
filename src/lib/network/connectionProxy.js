@@ -51,14 +51,19 @@ export function pickProxyPoolId(poolIds, strategy, providerId, allPools = null) 
 function buildCandidateProxies(primaryPool, otherPools = [], proxySource = "both") {
   const combined = [];
   if (primaryPool && primaryPool.id !== "direct" && primaryPool.proxyUrl !== "direct") {
-    combined.push(primaryPool);
+    const isRotating = Boolean(primaryPool.rotateLink || primaryPool.rotateUrl);
+    if (proxySource === "both" || (proxySource === "static" && !isRotating) || (proxySource === "rotating" && isRotating)) {
+      combined.push(primaryPool);
+    }
   }
   for (const p of otherPools || []) {
     if (p && p.id !== "direct" && p.proxyUrl !== "direct" && !combined.some((x) => x.id === p.id)) {
-      combined.push(p);
+      const isRotating = Boolean(p.rotateLink || p.rotateUrl);
+      if (proxySource === "both" || (proxySource === "static" && !isRotating) || (proxySource === "rotating" && isRotating)) {
+        combined.push(p);
+      }
     }
   }
-
   if (combined.length === 0) return [];
 
   // In mixed ("both") mode: ensure all rotating proxies are at the front
@@ -209,6 +214,11 @@ export async function resolveConnectionProxyConfig(
         const proxySource = providerSpecificData?.proxySource || "both";
         const allActivePools = await getProxyPools({ isActive: true }).catch(() => []);
         let otherPools = allActivePools.filter((p) => p && p.id !== proxyPool.id && p.id !== "direct" && p.proxyUrl !== "direct");
+        if (proxySource === "static") {
+          otherPools = otherPools.filter((p) => !p.rotateLink && !p.rotateUrl);
+        } else if (proxySource === "rotating") {
+          otherPools = otherPools.filter((p) => p.rotateLink || p.rotateUrl);
+        }
         if (Array.isArray(providerSpecificData?.providerProxyPoolIds) && providerSpecificData.providerProxyPoolIds.length > 0) {
           const allowed = new Set(providerSpecificData.providerProxyPoolIds);
           otherPools = otherPools.filter((p) => allowed.has(p.id));
@@ -295,16 +305,20 @@ export async function resolveConnectionProxyConfig(
     // auto-adopt active real proxies from Proxy Pools to prevent 502 IP leak failures.
     if (!directActive) {
       const allActive = await getProxyPools({ isActive: true }).catch(() => []);
+      const proxySource = providerSpecificData?.proxySource || "both";
       let realActive = allActive.filter((p) => p && p.id !== "direct" && p.proxyUrl !== "direct");
+      if (proxySource === "static") {
+        realActive = realActive.filter((p) => !p.rotateLink && !p.rotateUrl);
+      } else if (proxySource === "rotating") {
+        realActive = realActive.filter((p) => p.rotateLink || p.rotateUrl);
+      }
       if (Array.isArray(providerSpecificData?.providerProxyPoolIds) && providerSpecificData.providerProxyPoolIds.length > 0) {
         const allowed = new Set(providerSpecificData.providerProxyPoolIds);
         const subset = realActive.filter((p) => allowed.has(p.id));
         if (subset.length > 0) realActive = subset;
       }
       if (realActive.length > 0) {
-        const proxySource = providerSpecificData?.proxySource || "both";
         const candidates = buildCandidateProxies(null, realActive, proxySource);
-        if (candidates.length > 0) {
           const primary = candidates[0];
           return {
             source: primary.vercelRelayUrl ? (primary.type || "relay") : "pool",
@@ -322,7 +336,6 @@ export async function resolveConnectionProxyConfig(
           };
         }
       }
-    }
     /**
      * -----------------------------
      * Legacy Proxy Fallback

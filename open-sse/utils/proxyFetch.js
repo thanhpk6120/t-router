@@ -484,7 +484,6 @@ export async function proxyAwareFetch(url, options = {}, proxyOptions = null) {
         // If upstream or proxy rejected with 429/403/502/503 and has rotateLink
         if (res && (res.status === 429 || res.status === 403 || res.status === 502 || res.status === 503)) {
           if (curRotateLink) {
-            noteFailureRange(curProxyUrl);
             triggerBackgroundRotate(curRotateLink, curProxyUrl, candidate.proxyPool || candidate);
           }
           // If there is another active candidate proxy in the pool, fallback to it!
@@ -499,7 +498,6 @@ export async function proxyAwareFetch(url, options = {}, proxyOptions = null) {
       } catch (proxyError) {
         lastError = proxyError;
         if (curRotateLink) {
-          noteFailureRange(curProxyUrl);
           triggerBackgroundRotate(curRotateLink, curProxyUrl, candidate.proxyPool || candidate);
         }
 

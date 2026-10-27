@@ -16,7 +16,10 @@ export async function POST(request, { params }) {
       return NextResponse.json({ error: "No rotateLink configured for this proxy pool" }, { status: 400 });
     }
 
-    const result = await rotateProxyWithRangeCheck(rotateLink, pool.proxyUrl);
+    const result = await rotateProxyWithRangeCheck(rotateLink, pool.proxyUrl, {
+      minIntervalSeconds: pool.minIntervalSeconds,
+      failedIpCacheSize: pool.failedIpCacheSize,
+    });
     const now = new Date().toISOString();
     if (result.ok) {
       await updateProxyPool(id, {

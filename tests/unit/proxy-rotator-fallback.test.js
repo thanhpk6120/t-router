@@ -45,6 +45,17 @@ describe("ProxyRotator Subnet & Bad Range Cache", () => {
     expect(isBadRange("2402:800:61c3::/48")).toBe(true);
     expect(getBadRanges()).toContain("113.161.45.0/24");
     expect(getBadRanges()).toContain("2402:800:61c3::/48");
+    expect(getBadRanges()).toContain("2402:800:61c3::/48");
+  });
+
+  it("respects maxCacheSize when marking bad ranges", () => {
+    clearBadRanges();
+    for (let i = 1; i <= 5; i++) {
+      markBadRange(`10.0.${i}.0/24`, 3);
+    }
+    const bad = getBadRanges();
+    expect(bad.length).toBe(3);
+    expect(bad).toEqual(["10.0.3.0/24", "10.0.4.0/24", "10.0.5.0/24"]);
   });
 });
 
@@ -113,6 +124,21 @@ describe("resolveConnectionProxyConfig with Direct disabled", () => {
     // RotatingFirst: rotating proxy must be chosen as primary!
     expect(res.proxyPoolId).toBe("rot-p1");
     expect(res.candidateProxies.map((c) => c.id)).toEqual(["rot-p1", "static-p1"]);
+    expect(res.candidateProxies.map((c) => c.id)).toEqual(["rot-p1", "static-p1"]);
+  });
+
+  it("filters candidateProxies according to proxySource (static vs rotating)", async () => {
+    const rot = { id: "rot-1", proxyUrl: "http://rot:8080", rotateLink: "http://rot", isActive: true };
+    const stat = { id: "stat-1", proxyUrl: "http://stat:8080", isActive: true };
+    mockGetProxyPoolById.mockResolvedValue(rot);
+    mockGetProxyPools.mockResolvedValue([rot, stat]);
+
+    const resRotating = await resolveConnectionProxyConfig({ proxyPoolId: "rot-1", proxySource: "rotating" });
+    expect(resRotating.candidateProxies.map((c) => c.id)).toEqual(["rot-1"]);
+
+    mockGetProxyPoolById.mockResolvedValue(stat);
+    const resStatic = await resolveConnectionProxyConfig({ proxyPoolId: "stat-1", proxySource: "static" });
+    expect(resStatic.candidateProxies.map((c) => c.id)).toEqual(["stat-1"]);
   });
 });
 
