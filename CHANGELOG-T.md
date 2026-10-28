@@ -5,6 +5,10 @@ Upstream changelogs (`CHANGELOG.md` and `CHANGELOG-PRO.md`) are kept intact for 
 
 ---
 
+## v0.5.112-pro.14-t.1 (2026-10-28)
+
+- Automated sync and release via Telegram Bot.
+
 ## v0.5.111-pro.14-t.10 (2026-10-28)
 
 - **Upstream Sync & Enhancements (9router v0.5.111..v0.5.112)**:
