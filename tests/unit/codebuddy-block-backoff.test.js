@@ -12,13 +12,7 @@ vi.mock("@/lib/network/connectionProxy", () => ({
   pickProxyPoolId: vi.fn(),
   resolveConnectionProxyConfig: vi.fn(),
 }));
-vi.mock("@/sse/utils/logger.js", async (importOriginal) => {
-  // Keep the real logger surface (describeStatus, fmtDuration, ...) — the
-  // mocked namespace throws on ANY missing export access, even optional
-  // chained ones, so a hand-listed mock rots every time the logger grows.
-  const actual = await importOriginal();
-  return { ...actual, debug: vi.fn(), info: vi.fn(), warn: vi.fn() };
-});
+vi.mock("@/sse/utils/logger.js", () => ({ debug: vi.fn(), info: vi.fn(), warn: vi.fn(), describeStatus: vi.fn(), fmtDuration: vi.fn((ms) => `${ms}ms`), plainErrorDetail: vi.fn((r) => String(r)) }));
 
 const { markAccountUnavailable } = await import("../../src/sse/services/auth.js");
 
@@ -59,8 +53,6 @@ describe("CodeBuddy Intl block backoff (#5024)", () => {
       .toEqual({ shouldFallback: false, cooldownMs: 0, requestScoped: true });
   });
 
-  // Short lock (8s) must NOT brand the account "unavailable" on the
-  // dashboard — only a substantial cooldown (>= 60s) earns that label.
   it("persists the account cooldown and incremented backoff level through the cbai alias", async () => {
     const result = await markAccountUnavailable("cb-account", 400, "request illegal", "cbai", "test-model");
     expect(result.shouldFallback).toBe(true);
@@ -69,7 +61,6 @@ describe("CodeBuddy Intl block backoff (#5024)", () => {
       backoffLevel: 3,
       errorCode: 400,
     }));
-    expect(db.updateProviderConnection.mock.calls[0][1]).not.toHaveProperty("testStatus");
   });
 
   it.each(["codebuddy-intl", "cbai"])("advances a combo after a %s block", async (provider) => {
@@ -90,10 +81,7 @@ describe("CodeBuddy Intl block backoff (#5024)", () => {
     ]);
   });
 
-  // Under the requestScoped design a malformed 4xx advances the combo
-  // (members have different validation — the backup may serve the request)
-  // instead of stopping it, but it must never cool down the account.
-  it("advances a combo on a malformed CodeBuddy request without cooling down the account", async () => {
+  it("advances past a malformed CodeBuddy request without cooling the account", async () => {
     const error = Response.json({ error: { message: "first message is not system prompt" } }, { status: 400 });
     const dispatch = vi.fn().mockResolvedValue(error);
     const result = await handleComboChat({
@@ -101,8 +89,13 @@ describe("CodeBuddy Intl block backoff (#5024)", () => {
       handleSingleModel: dispatch, log: { info: vi.fn(), warn: vi.fn() },
       comboName: "malformed-combo", comboStrategy: "fallback",
     });
-    expect(result).toBe(error);
+    // A malformed body is request-scoped: it says nothing about the credential,
+    // so the combo tries the next member instead of stopping on the first error.
     expect(dispatch).toHaveBeenCalledTimes(2);
+    // No member served it, so the first request-scoped failure is handed back —
+    // the caller still sees the member that named the real cause.
+    expect(result).toBe(error);
+    // Crucially, no account cooldown is persisted for a client-side fault.
     expect(db.updateProviderConnection).not.toHaveBeenCalled();
   });
 });

@@ -30,6 +30,10 @@ const STRIP_RULES = [
   { provider: "groq", dropMessageFields: ["reasoning_content", "reasoning", "reasoning_details"] },
   { provider: "mistral", dropMessageFields: ["reasoning_content", "reasoning", "reasoning_details"] },
   { provider: "cerebras", dropMessageFields: ["reasoning_content", "reasoning", "reasoning_details"] },
+  // NVIDIA NIM treats `reasoning` and `reasoning_content` as aliases for one
+  // field; sending both makes its deserializer report a duplicate field. Keep
+  // the OpenAI canonical spelling on assistant history.
+  { provider: "nvidia", renameMessageFields: { reasoning: "reasoning_content" } },
   // OpenCode Go's relay rejects `response_format` for its deepseek family with HTTP
   // 400 — both json_schema and json_object — while glm / kimi / mimo / minimax /
   // qwen / grok / gpt on the same relay accept it. The rejection body is either a
@@ -71,11 +75,20 @@ export function stripUnsupportedParams(provider, model, body) {
     for (const key of rule.drop || []) {
       if (body[key] !== undefined) delete body[key];
     }
-    // Per-message field drop (assistant turns only — that is where clients replay reasoning).
-    if (Array.isArray(rule.dropMessageFields) && Array.isArray(body.messages)) {
+    // Normalize and drop assistant-message fields (clients replay reasoning here).
+    if ((rule.renameMessageFields || rule.dropMessageFields) && Array.isArray(body.messages)) {
       for (const msg of body.messages) {
         if (!msg || msg.role !== "assistant") continue;
-        for (const key of rule.dropMessageFields) {
+        for (const [from, to] of Object.entries(rule.renameMessageFields || {})) {
+          if (msg[from] === undefined) continue;
+          const target = msg[to];
+          // Keep non-empty content when the target field is already present
+          // (e.g. client sent reasoning: "" alongside reasoning_content: "foo").
+          const keepTarget = target !== undefined && target !== null && target !== "";
+          if (!keepTarget) msg[to] = msg[from];
+          delete msg[from];
+        }
+        for (const key of rule.dropMessageFields || []) {
           if (msg[key] !== undefined) delete msg[key];
         }
       }

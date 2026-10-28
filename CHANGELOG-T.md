@@ -5,6 +5,24 @@ Upstream changelogs (`CHANGELOG.md` and `CHANGELOG-PRO.md`) are kept intact for 
 
 ---
 
+## v0.5.111-pro.14-t.10 (2026-10-28)
+
+- **Upstream Sync & Enhancements (9router v0.5.111..v0.5.112)**:
+  - **MiniMax Code Desktop App Lease Mode**: Added auth lease client (`minimaxCodeLease.js`) communicating over local named pipes (Windows) / unix domain sockets (macOS/Linux) with length-prefixed JSON protocol; allows t-router to borrow credentials from the running MiniMax Code desktop app, avoiding single-use refresh token invalidation. Added "Use Desktop App" button on provider detail page and lease status checks.
+  - **Nace Drex Provider**: Added `nace` decision models provider on the System One protocol (`drex-max`, `drex-v2.0`) with calibration probabilities and image payload support.
+  - **CommandCode CLI 1.88.0 Header Alignment**: Added shared `commandCodeHeaders.js` matching official CLI 1.88.0 auth and session header generation.
+  - **Codex GPT-6.1 Terra**: Added `gpt-6.1-terra` model with 500k context window on Codex responses-lite lane and GPT-6 Lite thinking levels.
+  - **NVIDIA NIM Reasoning Normalization**: Normalized assistant `reasoning` aliases to canonical `reasoning_content` in `paramSupport.js` to prevent duplicate field 400 errors.
+  - **Gemini Protobuf Type Predicates**: Enforced Gemini proto schema constraints (`items` only on `array`, `properties`/`required` only on `object`) in `formats/gemini.js`.
+  - **Non-Streaming SSE Error Handling**: Surfaced upstream SSE error frames directly with their actual status code (4xx/5xx) in non-streaming responses rather than swallowing them into generic 502 Bad Gateway.
+  - **DeepSeek PoW Engine**: Ported DeepSeek Proof-of-Work hashing to `noble-hashes` implementation (`deepseek-pow-hash.js`).
+  - **Bulk Add Opaque Token Parsing**: Supported opaque `LLM|id|secret` token parsing without splitting on internal pipes.
+  - **CodeBuddy Channel Verification**: Added official plugin request/conversation ID headers (`X-Request-ID`, `X-Conversation-ID`, `X-Conversation-Request-ID`, `X-Conversation-Message-ID`) to prevent 400 / 11128 "request illegal" rejections.
+  - **GitHub Copilot Claude 5.5 Thinking**: Corrected thinking rules for Copilot's dotted Claude 5.5 model IDs (`claude-haiku-5.5`, `claude-sonnet-5.5`, `claude-opus-5.5`).
+  - **Docker Runner**: Pre-bundled lazy runtime dependencies (`wreq-js`, `playwright-core`) in builder stage to guarantee synchronous resolution inside containers.
+
+---
+
 ## v0.5.111-pro.14-t.9 (2026-10-28)
 
 - **Proxy-Aware TLS Impersonation for OpenCode Free Tier**:
