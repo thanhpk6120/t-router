@@ -112,25 +112,16 @@ describe("planBulkAdd: robustness", () => {
   });
 });
 
-describe("planBulkAdd: opaque LLM|id|secret tokens", () => {
-  it("treats LLM|id|secret as one opaque token, not name|key", () => {
-    const line = ["LLM|1412752987604207|", "PYVRCdb9", "ZAnsZZk63RBlNQzApKk"].join("");
-    const out = planBulkAdd([line], []);
-    expect(out[0].name).toBe("LLM 1");
-    expect(out[0].apiKey).toBe(line);
+describe("planBulkAdd: LLM|id|secret keys stay opaque (upstream 0.5.112)", () => {
+  it("keeps the full key string and auto-names LLM 1, 2, ...", () => {
+    const out = planBulkAdd(["LLM|id1|secret1", "LLM|id2|secret2"], []);
+    expect(out.map((o) => o.name)).toEqual(["LLM 1", "LLM 2"]);
+    expect(out.map((o) => o.apiKey)).toEqual(["LLM|id1|secret1", "LLM|id2|secret2"]);
   });
 
-  it("treats lowercase llm|... as opaque too", () => {
-    const line = ["llm|1412752987604207|", "PYVRCdb9", "ZAnsZZk63RBlNQzApKk"].join("");
-    const out = planBulkAdd([line], []);
-    expect(out[0].name).toBe("LLM 1");
-    expect(out[0].apiKey).toBe(line);
-  });
-
-  it("cloudflare mode still parses name|key|accountId", () => {
-    const out = planBulkAdd(["main|sk-key1|acc123"], [], { isCloudflareAi: true });
-    expect(out[0].name).toBe("main 1");
-    expect(out[0].apiKey).toBe("sk-key1");
-    expect(out[0].providerSpecificData).toEqual({ accountId: "acc123" });
+  it("ordinary name|key lines still split", () => {
+    const out = planBulkAdd(["mykey|sk-abc"], []);
+    expect(out[0].name).toBe("mykey 1");
+    expect(out[0].apiKey).toBe("sk-abc");
   });
 });

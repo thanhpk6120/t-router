@@ -1,8 +1,9 @@
 "use client";
 
 import { useState, useEffect, useRef, useCallback } from "react";
+import Link from "next/link";
 import PropTypes from "prop-types";
-import { Card, Button, Input, Modal, CardSkeleton, Toggle, ConfirmModal, ModelSelectModal } from "@/shared/components";
+import { Card, Button, Input, Modal, CardSkeleton, Toggle, ConfirmModal, ModelSelectModal, Tooltip } from "@/shared/components";
 import { useCopyToClipboard } from "@/shared/hooks/useCopyToClipboard";
 import {
   TUNNEL_BENEFITS,
@@ -14,17 +15,21 @@ import {
 } from "./endpointConstants";
 import { clientPingUrl, clientPingAny } from "./endpointPing";
 import useSettingsStore from "@/store/settingsStore";
+import { useNotificationStore } from "@/store/notificationStore";
 import EndpointRow from "./components/EndpointRow";
 import StatusAlert from "./components/StatusAlert";
-import Tooltip from "./components/Tooltip";
 import SecurityWarning from "./components/SecurityWarning";
 import KeyAccessControls from "./components/KeyAccessControls";
+import FirstRequestSnippet from "./components/FirstRequestSnippet";
+
+
 export default function APIPageClient({ machineId }) {
   const [keys, setKeys] = useState([]);
+  const notify = useNotificationStore();
   const [loading, setLoading] = useState(true);
   const [showAddModal, setShowAddModal] = useState(false);
   const [newKeyName, setNewKeyName] = useState("");
-  // T Router: optional settings applied to the key right at creation time,
+  // 9Router Pro: optional settings applied to the key right at creation time,
   // so a reseller key is fully configured in one step (editable later in the
   // key's Settings panel).
   const emptyKeyDraft = () => ({
@@ -33,6 +38,8 @@ export default function APIPageClient({ machineId }) {
     quotaEnabled: false,
     quotaLimit: "100000",
     quotaWindow: 24,
+    quotaCostLimit: "",
+    expiresAt: "",
     limits: { rpm: "", tpm: "", rph: "", rpd: "", maxConcurrent: "" },
   });
   const [newKeyDraft, setNewKeyDraft] = useState(emptyKeyDraft);
@@ -40,7 +47,42 @@ export default function APIPageClient({ machineId }) {
   const [createPickerProviders, setCreatePickerProviders] = useState([]);
   const [createPickerAliases, setCreatePickerAliases] = useState({});
   const [createdKey, setCreatedKey] = useState(null);
+  const [createdKeyName, setCreatedKeyName] = useState("");
   const [confirmState, setConfirmState] = useState(null);
+  // R11 bulk key edit: checkbox selection + one modal for the selection.
+  const [selectedKeyIds, setSelectedKeyIds] = useState([]);
+  const [showBulkModal, setShowBulkModal] = useState(false);
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const [bulkDraft, setBulkDraft] = useState({ expiresAt: "", clearExpiry: false, quotaLimit: "", quotaWindow: 24, clearQuota: false, tpm: "", clearTpm: false, allowText: "", active: "" });
+
+  const toggleKeySelect = (id) => setSelectedKeyIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+
+  const applyBulkEdit = async () => {
+    const updates = {};
+    if (bulkDraft.clearExpiry) updates.expiresAt = null;
+    else if (bulkDraft.expiresAt) updates.expiresAt = `${bulkDraft.expiresAt}T23:59:59.999Z`;
+    if (bulkDraft.clearQuota) updates.quota = null;
+    else if (bulkDraft.quotaLimit) updates.quota = { enabled: true, limit: parseInt(bulkDraft.quotaLimit, 10), windowHours: Number(bulkDraft.quotaWindow) || 24 };
+    if (bulkDraft.clearTpm) updates.limits = null;
+    else if (bulkDraft.tpm) updates.limits = { tpm: parseInt(bulkDraft.tpm, 10) };
+    if (bulkDraft.allowText.trim()) updates.access = { restricted: true, allow: bulkDraft.allowText.split(",").map((s) => s.trim()).filter(Boolean) };
+    if (bulkDraft.active === "pause") updates.isActive = false;
+    else if (bulkDraft.active === "resume") updates.isActive = true;
+    if (!Object.keys(updates).length) { notify.error("Nothing to change — fill at least one bulk field."); return; }
+    setBulkBusy(true);
+    try {
+      const res = await fetch("/api/keys", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ids: selectedKeyIds, updates }) });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Bulk edit failed");
+      notify.success(`Updated ${data.updated.length} key(s)${data.failed.length ? `, ${data.failed.length} failed` : ""}.`);
+      setShowBulkModal(false);
+      setSelectedKeyIds([]);
+      await fetchData();
+    } catch (e) {
+      notify.error(e.message);
+    }
+    setBulkBusy(false);
+  };
 
   const [requireApiKey, setRequireApiKey] = useState(false);
   const [requireLogin, setRequireLogin] = useState(true);
@@ -670,8 +712,15 @@ export default function APIPageClient({ machineId }) {
           if (newKeyDraft.quotaEnabled) {
             const limit = parseInt(newKeyDraft.quotaLimit, 10);
             if (limit > 0) {
-              await handleUpdateKeyQuota(id, { enabled: true, limit, windowHours: newKeyDraft.quotaWindow });
+              const costLimit = parseFloat(newKeyDraft.quotaCostLimit);
+              await handleUpdateKeyQuota(id, {
+                enabled: true, limit, windowHours: newKeyDraft.quotaWindow,
+                ...(Number.isFinite(costLimit) && costLimit > 0 ? { costLimit } : {}),
+              });
             }
+          }
+          if (newKeyDraft.expiresAt) {
+            await handleUpdateKeyExpiry(id, `${newKeyDraft.expiresAt}T23:59:59.999Z`);
           }
           const limits = {};
           let hasLimits = false;
@@ -683,11 +732,15 @@ export default function APIPageClient({ machineId }) {
           if (hasLimits) await handleUpdateKeyLimits(id, limits);
         }
         setCreatedKey(data.key);
+        setCreatedKeyName(newKeyName);
         await fetchData();
         closeAddModal();
+      } else {
+        notify.error(data.error || "Failed to create API key");
       }
     } catch (error) {
       console.log("Error creating key:", error);
+      notify.error(error?.message || "Failed to create API key");
     }
   };
 
@@ -748,7 +801,7 @@ export default function APIPageClient({ machineId }) {
     }
   };
 
-  // T Router: save a key's rate limits (null clears them).
+  // 9Router Pro: save a key's rate limits (null clears them).
   const handleUpdateKeyLimits = async (id, limits) => {
     try {
       const res = await fetch(`/api/keys/${id}`, {
@@ -767,7 +820,26 @@ export default function APIPageClient({ machineId }) {
     }
   };
 
-  // T Router: save a key's token quota (null clears it).
+  // 9Router Pro: save a key's expiry (null clears it).
+  const handleUpdateKeyExpiry = async (id, expiresAt) => {
+    try {
+      const res = await fetch(`/api/keys/${id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ expiresAt }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data.key) {
+        setKeys(prev => prev.map(k => k.id === id ? { ...k, expiresAt: data.key.expiresAt } : k));
+      } else {
+        notify.error(data.error || "Failed to update key expiry");
+      }
+    } catch (error) {
+      console.log("Error updating key expiry:", error);
+    }
+  };
+
+  // 9Router Pro: save a key's token quota (null clears it).
   const handleUpdateKeyQuota = async (id, quota) => {
     try {
       const res = await fetch(`/api/keys/${id}`, {
@@ -1061,7 +1133,9 @@ export default function APIPageClient({ machineId }) {
             />
             <div className="flex items-center gap-1.5">
               <p className="font-medium text-sm">Allow dashboard access via tunnel</p>
-              <Tooltip text="When enabled, the dashboard can be accessed through your tunnel or Tailscale URL (login still required). When disabled, dashboard access via tunnel/Tailscale is completely blocked." />
+              <Tooltip text="When enabled, the dashboard can be accessed through your tunnel or Tailscale URL (login still required). When disabled, dashboard access via tunnel/Tailscale is completely blocked.">
+                <span className="material-symbols-outlined text-[14px] text-text-muted cursor-help">help</span>
+              </Tooltip>
             </div>
           </div>
         )}
@@ -1111,11 +1185,38 @@ export default function APIPageClient({ machineId }) {
           </div>
         ) : (
           <div className="flex flex-col">
+            {/* R11 bulk selection bar */}
+            {keys.length > 0 && (
+              <div className="mb-2 flex flex-wrap items-center gap-2">
+                <label className="flex items-center gap-1.5 text-xs text-text-muted">
+                  <input
+                    type="checkbox"
+                    checked={selectedKeyIds.length > 0 && selectedKeyIds.length === keys.length}
+                    onChange={(e) => setSelectedKeyIds(e.target.checked ? keys.map((k) => k.id) : [])}
+                  />
+                  Select all
+                </label>
+                {selectedKeyIds.length > 0 && (
+                  <>
+                    <span className="text-xs text-text-muted">{selectedKeyIds.length} selected</span>
+                    <Button size="sm" variant="outline" onClick={() => setShowBulkModal(true)}>Bulk edit</Button>
+                    <button type="button" onClick={() => setSelectedKeyIds([])} className="text-xs text-text-muted hover:text-text-main">Clear</button>
+                  </>
+                )}
+              </div>
+            )}
             {keys.map((key) => (
               <div
                 key={key.id}
                 className={`group flex items-start justify-between gap-3 py-3 border-b border-black/[0.03] dark:border-white/[0.03] last:border-b-0 ${key.isActive === false ? "opacity-60" : ""}`}
               >
+                <input
+                  type="checkbox"
+                  checked={selectedKeyIds.includes(key.id)}
+                  onChange={() => toggleKeySelect(key.id)}
+                  aria-label={`Select ${key.name}`}
+                  className="mt-1 shrink-0 accent-indigo-500"
+                />
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-medium">{key.name}</p>
                   <div className="flex items-center gap-2 mt-1 min-w-0 flex-wrap">
@@ -1125,7 +1226,7 @@ export default function APIPageClient({ machineId }) {
                     <div className="flex items-center gap-1 shrink-0">
                       <button
                         onClick={() => toggleKeyVisibility(key.id)}
-                        className="p-1 hover:bg-black/5 dark:hover:bg-white/5 rounded text-text-muted hover:text-primary transition-all"
+                        className="p-2 hover:bg-black/5 dark:hover:bg-white/5 rounded text-text-muted hover:text-primary transition-all"
                         title={visibleKeys.has(key.id) ? "Hide key" : "Show key"}
                       >
                         <span className="material-symbols-outlined text-[14px]">
@@ -1134,7 +1235,7 @@ export default function APIPageClient({ machineId }) {
                       </button>
                       <button
                         onClick={() => copy(key.key, key.id)}
-                        className="p-1 hover:bg-black/5 dark:hover:bg-white/5 rounded text-text-muted hover:text-primary transition-all"
+                        className="p-2 hover:bg-black/5 dark:hover:bg-white/5 rounded text-text-muted hover:text-primary transition-all"
                       >
                         <span className="material-symbols-outlined text-[14px]">
                           {copied === key.id ? "check" : "content_copy"}
@@ -1145,12 +1246,20 @@ export default function APIPageClient({ machineId }) {
                   <p className="text-xs text-text-muted mt-1">
                     Created {new Date(key.createdAt).toLocaleDateString()}
                   </p>
+                  {key.expiresAt && (
+                    <p className={`text-xs mt-1 ${new Date(key.expiresAt).getTime() <= Date.now() ? "text-red-500 font-medium" : "text-text-muted"}`}>
+                      {new Date(key.expiresAt).getTime() <= Date.now()
+                        ? `Expired ${new Date(key.expiresAt).toLocaleDateString()}`
+                        : `Expires ${new Date(key.expiresAt).toLocaleDateString()}`}
+                    </p>
+                  )}
                   {key.isActive === false && (
                     <p className="text-xs text-orange-500 mt-1">Paused</p>
                   )}
                   <KeyAccessControls
                     apiKey={key}
                     onChange={(access) => handleUpdateKeyAccess(key.id, access)}
+                    onExpiryChange={(expiresAt) => handleUpdateKeyExpiry(key.id, expiresAt)}
                     onQuotaChange={(quota) => handleUpdateKeyQuota(key.id, quota)}
                     onLimitsChange={(limits) => handleUpdateKeyLimits(key.id, limits)}
                     onRequestRestrict={() => setConfirmState({
@@ -1185,7 +1294,7 @@ export default function APIPageClient({ machineId }) {
                   />
                   <button
                     onClick={() => handleDeleteKey(key.id)}
-                    className="p-2 hover:bg-red-500/10 rounded text-red-500 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-all"
+                    className="p-2 hover:bg-red-500/10 rounded text-red-500 transition-all"
                   >
                     <span className="material-symbols-outlined text-[18px]">delete</span>
                   </button>
@@ -1194,7 +1303,49 @@ export default function APIPageClient({ machineId }) {
             ))}
           </div>
         )}
+        {keys.length > 0 && (
+          <div className="mt-4">
+            <FirstRequestSnippet baseUrl={currentEndpoint} keyName={keys[0]?.name} />
+          </div>
+        )}
       </Card>
+
+      {/* R11 bulk edit modal — applies to every selected key */}
+      <Modal
+        isOpen={showBulkModal}
+        title={`Bulk edit ${selectedKeyIds.length} key(s)`}
+        size="lg"
+        onClose={() => setShowBulkModal(false)}
+      >
+        <div className="flex flex-col gap-4">
+          <p className="text-xs text-text-muted">Only filled fields change. Empty fields leave the key&apos;s current value alone. Clearing beats setting when both are chosen for the same field.</p>
+          <div className="flex flex-wrap items-end gap-2">
+            <Input label="Expiry date" type="date" value={bulkDraft.expiresAt} onChange={(e) => setBulkDraft((d) => ({ ...d, expiresAt: e.target.value }))} />
+            <label className="flex items-center gap-1.5 text-xs"><input type="checkbox" checked={bulkDraft.clearExpiry} onChange={(e) => setBulkDraft((d) => ({ ...d, clearExpiry: e.target.checked }))} /> Clear expiry</label>
+          </div>
+          <div className="flex flex-wrap items-end gap-2">
+            <Input label="Token quota limit" type="number" min="1" value={bulkDraft.quotaLimit} onChange={(e) => setBulkDraft((d) => ({ ...d, quotaLimit: e.target.value }))} placeholder="100000" />
+            <Input label="Window (hours)" type="number" min="1" value={bulkDraft.quotaWindow} onChange={(e) => setBulkDraft((d) => ({ ...d, quotaWindow: e.target.value }))} />
+            <label className="flex items-center gap-1.5 text-xs"><input type="checkbox" checked={bulkDraft.clearQuota} onChange={(e) => setBulkDraft((d) => ({ ...d, clearQuota: e.target.checked }))} /> Clear quota</label>
+          </div>
+          <div className="flex flex-wrap items-end gap-2">
+            <Input label="TPM limit" type="number" min="1" value={bulkDraft.tpm} onChange={(e) => setBulkDraft((d) => ({ ...d, tpm: e.target.value }))} placeholder="e.g. 60000" />
+            <label className="flex items-center gap-1.5 text-xs"><input type="checkbox" checked={bulkDraft.clearTpm} onChange={(e) => setBulkDraft((d) => ({ ...d, clearTpm: e.target.checked }))} /> Clear limits</label>
+          </div>
+          <Input label="Model policy — allowed combos/models (comma-separated)" value={bulkDraft.allowText} onChange={(e) => setBulkDraft((d) => ({ ...d, allowText: e.target.value }))} placeholder="combo-a, dahl/deepseek-ai/DeepSeek-V4-Flash-0731" />
+          <label className="flex flex-col gap-1 text-xs text-text-muted">Active
+            <select value={bulkDraft.active} onChange={(e) => setBulkDraft((d) => ({ ...d, active: e.target.value }))} className="rounded-lg border border-border bg-surface px-3 py-2 text-sm text-text-main">
+              <option value="">Leave unchanged</option>
+              <option value="pause">Pause all selected</option>
+              <option value="resume">Resume all selected</option>
+            </select>
+          </label>
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" onClick={() => setShowBulkModal(false)}>Cancel</Button>
+            <Button onClick={applyBulkEdit} disabled={bulkBusy}>{bulkBusy ? "Applying…" : "Apply to selected"}</Button>
+          </div>
+        </div>
+      </Modal>
 
       {/* Add Key Modal */}
       <Modal
@@ -1211,7 +1362,7 @@ export default function APIPageClient({ machineId }) {
             placeholder="Production Key"
           />
 
-          {/* T Router: optional settings, applied at creation */}
+          {/* 9Router Pro: optional settings, applied at creation */}
           <div className="border-t border-border-subtle pt-3">
             <div className="flex items-baseline gap-2">
               <span className="text-[11px] font-semibold uppercase tracking-wider text-text-muted">Key settings</span>
@@ -1254,9 +1405,9 @@ export default function APIPageClient({ machineId }) {
               </div>
             )}
 
-            {/* Token quota */}
+            {/* API key token quota (per-key budget — not provider balances) */}
             <div className="mt-4 flex items-center justify-between gap-3 border-t border-border-subtle pt-3">
-              <span className="text-sm text-text-main">Token quota</span>
+              <span className="text-sm text-text-main">API key token quota</span>
               <Toggle
                 size="sm"
                 checked={newKeyDraft.quotaEnabled}
@@ -1264,6 +1415,12 @@ export default function APIPageClient({ machineId }) {
               />
             </div>
             {newKeyDraft.quotaEnabled && (
+              <>
+              <p className="mt-1 text-[11px] text-text-muted">
+                Caps what this key can spend. Provider-side balances live on the{" "}
+                <Link href="/dashboard/quota" className="text-primary hover:underline">Provider Quota</Link>{" "}
+                page.
+              </p>
               <div className="mt-2 flex flex-wrap items-center gap-2">
                 <input
                   type="number"
@@ -1284,7 +1441,39 @@ export default function APIPageClient({ machineId }) {
                   <option value={720}>30 days</option>
                 </select>
               </div>
+              {!(parseInt(newKeyDraft.quotaLimit, 10) > 0) && (
+                <p className="mt-1.5 text-[11px] text-amber-600 dark:text-amber-400">
+                  Enter a positive number of tokens — an empty, zero, or invalid
+                  value is ignored and the key is created without a quota.
+                </p>
+              )}
+              <div className="mt-2 flex flex-wrap items-center gap-2">
+                <span className="text-xs text-text-muted">Max spend $</span>
+                <input
+                  type="number"
+                  min="0.01"
+                  step="any"
+                  className="w-24 rounded-lg border border-border bg-bg px-2 py-1.5 text-xs text-text-main outline-none transition-colors focus:border-brand-500"
+                  value={newKeyDraft.quotaCostLimit}
+                  onChange={(e) => setNewKeyDraft((d) => ({ ...d, quotaCostLimit: e.target.value }))}
+                  placeholder="No cap"
+                />
+                <span className="text-xs text-text-muted">USD per same window</span>
+              </div>
+              </>
             )}
+
+            {/* Expiry */}
+            <div className="mt-4 border-t border-border-subtle pt-3">
+              <span className="text-sm text-text-main">Expiry</span>
+              <span className="mt-0.5 block text-[11px] text-text-muted">Empty = never expires. After this date the key is rejected everywhere.</span>
+              <input
+                type="date"
+                className="mt-2 rounded-lg border border-border bg-bg px-2 py-1.5 text-xs text-text-main outline-none transition-colors focus:border-brand-500"
+                value={newKeyDraft.expiresAt}
+                onChange={(e) => setNewKeyDraft((d) => ({ ...d, expiresAt: e.target.value }))}
+              />
+            </div>
 
             {/* Key limits */}
             <div className="mt-4 border-t border-border-subtle pt-3">
@@ -1350,7 +1539,7 @@ export default function APIPageClient({ machineId }) {
       <Modal
         isOpen={!!createdKey}
         title="API Key Created"
-        onClose={() => setCreatedKey(null)}
+        onClose={() => { setCreatedKey(null); setCreatedKeyName(""); }}
       >
         <div className="flex flex-col gap-4">
           <div className="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-lg p-4">
@@ -1375,7 +1564,8 @@ export default function APIPageClient({ machineId }) {
               {copied === "created_key" ? "Copied!" : "Copy"}
             </Button>
           </div>
-          <Button onClick={() => setCreatedKey(null)} fullWidth>
+          <FirstRequestSnippet baseUrl={currentEndpoint} keyName={createdKeyName} />
+          <Button onClick={() => { setCreatedKey(null); setCreatedKeyName(""); }} fullWidth>
             Done
           </Button>
         </div>

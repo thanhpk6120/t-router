@@ -6,6 +6,7 @@ import Modal from "./Modal";
 import ProviderIcon from "./ProviderIcon";
 import CapacityBadges from "./CapacityBadges";
 import { useModelCaps } from "@/shared/hooks/useModelCaps";
+import { useVisibleCount } from "@/shared/hooks/useVisibleCount";
 import { getModelsByProviderId, getModelKind } from "@/shared/constants/models";
 import { OAUTH_PROVIDERS, APIKEY_PROVIDERS, FREE_PROVIDERS, FREE_TIER_PROVIDERS, AI_PROVIDERS, isOpenAICompatibleProvider, isAnthropicCompatibleProvider, getProviderAlias } from "@/shared/constants/providers";
 import { parseSearchQuery, matchesSearch } from "@/shared/utils/modelSearchFilter";
@@ -629,6 +630,15 @@ export default function ModelSelectModal({
     return filtered;
   }, [groupedModels, parsedQuery, addedModelValues, allowProviderWildcard]);
 
+  // P2-20: window the provider groups (12 per page) so a long catalog does
+  // not mount every chip at once. A search query or kind filter narrows the
+  // list already, so filtered results always show in full; the window resets
+  // whenever the query or filter changes.
+  const groupEntries = Object.entries(filteredGroups);
+  const groupPage = useVisibleCount(groupEntries.length, `${searchQuery}|${kindFilter}`, 12);
+  const isGroupFiltered = Boolean(searchQuery.trim() || kindFilter);
+  const shownGroups = isGroupFiltered ? groupEntries : groupEntries.slice(0, groupPage.visible);
+
   // Visible models available for batch actions (excluding placeholders)
   const visibleModels = useMemo(() => {
     const list = [];
@@ -705,6 +715,14 @@ export default function ModelSelectModal({
             : "Click to add, click again to remove. Search supports exclusions (e.g. claude -haiku) and RegEx (/pattern/)."}
         </span>
       </div>
+
+      {/* Auto-routing hint (G6, text only): the auto: targets exist in the
+          router but are not list entries yet — the backend track adds them. */}
+      <p className="mb-3 px-1 text-xs text-text-muted">
+        Tip: you can also ask for <code className="font-mono">auto:coding</code>, <code className="font-mono">auto:fast</code>,{" "}
+        <code className="font-mono">auto:cheap</code>, or <code className="font-mono">auto:headroom</code> — the router picks a
+        connected model for that job.
+      </p>
 
       {/* Search & batch actions */}
       <div className="mb-3 space-y-2">
@@ -863,7 +881,7 @@ export default function ModelSelectModal({
         )}
 
         {/* Provider models */}
-        {Object.entries(filteredGroups).map(([providerId, group]) => {
+        {shownGroups.map(([providerId, group]) => {
           const wildcardValue = `${group.alias || providerId}/*`;
           const isWildcardAdded = allowProviderWildcard && addedModelValues.includes(wildcardValue);
 
@@ -957,6 +975,16 @@ export default function ModelSelectModal({
           </div>
         );
       })}
+
+      {!isGroupFiltered && groupPage.hasMore && (
+        <button
+          type="button"
+          onClick={groupPage.showMore}
+          className="mt-2 w-full rounded-lg border border-dashed border-border px-3 py-2 text-sm text-text-muted transition-colors hover:border-brand-500 hover:text-brand-500"
+        >
+          {`Load more providers (${groupPage.remaining} remaining)`}
+        </button>
+      )}
 
       {Object.keys(filteredGroups).length === 0 && filteredCombos.length === 0 && filteredInjections.length === 0 && (
         <div className="text-center py-4 text-text-muted">

@@ -102,7 +102,7 @@ export default function PxpipeClient() {
           : "Stopped";
 
   return (
-    <div className="space-y-6 p-6">
+    <div className="space-y-6">
       <div className="flex items-center justify-between flex-wrap gap-3">
         <h2 className="text-lg font-semibold flex items-center gap-2">
           <span className="material-symbols-outlined text-primary">image</span>
@@ -117,6 +117,10 @@ export default function PxpipeClient() {
           </Button>
         </div>
       </div>
+
+      <p className="text-sm text-text-muted">
+        PXPIPE turns large text prompts into compact images the model reads, so long context costs fewer tokens.
+      </p>
 
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
         <SummaryCard
@@ -179,6 +183,7 @@ export default function PxpipeClient() {
 
       <Card className="p-4">
         <h3 className="font-medium mb-3">Tokens saved — last 30 days</h3>
+        <p className="mb-3 text-xs text-text-muted">Token Saver shows this same savings number for the last 14 days — see <a href="/dashboard/token-saver" className="font-medium text-primary hover:underline">Token Saver</a>.</p>
         {stats?.timeline?.some((d) => d.tokensSavedEst > 0) ? (
           <ResponsiveContainer width="100%" height={220}>
             <AreaChart data={stats.timeline} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>

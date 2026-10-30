@@ -5,7 +5,7 @@ import { ollamaBodyToOpenAI } from "../../translator/response/ollama-to-openai.j
 import { addBufferToUsage, filterUsageForFormat } from "../../utils/usageTracking.js";
 import { createErrorResult } from "../../utils/error.js";
 import { upstreamResponseHeaders } from "../../utils/upstreamHeaders.js";
-import { HTTP_STATUS } from "../../config/runtimeConfig.js";
+import { HTTP_STATUS, TOTAL_REQUEST_TIMEOUT_MS } from "../../config/runtimeConfig.js";
 import { parseSSEToOpenAIResponse } from "./sseToJsonHandler.js";
 import { unwrapClineEnvelope } from "../../shared/clineEnvelope.js";
 import { buildRequestDetail, extractRequestConfig, extractUsageFromResponse, saveUsageStats, formatDoneLine } from "./requestDetail.js";
@@ -234,19 +234,52 @@ export function translateNonStreamingResponse(responseBody, targetFormat, source
 /**
  * Handle non-streaming response from provider.
  */
-export async function handleNonStreamingResponse({ providerResponse, provider, model, sourceFormat, targetFormat, body, stream, translatedBody, finalBody, requestStartTime, connectionId, apiKey, clientRawRequest, onRequestSuccess, reqLogger, toolNameMap, customToolNames, trackDone, appendLog, pxpipe, reqTag, log }) {
+export async function handleNonStreamingResponse({ providerResponse, provider, model, sourceFormat, targetFormat, body, stream, translatedBody, finalBody, requestStartTime, connectionId, apiKey, clientRawRequest, onRequestSuccess, reqLogger, toolNameMap, customToolNames, trackDone, appendLog, pxpipe, reqTag, log, requestId = null }) {
   trackDone();
   const contentType = providerResponse.headers.get("content-type") || "";
   let responseBody;
 
+  // Total request deadline for the body read: headers were already bounded
+  // by the fetch connect timeout, but a slow body after headers is unbounded
+  // without this. On expiry the socket is cancelled and the client gets a
+  // 504 instead of a truncated 200.
+  const elapsedMs = Number.isFinite(requestStartTime) ? Date.now() - requestStartTime : 0;
+  const totalBudgetMs = Math.max(0, TOTAL_REQUEST_TIMEOUT_MS - elapsedMs);
+  const readWithDeadline = (read) => new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error("total request timeout")), totalBudgetMs);
+    read().then(
+      (v) => { clearTimeout(timer); resolve(v); },
+      (e) => { clearTimeout(timer); reject(e); },
+    );
+  });
+  const cancelBody = async () => {
+    try { await providerResponse.body?.cancel?.(); } catch { /* already gone */ }
+  };
+
   if (contentType.includes("text/event-stream")) {
-    const sseText = await providerResponse.text();
+    let sseText;
+    try {
+      sseText = await readWithDeadline(() => providerResponse.text());
+    } catch (err) {
+      if (err?.message === "total request timeout") {
+        await cancelBody();
+        appendLog({ status: `FAILED ${HTTP_STATUS.GATEWAY_TIMEOUT}` });
+        return createErrorResult(HTTP_STATUS.GATEWAY_TIMEOUT, "Total request timeout");
+      }
+      throw err;
+    }
     const parsed = parseSSEToOpenAIResponse(sseText, model);
     if (!parsed) {
       appendLog({ status: `FAILED ${HTTP_STATUS.BAD_GATEWAY}` });
       return createErrorResult(HTTP_STATUS.BAD_GATEWAY, "Invalid SSE response for non-streaming request");
     }
     if (parsed.error) {
+      // Upstream SSE error frames carry the real status/message: surface
+      // them instead of passing the error object through as a successful
+      // body (or a generic 502). The account loop then locks/falls back
+      // on the right status — a surfaced 429 counts toward the member
+      // failover cap, a surfaced request-scoped 4xx advances the combo
+      // without locking the account. Anything outside 400-599 maps to 502.
       const upstreamStatus = Number(parsed.error.status);
       const status = Number.isInteger(upstreamStatus) && upstreamStatus >= 400 && upstreamStatus <= 599
         ? upstreamStatus
@@ -257,8 +290,13 @@ export async function handleNonStreamingResponse({ providerResponse, provider, m
     responseBody = parsed;
   } else {
     try {
-      responseBody = await providerResponse.json();
+      responseBody = await readWithDeadline(() => providerResponse.json());
     } catch (err) {
+      if (err?.message === "total request timeout") {
+        await cancelBody();
+        appendLog({ status: `FAILED ${HTTP_STATUS.GATEWAY_TIMEOUT}` });
+        return createErrorResult(HTTP_STATUS.GATEWAY_TIMEOUT, "Total request timeout");
+      }
       appendLog({ status: `FAILED ${HTTP_STATUS.BAD_GATEWAY}` });
       console.error(`[ChatCore] Failed to parse JSON from ${provider}:`, err.message);
       return createErrorResult(HTTP_STATUS.BAD_GATEWAY, `Invalid JSON response from ${provider}`);
@@ -284,7 +322,7 @@ export async function handleNonStreamingResponse({ providerResponse, provider, m
 
   const usage = extractUsageFromResponse(responseBody);
   appendLog({ tokens: usage, status: "200 OK" });
-  saveUsageStats({ provider, model, tokens: usage, connectionId, apiKey, endpoint: clientRawRequest?.endpoint, silent: true });
+  saveUsageStats({ provider, model, tokens: usage, connectionId, apiKey, endpoint: clientRawRequest?.endpoint, silent: true, requestId: requestId || undefined });
   if (log?.line) log.line(reqTag, "📊", formatDoneLine({ usage, latency: { total: Date.now() - requestStartTime } }));
 
   const translatedResponse = needsTranslation(targetFormat, sourceFormat)
@@ -351,7 +389,7 @@ export async function handleNonStreamingResponse({ providerResponse, provider, m
     },
     pxpipe,
     status: "success"
-  }, { endpoint: clientRawRequest?.endpoint || null })).catch(err => {
+  }, { endpoint: clientRawRequest?.endpoint || null, ...(requestId ? { id: requestId } : {}) })).catch(err => {
     console.error("[RequestDetail] Failed to save:", err.message);
   });
 

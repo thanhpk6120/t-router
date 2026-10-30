@@ -3,7 +3,7 @@
 // pre-change safety backup in migrate.js: when the stored version is lower,
 // one lightweight DB backup is taken before applying schema changes. Forgetting
 // to bump only skips that backup — it does NOT break the additive auto-sync.
-export const SCHEMA_VERSION = 3;
+export const SCHEMA_VERSION = 6;
 
 export const PRAGMA_SQL = `
 PRAGMA journal_mode = WAL;
@@ -87,6 +87,8 @@ export const TABLES = {
       // syncSchemaFromTables() on boot; existing rows read as unrestricted (0).
       accessRestricted: "INTEGER DEFAULT 0",
       accessAllow: "TEXT",
+      // Per-key policy (P3-26): ISO expiry; NULL = never expires.
+      expiresAt: "TEXT",
     },
     indexes: ["CREATE INDEX IF NOT EXISTS idx_ak_key ON apiKeys(key)"],
   },
@@ -125,9 +127,14 @@ export const TABLES = {
       status: "TEXT",
       tokens: "TEXT",
       meta: "TEXT",
+      // Per-request id for usage dedup (P1-16): without it, two genuinely
+      // identical requests in the same millisecond collapse to one row.
+      requestId: "TEXT",
     },
     indexes: [
       "CREATE INDEX IF NOT EXISTS idx_uh_ts ON usageHistory(timestamp DESC)",
+      "CREATE INDEX IF NOT EXISTS idx_uh_apikey_ts ON usageHistory(apiKey, timestamp DESC)",
+      "CREATE INDEX IF NOT EXISTS idx_uh_requestid ON usageHistory(requestId)",
       "CREATE INDEX IF NOT EXISTS idx_uh_provider ON usageHistory(provider)",
       "CREATE INDEX IF NOT EXISTS idx_uh_model ON usageHistory(model)",
       "CREATE INDEX IF NOT EXISTS idx_uh_conn ON usageHistory(connectionId)",
@@ -165,6 +172,80 @@ export const TABLES = {
     },
     indexes: [
       "CREATE INDEX IF NOT EXISTS idx_rc_exp ON responseCache(expiresAt)",
+    ],
+  },
+  // R2 trust inbox: persistent events (quota pressure, failed requests,
+  // security). Additive only; existing tables untouched. `read` = 0/1.
+  trustEvents: {
+    columns: {
+      id: "INTEGER PRIMARY KEY AUTOINCREMENT",
+      kind: "TEXT NOT NULL",
+      level: "TEXT NOT NULL",
+      subject: "TEXT",
+      title: "TEXT NOT NULL",
+      detail: "TEXT",
+      createdAt: "TEXT NOT NULL",
+      read: "INTEGER DEFAULT 0",
+    },
+    indexes: [
+      "CREATE INDEX IF NOT EXISTS idx_te_created ON trustEvents(createdAt DESC)",
+      "CREATE INDEX IF NOT EXISTS idx_te_unread ON trustEvents(read, createdAt DESC)",
+    ],
+  },
+  // R3 security audit log: append-only sign-in/security events.
+  securityLog: {
+    columns: {
+      id: "INTEGER PRIMARY KEY AUTOINCREMENT",
+      event: "TEXT NOT NULL",
+      ip: "TEXT",
+      userAgent: "TEXT",
+      detail: "TEXT",
+      breach: "INTEGER DEFAULT 0",
+      createdAt: "TEXT NOT NULL",
+    },
+    indexes: [
+      "CREATE INDEX IF NOT EXISTS idx_sl_created ON securityLog(createdAt DESC)",
+      "CREATE INDEX IF NOT EXISTS idx_sl_ip ON securityLog(ip, createdAt DESC)",
+    ],
+  },
+  // R14 eval runner: saved golden sets + runs (results as JSON).
+  evalSets: {
+    columns: {
+      id: "TEXT PRIMARY KEY",
+      name: "TEXT NOT NULL",
+      model: "TEXT",
+      prompts: "TEXT NOT NULL",
+      createdAt: "TEXT NOT NULL",
+      updatedAt: "TEXT NOT NULL",
+    },
+  },
+  evalRuns: {
+    columns: {
+      id: "TEXT PRIMARY KEY",
+      setId: "TEXT NOT NULL",
+      model: "TEXT NOT NULL",
+      results: "TEXT NOT NULL",
+      passRate: "REAL",
+      createdAt: "TEXT NOT NULL",
+    },
+    indexes: [
+      "CREATE INDEX IF NOT EXISTS idx_er_set ON evalRuns(setId, createdAt DESC)",
+    ],
+  },
+  // R13 semantic cache: prompt text + response, scoped per API key + model.
+  // Never shared across keys; opt-in only (see settings.responseCache.semantic).
+  semanticCache: {
+    columns: {
+      key: "TEXT PRIMARY KEY",
+      scopeKey: "TEXT NOT NULL",
+      model: "TEXT NOT NULL",
+      prompt: "TEXT NOT NULL",
+      response: "TEXT NOT NULL",
+      createdAt: "TEXT NOT NULL",
+      expiresAt: "TEXT NOT NULL",
+    },
+    indexes: [
+      "CREATE INDEX IF NOT EXISTS idx_sc_scope ON semanticCache(scopeKey, model)",
     ],
   },
 };

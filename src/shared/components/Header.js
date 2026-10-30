@@ -6,10 +6,11 @@ import Link from "next/link";
 import PropTypes from "prop-types";
 import ProviderIcon from "@/shared/components/ProviderIcon";
 import HeaderMenu from "@/shared/components/HeaderMenu";
+import TrustInboxBell from "@/shared/components/TrustInboxBell";
 import { Modal, Input, Button } from "@/shared/components";
 import { getNameFontStyle, DEFAULT_NAME } from "@/shared/constants/nameStyles";
 import { cn } from "@/shared/utils/cn";
-import { useHeaderSearchStore } from "@/store/headerSearchStore";
+import { useHeaderSearchStore, isHeaderSearchPath } from "@/store/headerSearchStore";
 import { OAUTH_PROVIDERS, APIKEY_PROVIDERS } from "@/shared/constants/config";
 import { MEDIA_PROVIDER_KINDS, AI_PROVIDERS } from "@/shared/constants/providers";
 import { getProviderIconSrc } from "@/shared/utils/providerIcon";
@@ -176,11 +177,25 @@ const getPageInfo = (pathname) => {
       icon: "monitor",
       breadcrumbs: [],
     };
+  if (pathname.includes("/evals"))
+    return {
+      title: "Eval Runner",
+      description: "Quick golden-set evaluations against active models",
+      icon: "fact_check",
+      breadcrumbs: [],
+    };
+  if (pathname.includes("/automation"))
+    return {
+      title: "Automation",
+      description: "Notifications, response cache, 2FA, and database maintenance",
+      icon: "tune",
+      breadcrumbs: [],
+    };
   if (pathname === "/dashboard")
     return {
-      title: "Endpoint",
-      description: "API endpoint configuration",
-      icon: "api",
+      title: "Dashboard",
+      description: "Gateway status, quick actions, and recent activity",
+      icon: "dashboard",
       breadcrumbs: [],
     };
   return { title: "", description: "", breadcrumbs: [] };
@@ -381,6 +396,7 @@ export default function Header({ onMenuClick, showMenuButton = true }) {
         >
           {profileName}
         </button>
+        <TrustInboxBell />
         <HeaderMenu onLogout={handleLogout} />
       </div>
       <Modal isOpen={nameOpen} onClose={() => setNameOpen(false)} title="Customize your name" size="xs" bodyClassName="p-4">
@@ -410,7 +426,8 @@ export default function Header({ onMenuClick, showMenuButton = true }) {
 }
 
 function HeaderSearch() {
-  const visible = useHeaderSearchStore((s) => s.visible);
+  const pathname = usePathname();
+  const visible = useHeaderSearchStore((s) => s.visible) && isHeaderSearchPath(pathname);
   const query = useHeaderSearchStore((s) => s.query);
   const placeholder = useHeaderSearchStore((s) => s.placeholder);
   const setQuery = useHeaderSearchStore((s) => s.setQuery);

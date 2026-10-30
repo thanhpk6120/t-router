@@ -1,6 +1,20 @@
 import { v4 as uuidv4 } from "uuid";
 import { getAdapter } from "../driver.js";
 import { parseJson, stringifyJson } from "../helpers/jsonCol.js";
+import { encryptSensitiveFields, decryptSensitiveFields } from "@/lib/atRestCrypto.js";
+import { invalidateModelsListCache } from "../../../sse/services/modelsListCache.js";
+
+// List-affecting subset of a connection: only these fields change what
+// /v1/models publishes. Health writes (locks, errors, tokens) must NOT
+// invalidate the models cache, or every failure storm would thrash it.
+function modelsListSignature(conn) {
+  const spec = conn?.providerSpecificData || {};
+  return JSON.stringify([
+    conn?.isActive,
+    spec.enabledModels || null,
+    spec.prefix || null,
+  ]);
+}
 
 const OPTIONAL_FIELDS = [
   "displayName", "email", "globalPriority", "defaultModel",
@@ -34,7 +48,7 @@ function resetHealthStateOnActivation(existing, patch) {
 
 function rowToConn(row) {
   if (!row) return null;
-  const extra = parseJson(row.data, {});
+  const extra = decryptSensitiveFields(parseJson(row.data, {}));
   return {
     ...extra,
     id: row.id,
@@ -59,7 +73,7 @@ function connToRow(c) {
     email: email ?? null,
     priority: priority ?? null,
     isActive: isActive === false ? 0 : 1,
-    data: stringifyJson(rest),
+    data: stringifyJson(encryptSensitiveFields(rest)),
     createdAt,
     updatedAt,
   };
@@ -108,7 +122,7 @@ export async function getProviderConnectionById(id) {
   return rowToConn(row);
 }
 
-// T Router: dashboard list-page stats, aggregated server-side so the
+// 9Router Pro: dashboard list-page stats, aggregated server-side so the
 // providers page no longer downloads every connection (18k+ rows ≈ 7MB).
 // Mirrors the page's own rules: "unavailable" counts as connected unless a
 // modelLock_* is still in the future (cooldown), in which case it's an error.
@@ -166,7 +180,7 @@ export async function getProviderConnectionStats() {
   return stats;
 }
 
-// T Router: server-side pagination + search for connection lists, so a
+// 9Router Pro: server-side pagination + search for connection lists, so a
 // provider with tens of thousands of keys loads one page at a time.
 export async function getProviderConnectionsPage({ provider, page = 1, pageSize = 100, search = "" } = {}) {
   const db = await getAdapter();
@@ -186,7 +200,7 @@ export async function getProviderConnectionsPage({ provider, page = 1, pageSize 
   return { connections: rows.map(rowToConn), total, page: safePage, pageSize: safeSize };
 }
 
-// T Router: one UPDATE for a whole provider instead of one PUT per
+// 9Router Pro: one UPDATE for a whole provider instead of one PUT per
 // connection when toggling a provider on/off from the list page.
 export async function bulkSetConnectionsActive(provider, authTypes, isActive) {
   if (!provider || !Array.isArray(authTypes) || !authTypes.length) return 0;
@@ -196,6 +210,7 @@ export async function bulkSetConnectionsActive(provider, authTypes, isActive) {
     `UPDATE providerConnections SET isActive = ?, updatedAt = ? WHERE provider = ? AND authType IN (${placeholders})`,
     [isActive ? 1 : 0, new Date().toISOString(), provider, ...authTypes],
   );
+  if ((info?.changes ?? 0) > 0) invalidateModelsListCache();
   return info?.changes ?? 0;
 }
 
@@ -384,6 +399,7 @@ export async function createProviderConnection(data) {
     result = conn;
   });
 
+  invalidateModelsListCache();
   return result;
 }
 
@@ -395,11 +411,20 @@ export async function updateProviderConnection(id, data) {
     const row = db.get(`SELECT * FROM providerConnections WHERE id = ?`, [id]);
     if (!row) { result = null; return; }
     const existing = rowToConn(row);
+    const beforeSig = modelsListSignature(existing);
     const normalized = resetHealthStateOnActivation(existing, data);
     const merged = { ...existing, ...normalized, updatedAt: new Date().toISOString() };
+    // Re-enable is a deliberate operator action: a quarantined account
+    // gets a fresh chance instead of re-quarantining on its next failure.
+    if (existing.isActive === false && merged.isActive === true) {
+      merged.consecutiveAuthFailures = 0;
+      merged.quarantineReason = null;
+      merged.quarantinedAt = null;
+    }
     upsert(db, merged);
     if (data.priority !== undefined) reorderInTx(db, existing.provider);
     result = merged;
+    if (modelsListSignature(merged) !== beforeSig) invalidateModelsListCache();
   });
   return result;
 }
@@ -414,6 +439,7 @@ export async function deleteProviderConnection(id) {
     reorderInTx(db, row.provider);
     ok = true;
   });
+  if (ok) invalidateModelsListCache();
   return ok;
 }
 
@@ -421,7 +447,9 @@ export async function deleteProviderConnectionsByProvider(providerId) {
   const db = await getAdapter();
   const before = db.get(`SELECT COUNT(*) AS n FROM providerConnections WHERE provider = ?`, [providerId]);
   db.run(`DELETE FROM providerConnections WHERE provider = ?`, [providerId]);
-  return before?.n || 0;
+  const deleted = before?.n || 0;
+  if (deleted > 0) invalidateModelsListCache();
+  return deleted;
 }
 
 export async function reorderProviderConnections(providerId) {
@@ -457,5 +485,6 @@ export async function cleanupProviderConnections() {
       if (dirty) upsert(db, conn);
     }
   });
+  if (cleaned > 0) invalidateModelsListCache();
   return cleaned;
 }

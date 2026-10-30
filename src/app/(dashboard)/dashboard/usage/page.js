@@ -6,6 +6,7 @@ import { RequestLogger, CardSkeleton, SegmentedControl } from "@/shared/componen
 import UsageStats from "@/shared/components/UsageStats";
 import RequestDetailsTab from "./components/RequestDetailsTab";
 import LatencyCard from "./components/LatencyCard";
+import UsageProofSections from "./components/UsageProof";
 
 const PERIODS = [
   { value: "today", label: "Today" },
@@ -110,10 +111,20 @@ function UsageContent() {
             range={period === "custom" ? customRange : null}
           />
           <LatencyCard period={period} />
+          <UsageProofSections />
         </Suspense>
       )}
       {activeTab === "logs" && <RequestLogger />}
-      {activeTab === "details" && <RequestDetailsTab />}
+      {activeTab === "details" && (
+        <>
+          <p className="text-xs text-text-muted">
+            Details — a per-request breakdown (tokens, cost, timing). For the raw one-line log,
+            see <a href="/dashboard/usage?tab=logs" className="font-medium text-primary hover:underline">Usage → Logs</a>;
+            for server console output, see <a href="/dashboard/console-log" className="font-medium text-primary hover:underline">Console Log</a>.
+          </p>
+          <RequestDetailsTab />
+        </>
+      )}
     </div>
   );
 }

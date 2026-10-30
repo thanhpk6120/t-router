@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import Card from "./Card";
+import Button from "./Button";
 
 export default function RequestLogger() {
   const [logs, setLogs] = useState([]);
@@ -21,6 +22,34 @@ export default function RequestLogger() {
     }
     return () => clearInterval(interval);
   }, [autoRefresh]);
+
+  // Client-side CSV export (G22) from the already-fetched log lines —
+  // no new API route. Same parse as the table below.
+  const downloadCsv = () => {
+    const esc = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
+    const rows = [["datetime", "model", "provider", "account", "tokens_in", "tokens_out", "status"]];
+    for (const log of logs) {
+      const parts = log.split(" | ");
+      if (parts.length < 7) continue;
+      rows.push([
+        parts[0],
+        parts.slice(1, parts.length - 5).join(" | "),
+        parts[parts.length - 5],
+        parts[parts.length - 4],
+        parts[parts.length - 3],
+        parts[parts.length - 2],
+        parts[parts.length - 1],
+      ]);
+    }
+    const blob = new Blob([rows.map((r) => r.map(esc).join(",")).join("\n")], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "9router-request-logs.csv";
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
 
   const fetchLogs = async (showLoading = true) => {
     if (showLoading) setLoading(true);
@@ -42,6 +71,9 @@ export default function RequestLogger() {
       <div className="flex items-center justify-between">
         <h2 className="text-xl font-semibold">Request Logs</h2>
         <div className="flex items-center gap-2">
+          <Button size="sm" variant="outline" onClick={downloadCsv} disabled={logs.length === 0}>
+            Download CSV
+          </Button>
           <label className="text-sm font-medium text-text-muted flex items-center gap-2 cursor-pointer">
             <span>Auto Refresh (3s)</span>
             <div
@@ -58,12 +90,23 @@ export default function RequestLogger() {
         </div>
       </div>
 
+      <p className="text-xs text-text-muted">
+        One line per API request served by this router. For a per-request breakdown (tokens, cost, timing),
+        see <a href="/dashboard/usage?tab=details" className="font-medium text-primary hover:underline">Usage → Details</a>;
+        for live server console output, see <a href="/dashboard/console-log" className="font-medium text-primary hover:underline">Console Log</a>.
+      </p>
+
       <Card className="overflow-hidden bg-black/5 dark:bg-black/20">
         <div className="p-0 overflow-x-auto max-h-[600px] overflow-y-auto font-mono text-xs">
           {loading && logs.length === 0 ? (
             <div className="p-8 text-center text-text-muted">Loading logs...</div>
           ) : logs.length === 0 ? (
-            <div className="p-8 text-center text-text-muted">No logs recorded yet.</div>
+            <div className="p-8 text-center text-text-muted">
+              <p>No logs recorded yet.</p>
+              <a href="/dashboard/endpoint" className="mt-2 inline-block text-xs font-medium text-primary hover:underline">
+                Create a key and send your first request →
+              </a>
+            </div>
           ) : (
             <table className="w-full text-left border-collapse whitespace-nowrap">
               <thead className="sticky top-0 bg-bg-subtle border-b border-border z-10">

@@ -454,7 +454,6 @@ describe("buildEmbeddingsHeaders", () => {
     expect(init.headers["HTTP-Referer"]).toBeUndefined();
     expect(init.headers["X-Title"]).toBeUndefined();
   });
-
   it("ollama-local → Content-Type only by default, Authorization when apiKey is present", async () => {
     vi.mocked(fetch).mockResolvedValueOnce(makeProviderResponse(VALID_EMBEDDING_RESPONSE));
 

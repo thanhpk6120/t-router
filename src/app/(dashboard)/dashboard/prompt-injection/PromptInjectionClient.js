@@ -335,7 +335,7 @@ function TemplateCard({ template, copiedId, onCopy, onEdit, onDelete }) {
             type="button"
             onClick={onCopy}
             title="Copy prompt text"
-            className={`${actionBtnClass} ${isCopied ? "text-cyan-400 hover:text-cyan-400" : ""}`}
+            className={`${actionBtnClass} ${isCopied ? "text-emerald-500 hover:text-emerald-500" : ""}`}
           >
             <span className="material-symbols-outlined text-[16px]">{isCopied ? "check" : "content_copy"}</span>
             {isCopied ? "Copied" : "Copy"}
@@ -447,11 +447,27 @@ function InjectionForm({
     lockSource ? initialCoord.name || "" : ""
   );
 
+  // R7 locked sampling params for variants (prompt text untouched).
+  const [samplingState, setSamplingState] = useState({ temperature: "", top_p: "", max_tokens: "" });
+
   const submitEntry = (fields) => {
+    // R7 locked sampling params (variant only): merged into the variant
+    // record, never into prompt text. Blank = client default.
+    const withSampling = (f) => {
+      if (scope !== "variant") return f;
+      const sampling = {};
+      const t = parseFloat(samplingState.temperature);
+      const p = parseFloat(samplingState.top_p);
+      const m = parseInt(samplingState.max_tokens, 10);
+      if (Number.isFinite(t)) sampling.temperature = t;
+      if (Number.isFinite(p)) sampling.top_p = p;
+      if (Number.isFinite(m)) sampling.max_tokens = m;
+      return { ...f, sampling: Object.keys(sampling).length ? sampling : null };
+    };
     if (scope === "variant") {
       onSave(
         { scope, name: name.trim(), model: mainName },
-        fromTemplate ? { ...fields, templateName: template.name } : fields
+        fromTemplate ? { ...withSampling(fields), templateName: template.name } : withSampling(fields)
       );
       return;
     }
@@ -471,6 +487,18 @@ function InjectionForm({
       )
     : null;
   const baseEntry = boundToSource ? sourceEntry : currentEntry;
+  // Load the variant's saved sampling params when the variant target changes.
+  useEffect(() => {
+    if (scope === "variant") {
+      const s = baseEntry?.sampling || {};
+      setSamplingState({
+        temperature: s.temperature ?? "",
+        top_p: s.top_p ?? "",
+        max_tokens: s.max_tokens ?? "",
+      });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scope, name]);
   const editorInitial = fromTemplate
     ? { ...template, enabled: true }
     : baseEntry;
@@ -561,10 +589,30 @@ function InjectionForm({
           <input
             value={name}
             onChange={(e) => setName(e.target.value)}
-            placeholder="e.g. custom-model-name"
+            placeholder="e.g. dahlunce — this model's custom name"
             className="rounded-lg border border-border bg-surface px-3 py-2 font-mono text-[13px]"
           />
         </label>
+      )}
+
+      {scope === "variant" && (
+        <div className="flex flex-col gap-1">
+          <span className="text-xs font-medium text-text-muted">Locked sampling (variant only — overrides client defaults; blank = client default)</span>
+          <div className="flex flex-wrap gap-2">
+            <label className="flex flex-1 min-w-[120px] flex-col gap-1">
+              <span className="text-[11px] text-text-muted">temperature (0–2)</span>
+              <input type="number" step="0.1" min="0" max="2" value={samplingState.temperature} onChange={(e) => setSamplingState((s) => ({ ...s, temperature: e.target.value }))} placeholder="client default" className="rounded-lg border border-border bg-surface px-3 py-2 text-sm" />
+            </label>
+            <label className="flex flex-1 min-w-[120px] flex-col gap-1">
+              <span className="text-[11px] text-text-muted">top_p (0–1)</span>
+              <input type="number" step="0.05" min="0" max="1" value={samplingState.top_p} onChange={(e) => setSamplingState((s) => ({ ...s, top_p: e.target.value }))} placeholder="client default" className="rounded-lg border border-border bg-surface px-3 py-2 text-sm" />
+            </label>
+            <label className="flex flex-1 min-w-[120px] flex-col gap-1">
+              <span className="text-[11px] text-text-muted">max_tokens</span>
+              <input type="number" min="1" value={samplingState.max_tokens} onChange={(e) => setSamplingState((s) => ({ ...s, max_tokens: e.target.value }))} placeholder="client default" className="rounded-lg border border-border bg-surface px-3 py-2 text-sm" />
+            </label>
+          </div>
+        </div>
       )}
 
       {allowTemplateSource && templates.length > 0 && (
@@ -721,7 +769,7 @@ export default function PromptInjectionClient() {
         fetch(API),
         fetch("/api/keys"),
         fetch("/api/models"),
-        fetch("/api/provider-nodes").catch(() => null),
+        fetch("/api/provider-nodes"),
       ]);
       const inj = await injRes.json();
       setGlobal(inj.global || null);
@@ -744,10 +792,11 @@ export default function PromptInjectionClient() {
         }
       } catch { /* models list is a convenience, not a requirement */ }
       setModelOptions([...names].sort());
-      if (nodesRes && nodesRes.ok) {
-        const nodesData = await nodesRes.json().catch(() => ({}));
+      // Friendly prefixes for variant backings (display only).
+      try {
+        const nodesData = await nodesRes.json();
         setNodePrefixes(nodePrefixById(nodesData?.nodes || []));
-      }
+      } catch { /* labels are a convenience, not a requirement */ }
     } catch {
       showToast("Failed to load prompt injections", "error");
     } finally {
@@ -958,7 +1007,7 @@ export default function PromptInjectionClient() {
       const res = await fetch(API);
       const data = await res.json();
       const blob = new Blob(
-        [JSON.stringify({ app: "t-router", kind: "prompt-injections", version: 2, ...data }, null, 2)],
+        [JSON.stringify({ app: "9router-pro", kind: "prompt-injections", version: 2, ...data }, null, 2)],
         { type: "application/json" }
       );
       const a = document.createElement("a");
@@ -1073,7 +1122,7 @@ export default function PromptInjectionClient() {
       </div>
       {msg && (
         <div className="fixed bottom-5 left-1/2 z-50 w-max max-w-[calc(100vw-2rem)] -translate-x-1/2">
-          <p className={`rounded-lg border border-border-subtle bg-surface px-4 py-2.5 text-sm shadow-[var(--shadow-elev)] ${msg.type === "error" ? "text-red-400" : msg.type === "info" ? "text-text-muted" : "text-cyan-400"}`}>
+          <p className={`rounded-lg border border-border-subtle bg-surface px-4 py-2.5 text-sm shadow-[var(--shadow-elev)] ${msg.type === "error" ? "text-red-400" : msg.type === "info" ? "text-text-muted" : "text-emerald-400"}`}>
             {msg.text}
           </p>
         </div>
@@ -1202,7 +1251,7 @@ export default function PromptInjectionClient() {
                             <p className="break-all font-mono text-[12px] text-primary">{displayBacking(coord.model, nodePrefixes)}</p>
                           </div>
                         ) : (
-                          <p className="min-w-0 flex-1 break-all font-mono text-[13px] text-primary">{displayBacking(coord.model, nodePrefixes)}</p>
+                          <p className="min-w-0 flex-1 break-all font-mono text-[13px] text-primary">{coord.model}</p>
                         )}
                         <EntryBadge entry={entry} />
                       </div>
@@ -1223,7 +1272,7 @@ export default function PromptInjectionClient() {
                             type="button"
                             onClick={() => copyName(coord.name)}
                             title="Copy name"
-                            className={`${actionBtnClass} ${copied === `name:${coord.name}` ? "text-cyan-400 hover:text-cyan-400" : ""}`}
+                            className={`${actionBtnClass} ${copied === `name:${coord.name}` ? "text-emerald-500 hover:text-emerald-500" : ""}`}
                           >
                             <span className="material-symbols-outlined text-[16px]">
                               {copied === `name:${coord.name}` ? "check" : "content_copy"}

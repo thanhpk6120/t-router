@@ -7,9 +7,11 @@ import {
   isAnthropicCompatibleProvider,
   isOpenAICompatibleProvider,
 } from "@/shared/constants/providers";
-import { getProviderConnections, getCombos, getCustomModels, getModelAliases, getSettings } from "@/lib/localDb";
+import { getProviderConnections, getCombos, getCustomModels, getModelAliases, getInjectVariants } from "@/lib/localDb";
 import { getDisabledModels } from "@/lib/disabledModelsDb";
 import { getKeyAccessContext, filterModelsListForKey } from "@/sse/services/keyAccess.js";
+import { AUTO_INTENTS } from "@/sse/services/autoRouting.js";
+import { getModelsListCache, setModelsListCache } from "@/sse/services/modelsListCache.js";
 import { resolveKiroModels } from "open-sse/services/kiroModels.js";
 import { resolveKimchiModels } from "open-sse/services/kimchiModels.js";
 import { resolveQoderModels, routableQoderModels } from "open-sse/services/qoderModels.js";
@@ -328,7 +330,12 @@ export async function buildModelsList(kindFilter, options = {}) {
     connections = await getProviderConnections();
     connections = connections.filter(c => c.isActive !== false);
   } catch (e) {
-    console.log("Could not fetch providers, returning all models");
+    // G2 honesty: a DB error must NOT silently fall through to the full
+    // static catalog. The GET handlers turn this into a 500, so a client
+    // during a DB outage sees an error — not hundreds of model ids that
+    // would all fail at request time.
+    console.log("Could not fetch providers for /v1/models:", e?.message || e);
+    throw new Error("Failed to load provider connections for /v1/models");
   }
 
   let combos = [];
@@ -360,11 +367,6 @@ export async function buildModelsList(kindFilter, options = {}) {
   }
   const isDisabled = (alias, modelId) => Array.isArray(disabledByAlias[alias]) && disabledByAlias[alias].includes(modelId);
 
-  let settings = {};
-  try {
-    settings = await getSettings();
-  } catch (e) {}
-
   const activeConnectionByProvider = new Map();
   for (const conn of connections) {
     if (!activeConnectionByProvider.has(conn.provider)) {
@@ -373,10 +375,7 @@ export async function buildModelsList(kindFilter, options = {}) {
   }
 
   // Include no-auth free providers (e.g. opencode) so their models are exposed in /v1/models
-  const providerStrategies = settings?.providerStrategies || {};
   for (const [id, provider] of Object.entries(FREE_PROVIDERS || {})) {
-    const override = providerStrategies[id] || {};
-    if (override.disabled === true || override.isActive === false) continue;
     if (provider?.noAuth && !activeConnectionByProvider.has(id)) {
       activeConnectionByProvider.set(id, {
         id: "noauth",
@@ -418,40 +417,92 @@ export async function buildModelsList(kindFilter, options = {}) {
     models.push(entry);
   }
 
-  if (connections.length === 0) {
-    // DB unavailable -> return static models, filtered by per-model kind
-    for (const [alias, providerModels] of Object.entries(PROVIDER_MODELS)) {
-      const providerId = ALIAS_TO_PROVIDER_ID[alias] || alias;
-      if (!providerMatchesKinds(providerId, kindFilter)) continue;
-      for (const model of providerModels) {
-        if (!kindFilter.includes(modelKind(model))) continue;
-        if (isDisabled(alias, model.id) || isDisabled(providerId, model.id)) continue;
-        models.push({
-          id: `${alias}/${model.id}`,
-          object: "model",
-          owned_by: alias,
-          capabilities: getCapabilitiesForModel(alias, model.id),
-        });
+  // Variants are directly routable models too (no backing combo): list
+  // each variant name so pickers keep offering direct variant picks.
+  // A name that still has a backing combo is skipped (the combo entry
+  // above already lists it) so the transition never duplicates ids.
+  // Listed regardless of `enabled` — `enabled` only gates prompt
+  // injection, not routability (same as their backing combos were).
+  if (kindFilter.includes(LLM_KIND)) {
+    const variants = await getInjectVariants().catch(() => ({}));
+    for (const [name, entry] of Object.entries(variants)) {
+      if (combosByName.has(name)) continue;
+      if (typeof entry?.model !== "string" || !entry.model.includes("/")) continue;
+      const slash = entry.model.indexOf("/");
+      const alias = entry.model.slice(0, slash);
+      const modelId = entry.model.slice(slash + 1);
+      let capabilities;
+      try {
+        capabilities = getCapabilitiesForModel(alias, modelId) || undefined;
+      } catch {
+        capabilities = undefined;
       }
-    }
-
-    for (const customModel of customModels) {
-      if (!customModel?.id || (customModel.type && customModel.type !== "llm")) continue;
-      // Custom models without active connection are LLM-only by current schema
-      if (!kindFilter.includes(LLM_KIND)) continue;
-      const providerAlias = customModel.providerAlias;
-      if (!providerAlias) continue;
-
-      const modelId = String(customModel.id).trim();
-      if (!modelId) continue;
-
       models.push({
-        id: `${providerAlias}/${modelId}`,
+        id: name,
         object: "model",
-        owned_by: providerAlias,
+        owned_by: "variant",
+        ...(capabilities ? { capabilities } : {}),
       });
     }
-  } else {
+  }
+
+  // G6 discoverability: `auto:<intent>` targets are routable model ids
+  // (see autoRouting.js AUTO_INTENTS and the chat handler's auto branch),
+  // but nothing in the model list ever named them, so no client or
+  // picker could discover auto-routing from the API. List them with
+  // owned_by "auto". This changes listing only — auto-routing scoring
+  // and expansion are untouched. Like combos/variants above, they are
+  // cleared by the zero-connections branch below, since auto-routing
+  // needs at least one stored connection to produce a candidate.
+  if (kindFilter.includes(LLM_KIND)) {
+    for (const intent of AUTO_INTENTS) {
+      models.push({ id: `auto:${intent}`, object: "model", owned_by: "auto" });
+    }
+  }
+
+  if (connections.length === 0) {
+    // G2 honesty: with no stored connections, the full static catalog
+    // was a lie — every listed id failed at request time. Drop the
+    // combos/variants pushed above too (their seats have no connection
+    // to serve through) and fall through to the provider loop below,
+    // which iterates only activeConnectionByProvider: with zero stored
+    // connections that map holds exactly the no-auth providers, which
+    // serve through a virtual connection (see auth.js) and are the
+    // only models that can honestly be listed here. A fleet with no
+    // no-auth providers therefore returns an empty list.
+    models.length = 0;
+  }
+
+    // Live catalogs resolve concurrently under one shared budget: sequential
+    // awaits summed every provider's latency into the /v1/models response.
+    // Providers with explicit enabledModels keep their static list (as
+    // before) and kind-filtered-out providers are never resolved.
+    // On budget expiry, providers without a result fall back to their
+    // static lists below; the in-flight fetches finish unobserved.
+    const LIVE_RESOLVER_BUDGET_MS = 30000;
+    const liveByProvider = new Map();
+    const liveEntries = [...activeConnectionByProvider.entries()].filter(([providerId, conn]) => {
+      if (!LIVE_MODEL_RESOLVERS[providerId]) return false;
+      if (!providerMatchesKinds(providerId, kindFilter)) return false;
+      const enabledModels = conn?.providerSpecificData?.enabledModels;
+      return !(Array.isArray(enabledModels) && enabledModels.length > 0);
+    });
+    if (liveEntries.length) {
+      const settled = await Promise.race([
+        Promise.all(liveEntries.map(async ([providerId, conn]) => {
+          try {
+            const live = await LIVE_MODEL_RESOLVERS[providerId](conn);
+            return [providerId, live?.models?.length ? live : null];
+          } catch (err) {
+            console.log(`Live model fetch failed for ${providerId}: ${err?.message || err}`);
+            return [providerId, null];
+          }
+        })),
+        new Promise((resolve) => setTimeout(() => resolve(null), LIVE_RESOLVER_BUDGET_MS)),
+      ]);
+      if (settled) for (const [providerId, live] of settled) liveByProvider.set(providerId, live);
+    }
+
     for (const [providerId, conn] of activeConnectionByProvider.entries()) {
       if (!providerMatchesKinds(providerId, kindFilter)) continue;
 
@@ -490,28 +541,22 @@ export async function buildModelsList(kindFilter, options = {}) {
       }
 
       // Config-driven live catalog override (e.g. Kiro returns dynamic
-      // -thinking/-agentic variants per account). On failure, fall back to
-      // whatever rawModelIds already holds.
-      const liveResolver = LIVE_MODEL_RESOLVERS[providerId];
-      if (liveResolver && !hasExplicitEnabledModels) {
-        try {
-          const live = await liveResolver(conn);
-          if (live?.models?.length) {
-            rawModelIds = live.models.map((m) => m.id);
-            liveModelKindById = new Map(
-              live.models
-                .filter((m) => m?.id)
-                .map((m) => [m.id, modelKind(m)])
-            );
-            liveCapabilitiesById = new Map(
-              live.models
-                .filter((m) => m?.id && m.capabilities)
-                .map((m) => [m.id, m.capabilities])
-            );
-          }
-        } catch (err) {
-          console.log(`Live model fetch failed for ${providerId}: ${err?.message || err}`);
-        }
+      // -thinking/-agentic variants per account), resolved concurrently
+      // above. On failure or budget expiry, fall back to whatever
+      // rawModelIds already holds.
+      const live = liveByProvider.get(providerId);
+      if (live?.models?.length) {
+        rawModelIds = live.models.map((m) => m.id);
+        liveModelKindById = new Map(
+          live.models
+            .filter((m) => m?.id)
+            .map((m) => [m.id, modelKind(m)])
+        );
+        liveCapabilitiesById = new Map(
+          live.models
+            .filter((m) => m?.id && m.capabilities)
+            .map((m) => [m.id, m.capabilities])
+        );
       }
 
       const modelIds = rawModelIds
@@ -638,7 +683,6 @@ export async function buildModelsList(kindFilter, options = {}) {
         });
       }
     }
-  }
 
   const dedupedModels = [];
   const seenModelIds = new Set();
@@ -672,10 +716,21 @@ export async function GET(request) {
   try {
     // Detect cross-instance recursive /models fetch (another 9router fetching our /models)
     const skipDynamicFetch = request?.headers?.get(INTERNAL_MODELS_FETCH_HEADER) === "1";
+    const ctx = await getKeyAccessContext(request);
+    // Key-scoped cache: restricted keys by key id, unrestricted keys share
+    // the single "full" entry (they all see the unfiltered list).
+    const cacheKey = ctx?.keyId ? `key:${ctx.keyId}` : "full";
+    const cached = getModelsListCache(cacheKey);
+    if (cached) {
+      return Response.json({ object: "list", data: cached }, {
+        headers: { "Access-Control-Allow-Origin": "*" },
+      });
+    }
     const data = await filterModelsListForKey(
-      await getKeyAccessContext(request),
+      ctx,
       await buildModelsList([LLM_KIND], { skipDynamicFetch })
     );
+    setModelsListCache(cacheKey, data);
     return Response.json({ object: "list", data }, {
       headers: { "Access-Control-Allow-Origin": "*" },
     });

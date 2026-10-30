@@ -3,6 +3,7 @@ import { createHash } from "crypto";
 import { getAdapter } from "../driver.js";
 import { parseJson, stringifyJson } from "../helpers/jsonCol.js";
 import { getMeta, setMeta } from "../helpers/metaStore.js";
+import { emitUsageWebhook, maskApiKeyForWebhook } from "@/lib/webhookEvents.js";
 
 function maskApiKey(key) {
   if (!key || typeof key !== "string") return null;
@@ -258,7 +259,14 @@ export async function saveRequestUsage(entry) {
     const db = await getAdapter();
 
     if (!entry.timestamp) entry.timestamp = new Date().toISOString();
-    entry.cost = await calculateCost(entry.provider, entry.model, entry.tokens);
+    // Cost override (G9): modalities whose spend is USD-per-call, not
+    // tokens (web search/fetch costPerQuery), have no token price to
+    // calculate from — the caller supplies the USD cost directly so cost
+    // quotas count it. Token-priced callers omit it and keep the
+    // calculated cost exactly as before.
+    entry.cost = Number.isFinite(entry.costOverride)
+      ? entry.costOverride
+      : await calculateCost(entry.provider, entry.model, entry.tokens);
 
     const tokens = entry.tokens || {};
     const promptTokens = tokens.prompt_tokens || tokens.input_tokens || 0;
@@ -269,22 +277,33 @@ export async function saveRequestUsage(entry) {
     // All 3 writes (history insert, daily upsert, lifetime counter) in ONE transaction.
     // better-sqlite3 is sync → no JS yield mid-transaction → no race in same process.
     db.transaction(() => {
-      const existing = db.get(
-        `SELECT id, endpoint FROM usageHistory
-         WHERE timestamp = ?
-           AND COALESCE(provider, '') = COALESCE(?, '')
-           AND COALESCE(model, '') = COALESCE(?, '')
-           AND COALESCE(connectionId, '') = COALESCE(?, '')
-           AND COALESCE(apiKey, '') = COALESCE(?, '')
-           AND promptTokens = ?
-           AND completionTokens = ?
-         ORDER BY id DESC LIMIT 1`,
-        [
-          entry.timestamp, entry.provider || null, entry.model || null,
-          entry.connectionId || null, entry.apiKey || null,
-          promptTokens, completionTokens,
-        ]
-      );
+      // Dedup: a caller-supplied request id wins — two genuinely identical
+      // requests in the same millisecond used to collapse to one row under
+      // the tuple below. Callers without an id keep the legacy tuple dedup.
+      let existing = null;
+      if (entry.requestId) {
+        existing = db.get(
+          `SELECT id, endpoint FROM usageHistory WHERE requestId = ? ORDER BY id DESC LIMIT 1`,
+          [entry.requestId]
+        );
+      } else {
+        existing = db.get(
+          `SELECT id, endpoint FROM usageHistory
+           WHERE timestamp = ?
+             AND COALESCE(provider, '') = COALESCE(?, '')
+             AND COALESCE(model, '') = COALESCE(?, '')
+             AND COALESCE(connectionId, '') = COALESCE(?, '')
+             AND COALESCE(apiKey, '') = COALESCE(?, '')
+             AND promptTokens = ?
+             AND completionTokens = ?
+           ORDER BY id DESC LIMIT 1`,
+          [
+            entry.timestamp, entry.provider || null, entry.model || null,
+            entry.connectionId || null, entry.apiKey || null,
+            promptTokens, completionTokens,
+          ]
+        );
+      }
 
       if (existing) {
         if (!existing.endpoint && entry.endpoint) {
@@ -294,12 +313,16 @@ export async function saveRequestUsage(entry) {
       }
 
       db.run(
-        `INSERT INTO usageHistory(timestamp, provider, model, connectionId, apiKey, endpoint, promptTokens, completionTokens, cost, status, tokens, meta) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO usageHistory(timestamp, provider, model, connectionId, apiKey, endpoint, promptTokens, completionTokens, cost, status, tokens, meta, requestId) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           entry.timestamp, entry.provider || null, entry.model || null,
           entry.connectionId || null, entry.apiKey || null, entry.endpoint || null,
           promptTokens, completionTokens, entry.cost || 0, entry.status || "ok",
-          stringifyJson(tokens), stringifyJson({}),
+          // G9: callers may attach accrual metadata (e.g. estimated vs
+          // reported vs cost-only) so a usage row says HOW it was
+          // counted; previously meta was always {}. Absent meta still
+          // stores {} exactly as before.
+          stringifyJson(tokens), stringifyJson(entry.meta || {}), entry.requestId || null,
         ]
       );
 
@@ -322,6 +345,22 @@ export async function saveRequestUsage(entry) {
     if (inserted) {
       pushToRing(entry);
       scheduleStatsEvent("update", 250);
+      // Structured webhook event (P3-30): off by default, fire-and-forget,
+      // never the raw key — only the masked form the usage API already
+      // exposes. Covers chat, embeddings, image, systemone and every
+      // other handler that persists through saveRequestUsage.
+      emitUsageWebhook({
+        provider: entry.provider,
+        model: entry.model,
+        connectionId: entry.connectionId || null,
+        apiKeyMasked: maskApiKeyForWebhook(entry.apiKey),
+        endpoint: entry.endpoint || null,
+        promptTokens,
+        completionTokens,
+        cost: entry.cost || 0,
+        status: entry.status || "ok",
+        requestId: entry.requestId || null,
+      });
     }
   } catch (e) {
     console.error("Failed to save usage stats:", e);
@@ -335,6 +374,7 @@ export async function getUsageHistory(filter = {}) {
 
   if (filter.provider) { conds.push("provider = ?"); params.push(filter.provider); }
   if (filter.model) { conds.push("model = ?"); params.push(filter.model); }
+  if (filter.requestId) { conds.push("requestId = ?"); params.push(filter.requestId); }
   if (filter.startDate) { conds.push("timestamp >= ?"); params.push(new Date(filter.startDate).toISOString()); }
   if (filter.endDate) { conds.push("timestamp <= ?"); params.push(new Date(filter.endDate).toISOString()); }
 
@@ -346,6 +386,94 @@ export async function getUsageHistory(filter = {}) {
     connectionId: r.connectionId, apiKeyMasked: maskApiKey(r.apiKey), endpoint: r.endpoint,
     cost: r.cost, status: r.status, tokens: parseJson(r.tokens, {}),
   }));
+}
+
+// Per-key usage breakdown (G14): totals + breakdowns by model, provider
+// and endpoint for one key (rawKey) or for all keys (rawKey null).
+// The raw key value is used only as a WHERE filter; callers must mask it
+// before returning anything (see the by-key route, which returns only
+// masked keys, key ids and names).
+export async function getKeyUsageBreakdown({ rawKey = null, startDate = null, endDate = null } = {}) {
+  const db = await getAdapter();
+  const conds = [];
+  const params = [];
+  if (rawKey) { conds.push("apiKey = ?"); params.push(rawKey); }
+  if (startDate) { conds.push("timestamp >= ?"); params.push(new Date(startDate).toISOString()); }
+  if (endDate) { conds.push("timestamp <= ?"); params.push(new Date(endDate).toISOString()); }
+  const where = conds.length ? `WHERE ${conds.join(" AND ")}` : "";
+
+  const totals = db.get(
+    `SELECT COUNT(*) AS requests,
+       COALESCE(SUM(COALESCE(promptTokens, 0)), 0) AS promptTokens,
+       COALESCE(SUM(COALESCE(completionTokens, 0)), 0) AS completionTokens,
+       COALESCE(SUM(COALESCE(cost, 0)), 0) AS cost
+     FROM usageHistory ${where}`,
+    params
+  );
+  const byModel = db.all(
+    `SELECT provider, model, COUNT(*) AS requests,
+       COALESCE(SUM(COALESCE(promptTokens, 0)), 0) AS promptTokens,
+       COALESCE(SUM(COALESCE(completionTokens, 0)), 0) AS completionTokens,
+       COALESCE(SUM(COALESCE(cost, 0)), 0) AS cost
+     FROM usageHistory ${where} GROUP BY provider, model ORDER BY requests DESC`,
+    params
+  );
+  const byProvider = db.all(
+    `SELECT provider, COUNT(*) AS requests,
+       COALESCE(SUM(COALESCE(promptTokens, 0)), 0) AS promptTokens,
+       COALESCE(SUM(COALESCE(completionTokens, 0)), 0) AS completionTokens,
+       COALESCE(SUM(COALESCE(cost, 0)), 0) AS cost
+     FROM usageHistory ${where} GROUP BY provider ORDER BY requests DESC`,
+    params
+  );
+  const byEndpoint = db.all(
+    `SELECT endpoint, COUNT(*) AS requests,
+       COALESCE(SUM(COALESCE(promptTokens, 0)), 0) AS promptTokens,
+       COALESCE(SUM(COALESCE(completionTokens, 0)), 0) AS completionTokens,
+       COALESCE(SUM(COALESCE(cost, 0)), 0) AS cost
+     FROM usageHistory ${where} GROUP BY endpoint ORDER BY requests DESC`,
+    params
+  );
+  return { totals, byModel, byProvider, byEndpoint };
+}
+
+// Scoped usage view (P3-26): one key holder sees ONLY their own rows.
+// Rows are matched on the raw key value (usageHistory.apiKey stores it),
+// newest first; the key value itself is never echoed back.
+export async function getKeyUsagePage(rawKey, { limit = 50, offset = 0 } = {}) {
+  const db = await getAdapter();
+  const lim = Math.min(200, Math.max(1, Math.floor(Number(limit)) || 50));
+  const off = Math.max(0, Math.floor(Number(offset)) || 0);
+  const totals = db.get(
+    `SELECT COUNT(*) AS count,
+       COALESCE(SUM(COALESCE(promptTokens, 0)), 0) AS promptTokens,
+       COALESCE(SUM(COALESCE(completionTokens, 0)), 0) AS completionTokens,
+       COALESCE(SUM(COALESCE(cost, 0)), 0) AS cost
+     FROM usageHistory WHERE apiKey = ?`,
+    [rawKey]
+  );
+  const rows = db.all(
+    `SELECT timestamp, provider, model, connectionId, endpoint,
+       promptTokens, completionTokens, cost, status
+     FROM usageHistory WHERE apiKey = ? ORDER BY id DESC LIMIT ? OFFSET ?`,
+    [rawKey, lim, off]
+  );
+  return {
+    totals: {
+      count: Number(totals?.count) || 0,
+      promptTokens: Number(totals?.promptTokens) || 0,
+      completionTokens: Number(totals?.completionTokens) || 0,
+      cost: Number(totals?.cost) || 0,
+    },
+    rows: rows.map((r) => ({
+      timestamp: r.timestamp, provider: r.provider, model: r.model,
+      connectionId: r.connectionId, endpoint: r.endpoint,
+      promptTokens: r.promptTokens || 0, completionTokens: r.completionTokens || 0,
+      cost: r.cost || 0, status: r.status,
+    })),
+    limit: lim,
+    offset: off,
+  };
 }
 
 function loadDaysInRange(adapter, maxDays) {

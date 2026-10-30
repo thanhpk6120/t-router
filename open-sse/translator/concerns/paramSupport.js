@@ -81,11 +81,10 @@ export function stripUnsupportedParams(provider, model, body) {
         if (!msg || msg.role !== "assistant") continue;
         for (const [from, to] of Object.entries(rule.renameMessageFields || {})) {
           if (msg[from] === undefined) continue;
-          const target = msg[to];
-          // Keep non-empty content when the target field is already present
-          // (e.g. client sent reasoning: "" alongside reasoning_content: "foo").
-          const keepTarget = target !== undefined && target !== null && target !== "";
-          if (!keepTarget) msg[to] = msg[from];
+          const existing = msg[to];
+          if (existing === undefined || existing === null || (typeof existing === "string" && !existing.trim())) {
+            msg[to] = msg[from];
+          }
           delete msg[from];
         }
         for (const key of rule.dropMessageFields || []) {

@@ -8,16 +8,20 @@ import {
   isValidApiKey,
 } from "../services/auth.js";
 import { handleAntigravityQuotaError, clearAntigravityStrikes } from "../services/antigravityQuota.js";
-import { resolveComboStrategy } from "../services/pairStrategy.js";
-import { getSettings, getApiKeyByKey, resolvePromptInjections, resolveBriefLevel, recordRtkSavings, checkKeyQuota, getKeyLimits, getKeyUsageInWindow, getInjectVariants } from "@/lib/localDb";
-import { getModelInfo, getComboModels } from "../services/model.js";
+import { resolveComboMemberAttemptCap } from "../services/memberFailover.js";
+import { dispatchCombo, createVariantHelpers, withBreakerSuccess } from "../services/comboDispatch.js";
+import { getSettings, getApiKeyByKey, resolvePromptInjections, resolveVariantSampling, applyVariantSampling, resolveBriefLevel, recordRtkSavings, getInjectVariants, getProviderConnections } from "@/lib/localDb";
+import { getDisabledModels } from "@/lib/disabledModelsDb";
+import { parseAutoTarget, buildAutoCandidates, getLatencyByProviderCached, AUTO_EXPLORATION_SHARE } from "../services/autoRouting.js";
+import { getModelInfo, getComboModels, parseModel } from "../services/model.js";
+import { recordProviderSuccess } from "../services/providerBreaker.js";
 import { handleChatCore } from "open-sse/handlers/chatCore.js";
 import { DEFAULT_HEADROOM_URL } from "@/lib/headroom/detect";
 import { getTransform as getPxpipeTransform } from "@/lib/pxpipe/loader.js";
 import { appendPxpipeEvent } from "@/lib/pxpipe/events.js";
 import { errorResponse, unavailableResponse } from "open-sse/utils/error.js";
 import { upstreamResponseHeaders } from "open-sse/utils/upstreamHeaders.js";
-import { handleComboChat, handleFusionChat, detectRequiredCapabilities } from "open-sse/services/combo.js";
+import { handleComboChat, detectRequiredCapabilities } from "open-sse/services/combo.js";
 import { augmentModelsWithCapacityAdapter, withCapacityAdapterStripping, getActiveAdapterStrategy } from "open-sse/services/capacityAdapter.js";
 import { handleBypassRequest } from "open-sse/utils/bypassHandler.js";
 import { HTTP_STATUS } from "open-sse/config/runtimeConfig.js";
@@ -29,93 +33,45 @@ import { getProjectIdForConnection } from "open-sse/services/projectId.js";
 import { stripModelContextMarker } from "open-sse/utils/modelMarkers.js";
 import { getKeyAccessContext, enforceKeyAccess, filterAdapterModels } from "../services/keyAccess.js";
 import { resolveAntiFlakyConfig, inspectChatResponse, inspectChatResponseFull } from "open-sse/rtk/flakyGuard.js";
-import { peekKeyLimits, admitKeyRequest } from "@/lib/keyRateLimiter.js";
-
-// T Router: per-key rate limits (RPM/TPM/RPH/RPD/max concurrent) — soft
-// admission around the chat handler, fails open exactly like the token
-// quota: a limiter error never blocks a chat. RPM/RPH/RPD/concurrency are
-// tracked in memory; TPM is a soft DB check over the last minute of usage.
-const LIMIT_MESSAGES = {
-  rpm: (v) => `API key rate limit exceeded (${v.used}/${v.limit} requests in the last minute)`,
-  rph: (v) => `API key rate limit exceeded (${v.used}/${v.limit} requests in the last hour)`,
-  rpd: (v) => `API key rate limit exceeded (${v.used}/${v.limit} requests in the last 24 hours)`,
-  concurrency: (v) => `API key concurrency limit exceeded (${v.limit} requests already in flight)`,
-};
-
-async function admitChatForKeyLimits(request) {
-  const apiKey = extractApiKey(request);
-  if (!apiKey) return null;
-  const keyRecord = await getApiKeyByKey(apiKey);
-  if (!keyRecord) return null;
-  const limits = await getKeyLimits(keyRecord.id);
-  if (!limits) return null;
-  if (limits.tpm) {
-    const tpmUsed = await getKeyUsageInWindow(apiKey, 1 / 60);
-    if (tpmUsed >= limits.tpm) {
-      log.warn("LIMIT", `Key "${keyRecord.name}" over TPM (${tpmUsed}/${limits.tpm})`);
-      return { response: errorResponse(429, `API key rate limit exceeded (${tpmUsed}/${limits.tpm} tokens in the last minute)`, { "Retry-After": "60" }) };
-    }
-  }
-  const verdict = peekKeyLimits(keyRecord.id, limits);
-  if (verdict.blocked) {
-    log.warn("LIMIT", `Key "${keyRecord.name}" over ${verdict.kind} (${verdict.used}/${verdict.limit})`);
-    return { response: errorResponse(429, LIMIT_MESSAGES[verdict.kind](verdict), { "Retry-After": String(verdict.retryAfterSec) }) };
-  }
-  return { release: admitKeyRequest(keyRecord.id) };
-}
-
-function wrapResponseWithRelease(response, release) {
-  if (!response || !response.body || typeof response.body.pipeThrough !== "function") {
-    release();
-    return response;
-  }
-  let done = false;
-  const finish = () => {
-    if (!done) {
-      done = true;
-      release();
-    }
-  };
-  try {
-    const stream = response.body.pipeThrough(new TransformStream({
-      transform(chunk, controller) { controller.enqueue(chunk); },
-      flush() { finish(); },
-      cancel() { finish(); },
-    }));
-    return new Response(stream, { status: response.status, statusText: response.statusText, headers: response.headers });
-  } catch {
-    finish();
-    return response;
-  }
-}
+import { withKeyAdmission, recheckKeyQuotaAfterCompletion } from "../services/keyAdmission.js";
+import { requestIdFromRequest, attachRequestId } from "../utils/requestId.js";
 
 export async function handleChat(request, clientRawRequest = null) {
-  let release = null;
-  try {
-    const admission = await admitChatForKeyLimits(request);
-    if (admission?.response) return admission.response;
-    release = admission?.release || null;
-  } catch {
-    release = null;
-  }
-  let response;
-  try {
-    response = await handleChatImpl(request, clientRawRequest);
-  } catch (err) {
-    if (release) release();
-    throw err;
-  }
-  if (release) return wrapResponseWithRelease(response, release);
-  return response;
+  // D6: one id for this client request. It rides on clientRawRequest
+  // into every single-model attempt (combo members included, panel
+  // stripping preserves it via object spread) so chatCore can stamp it
+  // on usage rows and request-detail records, and it comes back to the
+  // client on every response — success, error, or stream — via header.
+  const requestId = requestIdFromRequest(request);
+  const response = await withKeyAdmission(request, () => handleChatImpl(request, clientRawRequest, requestId), recheckKeyQuotaAfterCompletion);
+  return attachRequestId(response, requestId);
 }
-import { resolveSmartChoice } from "../services/systemoneRouter.js";
+
+// Per-combo member pins live in comboDispatch.js (memberPinFor) so the
+// top-level and nested combo branches share one definition.
+
+// Capacity ordering reads every provider's connections; cache the snapshot
+// briefly so a capacity-strategy request doesn't scan the whole table each
+// time. Staleness only affects ORDER, never correctness — failover still
+// tries every member, and locks are re-checked at credential selection.
+let capacityConnectionsCache = { at: 0, data: [] };
+const CAPACITY_CONNECTIONS_TTL_MS = 10_000;
+async function getCapacityConnections() {
+  const now = Date.now();
+  if (now - capacityConnectionsCache.at < CAPACITY_CONNECTIONS_TTL_MS) return capacityConnectionsCache.data;
+  const data = await getProviderConnections().catch(() => []);
+  capacityConnectionsCache = { at: now, data };
+  return data;
+}
+
+// withBreakerSuccess lives in comboDispatch.js (shared with dispatchCombo).
 
 /**
  * Handle chat completion request
  * Supports: OpenAI, Claude, Gemini, OpenAI Responses API formats
  * Format detection and translation handled by translator
  */
-async function handleChatImpl(request, clientRawRequest = null) {
+async function handleChatImpl(request, clientRawRequest = null, requestId = null) {
   let body;
   try {
     body = await request.json();
@@ -133,6 +89,11 @@ async function handleChatImpl(request, clientRawRequest = null) {
       headers: Object.fromEntries(request.headers.entries())
     };
   }
+  // D6 thread: the request id travels on clientRawRequest so it reaches
+  // handleSingleModelChat (and from there chatCore) for every branch —
+  // top-level combo, nested combo, solo, fusion panels — without a new
+  // positional parameter on every call site.
+  if (requestId) clientRawRequest.requestId = requestId;
   // Claude Code marks a 1M-context request as `<model>[1m]`; the marker matches
   // no combo, alias or provider/model pair, so it must not reach resolution.
   // The capability travels in the anthropic-beta header, forwarded as-is.
@@ -168,31 +129,21 @@ async function handleChatImpl(request, clientRawRequest = null) {
     }
   }
 
-  // T Router: per-key token quota — soft pre-check, fails open
-  if (apiKey) {
-    try {
-      const keyRecord = await getApiKeyByKey(apiKey);
-      if (keyRecord) {
-        const verdict = await checkKeyQuota(keyRecord.id, apiKey);
-        if (verdict.blocked) {
-          log.warn("QUOTA", `Key "${keyRecord.name}" over quota (${verdict.used}/${verdict.quota.limit})`);
-          return errorResponse(429, `API key token quota exceeded (${verdict.used}/${verdict.quota.limit} tokens in the last ${verdict.quota.windowHours}h)`);
-        }
-      }
-    } catch {}
-  }
-
   if (!modelStr) {
     log.warn("CHAT", "Missing model");
     return errorResponse(HTTP_STATUS.BAD_REQUEST, "Missing model");
   }
 
-  // Per-key access control: a restricted key may call only its listed combos and
-  // models. Checked once on the requested target, before bypass, combo expansion
-  // and any credential lookup; an allowed combo grants the members it routes to.
+  // Scored auto-routing (P3-25): `auto:<intent>` is not a real model, so the
+  // literal target skips the per-key target gate — the RESOLVED candidates
+  // are gated instead (filterAdapterModels below), so a restricted key only
+  // ever routes to models its allow-list names.
+  const autoIntent = parseAutoTarget(modelStr);
   const keyAccess = await getKeyAccessContext(request);
-  const keyAccessDenied = await enforceKeyAccess(keyAccess, modelStr);
-  if (keyAccessDenied) return keyAccessDenied;
+  if (!autoIntent) {
+    const keyAccessDenied = await enforceKeyAccess(keyAccess, modelStr);
+    if (keyAccessDenied) return keyAccessDenied;
+  }
 
   // Bypass naming/warmup requests before combo rotation to avoid wasting rotation slots
   const userAgent = request?.headers?.get("user-agent") || "";
@@ -201,83 +152,57 @@ async function handleChatImpl(request, clientRawRequest = null) {
 
   const requiredCapabilities = detectRequiredCapabilities(body);
 
-  // Variants carry no caps of their own in the catalog — look up their
-  // backing model so capability judgments (e.g. vision on an injected
-  // variant) evaluate the real upstream model.
-  const backingCache = await getInjectVariants().catch(() => ({}));
-  const resolveBackingSync = (name) => backingCache?.[name]?.model || null;
-
-  // Check if model is a combo (has multiple models with fallback)
-  const comboModels = await getComboModels(modelStr);
-  if (comboModels) {
-    // Same rule as the nested combo branch below: a member that names
-    // a variant carries its own bare name so its prompt fires; other
-    // members keep the requested combo name.
-    const topInjectVariants = await getInjectVariants().catch(() => ({}));
-    const topMemberInjectName = (m) =>
-      (typeof m === "string" && !m.includes("/") && topInjectVariants[m]
-        ? m
-        : modelStr);
-    // Capacity pools may hold variants: judge them by their backing model,
-    // and keep the variant name in the pool so its prompt still fires.
-    const topVariantBacking = (m) =>
-      (typeof m === "string" && !m.includes("/") && topInjectVariants[m]
-        ? topInjectVariants[m].model || null
-        : null);
-    // Check for combo-specific strategy first, fallback to global;
-    // a multi-model pair defaults to round-robin (see pairStrategy.js)
-    const comboStrategies = settings.comboStrategies || {};
-    const comboStrategy = await resolveComboStrategy(modelStr, comboModels, settings, apiKey);
-    const augmentedModels = await filterAdapterModels(keyAccess, augmentModelsWithCapacityAdapter(comboModels, requiredCapabilities, settings, topVariantBacking), comboModels);
-    const adapterAdded = augmentedModels.filter((m) => !comboModels.includes(m));
-
-    if (comboStrategy === "fusion") {
-      log.info("CHAT", `Combo "${modelStr}" with ${comboModels.length} models (strategy: fusion)`);
-      return handleFusionChat({
-        body,
-        models: comboModels,
-        handleSingleModel: (b, m, isPanel) => {
-          let cleanRawReq = clientRawRequest;
-          if (isPanel && clientRawRequest) {
-            const { tools, tool_choice, ...cleanBody } = clientRawRequest.body || {};
-            cleanRawReq = { ...clientRawRequest, body: cleanBody };
-          }
-          return handleSingleModelChat(b, m, cleanRawReq, request, apiKey, null, topMemberInjectName(m));
-        },
-        log,
-        comboName: modelStr,
-        judgeModel: comboStrategies[modelStr]?.judgeModel,
-        tuning: comboStrategies[modelStr]?.fusionTuning,
-      });
+  // Auto-routing resolves to a ranked candidate list and falls back through
+  // it in order, like a combo with strategy "fallback" (same member cap).
+  if (autoIntent) {
+    const connections = await getProviderConnections().catch(() => []);
+    const disabled = await getDisabledModels().catch(() => ({}));
+    const latencyByProvider = await getLatencyByProviderCached().catch(() => ({}));
+    let candidates = buildAutoCandidates({ intent: autoIntent, connections, disabled, latencyByProvider, explorationShare: AUTO_EXPLORATION_SHARE });
+    candidates = await filterAdapterModels(keyAccess, candidates, []);
+    if (candidates.length === 0) {
+      log.warn("CHAT", `Auto-routing "${modelStr}" found no routable model`);
+      return errorResponse(
+        HTTP_STATUS.NOT_FOUND,
+        keyAccess
+          ? `No model allowed for this key matches auto:${autoIntent}`
+          : `No connected provider offers a model for auto:${autoIntent} — connect a provider first`,
+      );
     }
-
-    const comboStickyLimit = settings.comboStickyRoundRobinLimit;
-    const comboCfg = comboStrategies[modelStr] || {};
-    log.info("CHAT", `Combo "${modelStr}" with ${augmentedModels.length} models (strategy: ${comboStrategy}, sticky: ${comboStickyLimit})`);
+    log.info("CHAT", `Auto-routing "${modelStr}" → [${candidates.join(", ")}]`);
     return handleComboChat({
       body,
-      models: augmentedModels,
-      handleSingleModel: withCapacityAdapterStripping(
-        (b, m) => handleSingleModelChat(b, m, clientRawRequest, request, apiKey, null, topMemberInjectName(m)),
-        adapterAdded,
-        topVariantBacking
-      ),
+      models: candidates,
+      handleSingleModel: withBreakerSuccess((b, m) => handleSingleModelChat(b, m, clientRawRequest, request, apiKey, null, modelStr, resolveComboMemberAttemptCap(settings))),
       log,
       comboName: modelStr,
-      comboStrategy,
-      comboStickyLimit,
+      comboStrategy: "fallback",
+      comboStickyLimit: settings.comboStickyRoundRobinLimit,
       sessionId,
-      smartPolicy: comboCfg.smartPolicy || "smart",
-      sessionSticky: comboCfg.sessionSticky !== false,
-      confidenceThreshold: typeof comboCfg.confidenceThreshold === "number" ? comboCfg.confidenceThreshold : 0.8,
-      resolveSmartChoice: comboStrategy === "smart"
-        ? (b, m) => resolveSmartChoice({
-            body: b,
-            models: m,
-            routerModel: comboCfg.routerModel,
-            log,
-          })
-        : null,
+    });
+  }
+
+  // Check if model is a combo (has multiple models with fallback).
+  // Strategy, capacity ordering, fusion and fallback dispatch all live
+  // in comboDispatch.js (P4-33) — the same module the nested branch uses.
+  const comboModels = await getComboModels(modelStr);
+  if (comboModels) {
+    return dispatchCombo({
+      body,
+      comboName: modelStr,
+      comboModels,
+      settings,
+      apiKey,
+      keyAccess,
+      requiredCapabilities,
+      variants: await getInjectVariants().catch(() => ({})),
+      clientRawRequest,
+      request,
+      log,
+      sessionId,
+      handleSingleModel: handleSingleModelChat,
+      getCapacityConnections,
+      recordBreakerSuccess: true,
     });
   }
 
@@ -285,15 +210,8 @@ async function handleChatImpl(request, clientRawRequest = null) {
   // target lacks a capability the request needs (e.g. no vision, request has an image).
   // Same variant rules as the combo branches: a pool model that names a variant
   // is judged by its backing model, and carries its bare name so its prompt fires.
-  const soloInjectVariants = await getInjectVariants().catch(() => ({}));
-  const soloVariantBacking = (m) =>
-    (typeof m === "string" && !m.includes("/") && soloInjectVariants[m]
-      ? soloInjectVariants[m].model || null
-      : null);
-  const soloInjectName = (m) =>
-    (typeof m === "string" && !m.includes("/") && soloInjectVariants[m]
-      ? m
-      : modelStr);
+  const { memberInjectName: soloInjectName, variantBacking: soloVariantBacking } =
+    createVariantHelpers(await getInjectVariants().catch(() => ({})), modelStr);
   const soloAugmented = await filterAdapterModels(keyAccess, augmentModelsWithCapacityAdapter([modelStr], requiredCapabilities, settings, soloVariantBacking), [modelStr]);
   if (soloAugmented.length > 1) {
     const adapterAdded = soloAugmented.filter((m) => m !== modelStr);
@@ -302,7 +220,10 @@ async function handleChatImpl(request, clientRawRequest = null) {
       body,
       models: soloAugmented,
       handleSingleModel: withCapacityAdapterStripping(
-        (b, m) => handleSingleModelChat(b, m, clientRawRequest, request, apiKey, null, soloInjectName(m)),
+        withBreakerSuccess(
+          (b, m) => handleSingleModelChat(b, m, clientRawRequest, request, apiKey, null, soloInjectName(m), resolveComboMemberAttemptCap(settings)),
+          (m) => soloVariantBacking(m) || m,
+        ),
         adapterAdded,
         soloVariantBacking
       ),
@@ -312,7 +233,15 @@ async function handleChatImpl(request, clientRawRequest = null) {
     });
   }
 
-  return handleSingleModelChat(body, modelStr, clientRawRequest, request, apiKey, contextMarker ? `${modelStr.slice(modelStr.indexOf("/") + 1)}[${contextMarker}]` : null);
+  const soloResult = await handleSingleModelChat(body, modelStr, clientRawRequest, request, apiKey, contextMarker ? `${modelStr.slice(modelStr.indexOf("/") + 1)}[${contextMarker}]` : null);
+  try {
+    if (soloResult?.ok) {
+      const target = soloVariantBacking(modelStr) || modelStr;
+      const p = parseModel(target);
+      if (p?.provider) recordProviderSuccess(p.provider);
+    }
+  } catch { /* breaker bookkeeping must not fail the request */ }
+  return soloResult;
 }
 
 /**
@@ -323,6 +252,7 @@ function withFlakyRetriesHeader(response, retries) {
   try {
     const headers = new Headers(response.headers);
     headers.set("x-t-router-flaky-retries", String(retries));
+    headers.set("x-9router-pro-flaky-retries", String(retries));
     return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
   } catch {
     return response;
@@ -332,87 +262,58 @@ function withFlakyRetriesHeader(response, retries) {
 /**
  * Handle single model chat request
  */
-async function handleSingleModelChat(body, modelStr, clientRawRequest = null, request = null, apiKey = null, requestedModel = null, injectModelName = null) {
+async function handleSingleModelChat(body, modelStr, clientRawRequest = null, request = null, apiKey = null, requestedModel = null, injectModelName = null, comboMemberAttemptCap = null, abortSignal = null, pinnedConnectionId = null) {
+  // Direct variant pick without a backing combo: a bare name that names a
+  // variant routes straight to its backing model, with the variant name
+  // carried so its prompt still fires. This covers both direct picks and
+  // combo members that name variants — no combo object is created per
+  // variant, so the Kombinasi page shows only combos the user made.
+  if (typeof modelStr === "string" && !modelStr.includes("/")) {
+    const directVariants = await getInjectVariants().catch(() => ({}));
+    const directVariant = directVariants[modelStr];
+    if (directVariant && typeof directVariant.model === "string" && directVariant.model.includes("/")) {
+      // A direct pick used to run through its single-member combo, so it
+      // inherited the member attempt cap; without it the pick grinds the
+      // whole pool (a dahl direct pick timed out at 150s). Resolve the
+      // cap here when the caller passed none (top-level picks pass null).
+      const directCap = comboMemberAttemptCap ?? resolveComboMemberAttemptCap(await getSettings().catch(() => ({})));
+      return handleSingleModelChat({ ...body, model: directVariant.model }, directVariant.model, clientRawRequest, request, apiKey, requestedModel, modelStr, directCap, abortSignal, pinnedConnectionId);
+    }
+  }
   const modelInfo = await getModelInfo(modelStr);
 
   // If provider is null, this might be a combo name - check and handle
   if (!modelInfo.provider) {
     const comboModels = await getComboModels(modelStr);
     if (comboModels) {
-      // Variant members of a combo must inject like a direct variant
-      // pick: carry the member's bare name when it names a variant,
-      // otherwise keep the outer requested name (direct variant picks
-      // rely on it through their single-member combo).
-      const comboInjectVariants = await getInjectVariants().catch(() => ({}));
-      const memberInjectName = (m) =>
-        (typeof m === "string" && !m.includes("/") && comboInjectVariants[m]
-          ? m
-          : (injectModelName || modelStr));
-      const nestedVariantBacking = (m) =>
-        (typeof m === "string" && !m.includes("/") && comboInjectVariants[m]
-          ? comboInjectVariants[m].model || null
-          : null);
+      // Nested combo (a combo member that is itself a combo): the access
+      // decision was made on the outer target; only drop adapter models
+      // the key may not call. One deliberate difference from the
+      // top-level branch is preserved: no breaker-success recording
+      // (recordBreakerSuccess: false) — see comboDispatch.js.
+      // Variant fallback: a member that names a variant carries its own
+      // bare name; otherwise the outer requested name is kept, so the
+      // variant pick's prompt still fires. That is why the fallback
+      // name here is (injectModelName || modelStr), not modelStr.
       const chatSettings = await getSettings();
-      // Check for combo-specific strategy first, fallback to global;
-      // a multi-model pair defaults to round-robin (see pairStrategy.js)
-      const comboStrategies = chatSettings.comboStrategies || {};
-      const comboStrategy = await resolveComboStrategy(modelStr, comboModels, chatSettings, apiKey);
-      const requiredCapabilities = detectRequiredCapabilities(body);
-      // Nested combo (a combo member that is itself a combo): the access decision
-      // was made on the outer target; only drop adapter models the key may not call.
-      const keyAccess = await getKeyAccessContext(request);
-      const augmentedModels = await filterAdapterModels(keyAccess, augmentModelsWithCapacityAdapter(comboModels, requiredCapabilities, chatSettings, nestedVariantBacking), comboModels);
-      const adapterAdded = augmentedModels.filter((m) => !comboModels.includes(m));
-
-      if (comboStrategy === "fusion") {
-        log.info("CHAT", `Combo "${modelStr}" with ${comboModels.length} models (strategy: fusion)`);
-        return handleFusionChat({
-          body,
-          models: comboModels,
-          handleSingleModel: (b, m, isPanel) => {
-            let cleanRawReq = clientRawRequest;
-            if (isPanel && clientRawRequest) {
-              const { tools, tool_choice, ...cleanBody } = clientRawRequest.body || {};
-              cleanRawReq = { ...clientRawRequest, body: cleanBody };
-            }
-            return handleSingleModelChat(b, m, cleanRawReq, request, apiKey, null, memberInjectName(m));
-          },
-          log,
-          comboName: modelStr,
-          judgeModel: comboStrategies[modelStr]?.judgeModel,
-          tuning: comboStrategies[modelStr]?.fusionTuning,
-        });
-      }
-
-      const comboStickyLimit = chatSettings.comboStickyRoundRobinLimit;
-      const comboCfg = comboStrategies[modelStr] || {};
       const nestedSession = resolveSessionIdentity({ headers: clientRawRequest?.headers, body });
-      const nestedSessionId = nestedSession?.sessionId || null;
-      log.info("CHAT", `Combo "${modelStr}" with ${augmentedModels.length} models (strategy: ${comboStrategy}, sticky: ${comboStickyLimit})`);
-      return handleComboChat({
+      return dispatchCombo({
         body,
-        models: augmentedModels,
-        handleSingleModel: withCapacityAdapterStripping(
-          (b, m) => handleSingleModelChat(b, m, clientRawRequest, request, apiKey, null, memberInjectName(m)),
-          adapterAdded,
-          nestedVariantBacking
-        ),
-        log,
         comboName: modelStr,
-        comboStrategy,
-        comboStickyLimit,
-        sessionId: nestedSessionId,
-        smartPolicy: comboCfg.smartPolicy || "smart",
-        sessionSticky: comboCfg.sessionSticky !== false,
-        confidenceThreshold: typeof comboCfg.confidenceThreshold === "number" ? comboCfg.confidenceThreshold : 0.8,
-        resolveSmartChoice: comboStrategy === "smart"
-          ? (b, m) => resolveSmartChoice({
-              body: b,
-              models: m,
-              routerModel: comboCfg.routerModel,
-              log,
-            })
-          : null,
+        comboModels,
+        settings: chatSettings,
+        apiKey,
+        keyAccess: await getKeyAccessContext(request),
+        requiredCapabilities: detectRequiredCapabilities(body),
+        variants: await getInjectVariants().catch(() => ({})),
+        variantFallbackName: injectModelName || modelStr,
+        clientRawRequest,
+        request,
+        log,
+        sessionId: nestedSession?.sessionId || null,
+        handleSingleModel: handleSingleModelChat,
+        getCapacityConnections,
+        recordBreakerSuccess: false,
       });
     }
     log.warn("CHAT", "Invalid model format", { model: modelStr });
@@ -420,6 +321,21 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
   }
 
   const { provider, model } = modelInfo;
+
+  // Per-provider/per-model cap override (P3-30): the caller passes the
+  // global cap, but the member that actually serves is this provider/
+  // model, so its override wins here. A null incoming cap means the
+  // caller deliberately runs uncapped (solo single-model requests) and
+  // stays null — the override only refines a cap that already exists.
+  // The fresh settings read also covers direct-variant recursion, where
+  // the caller resolved the cap before the backing model was known.
+  if (comboMemberAttemptCap !== null) {
+    comboMemberAttemptCap = resolveComboMemberAttemptCap(
+      await getSettings().catch(() => ({})),
+      provider,
+      model,
+    );
+  }
 
   // Routing shown in the unified "▶" line (client model → provider/model)
 
@@ -431,14 +347,18 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
   let lastError = null;
   let lastStatus = null;
   let lastHeaders = null;
-  // Anti-Flaky Guard (T Router): retries spent on 200-but-garbage
+  // Anti-Flaky Guard (9Router Pro): retries spent on 200-but-garbage
   // responses, plus the last such response as a rescue if the pool runs
   // out before a clean answer shows up.
   let flakyAttempts = 0;
   let lastFlakyResult = null;
+  // Smart member failover: failed accounts for this member inside this one
+  // request. Once the cap is hit, the member gives up so the combo can move
+  // to its next member at once instead of grinding the whole pool.
+  let memberFallbackFailures = 0;
 
   while (true) {
-    const credentials = await getProviderCredentials(provider, excludeConnectionIds, model, { requestedModel: requestedModel || model });
+    const credentials = await getProviderCredentials(provider, excludeConnectionIds, model, { requestedModel: requestedModel || model, preferredConnectionId: pinnedConnectionId || undefined });
 
     // All accounts unavailable
     if (!credentials || credentials.allRateLimited) {
@@ -474,7 +394,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
     // Use shared chatCore
     const chatSettings = await getSettings();
     const providerThinking = (chatSettings.providerThinking || {})[provider] || null;
-    // Prompt Injection (T Router): global → the API key's → the
+    // Prompt Injection (9Router Pro): global → the API key's → the
     // variant's (matched by the bare custom name the user requested) →
     // the model+key's (matched by resolved provider/model). A variant
     // pick suppresses the model scopes, so the raw model name is never
@@ -487,7 +407,11 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
       resolvedModel: `${provider}/${model}`,
       bareModel: model,
     });
-    // Brief Mode (T Router): per-scope terseness level, same context.
+    // R7 locked sampling: a direct variant pick (or a combo member naming
+    // a variant) carries that variant's sampling params, overriding the
+    // client's defaults for this request only. Prompt text untouched.
+    const variantSampling = await resolveVariantSampling(injectModelName || requestedModel || modelStr).catch(() => null);
+    // Brief Mode (9Router Pro): per-scope terseness level, same context.
     const briefLevel = await resolveBriefLevel({
       apiKeyId: injectKeyRecord?.id || null,
       requestedModel: injectModelName || requestedModel || modelStr,
@@ -495,10 +419,12 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
       bareModel: model,
     });
     const result = await handleChatCore({
-      body: { ...body, model: `${provider}/${model}` },
+      body: applyVariantSampling({ ...body, model: `${provider}/${model}` }, variantSampling),
       modelInfo: { provider, model },
       credentials: refreshedCredentials,
       log,
+      externalSignal: abortSignal,
+      requestId: clientRawRequest?.requestId || null,
       clientRawRequest,
       connectionId: credentials.connectionId,
       userAgent,
@@ -516,8 +442,6 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
       promptInjects,
       briefLevel,
       onRtkStats: (stats) => { try { recordRtkSavings(stats); } catch {} },
-      customPromptEnabled: !!chatSettings.customPromptEnabled,
-      customPrompt: chatSettings.customPrompt || "",
       pxpipeEnabled: !!chatSettings.pxpipeEnabled,
       pxpipeMinChars: chatSettings.pxpipeMinChars,
       pxpipeTimeoutMs: chatSettings.pxpipeTimeoutMs,
@@ -544,7 +468,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
     });
 
     if (result.success) {
-      // Anti-Flaky Guard (T Router): an HTTP 200 whose body is empty
+      // Anti-Flaky Guard (9Router Pro): an HTTP 200 whose body is empty
       // or a degenerate repetition loop is retried on another account
       // instead of reaching the client. Fail-open: retries are capped by
       // settings, the account is NOT marked unavailable (the upstream
@@ -562,6 +486,18 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
           lastFlakyResult = result;
           if (flakyAttempts < afConfig.maxRetries) {
             flakyAttempts++;
+            // A flaky retry spends an account attempt too (the account
+            // did serve, just garbage), so it counts toward the member
+            // cap — otherwise a member could burn its cap on hard
+            // failures plus up to maxRetries extra flaky retries. When
+            // the cap is hit the member gives up and the last flaky
+            // response is rescued, the same way it is when the pool
+            // runs out.
+            memberFallbackFailures++;
+            if (comboMemberAttemptCap !== null && memberFallbackFailures >= comboMemberAttemptCap) {
+              log.warn("COMBO", `Member ${provider}/${model} failed ${memberFallbackFailures} accounts in this request — moving to next combo member`);
+              return withFlakyRetriesHeader(result.response, flakyAttempts);
+            }
             log.warn("FLAKY", `[${provider}/${model}] ${verdict.reason} response from ${credentials.connectionName || credentials.connectionId} — retry ${flakyAttempts}/${afConfig.maxRetries} on another account`);
             excludeConnectionIds.add(credentials.connectionId);
             lastError = `Flaky (${verdict.reason}) response`;
@@ -587,9 +523,19 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
 
     // Exhausted Antigravity model is blocked only in RAM cache until upstream resetAt.
     // Do not persist a modelLock_* for this path.
-    const shouldFallback = provider === "antigravity" && quotaResetMs
-      ? true
-      : (await markAccountUnavailable(credentials.connectionId, result.status, result.error, provider, model, resetsAtMs)).shouldFallback;
+    let shouldFallback;
+    if (provider === "antigravity" && quotaResetMs) {
+      shouldFallback = true;
+    } else {
+      try {
+        shouldFallback = (await markAccountUnavailable(credentials.connectionId, result.status, result.error, provider, model, resetsAtMs)).shouldFallback;
+      } catch (err) {
+        // Fail open: bookkeeping must never kill the request — fall back to
+        // the next account even if the lock could not be recorded.
+        log.warn("FALLBACK", `markAccountUnavailable threw, falling back anyway: ${err?.message || err}`);
+        shouldFallback = true;
+      }
+    }
 
     if (shouldFallback) {
       log.warn("FALLBACK", `${credentials.connectionName} failed (${result.status}${log.describeStatus?.(result.status) ? ` ${log.describeStatus(result.status)}` : ""}) → trying next account`);
@@ -597,6 +543,14 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
       lastError = result.error;
       lastStatus = result.status;
       lastHeaders = upstreamResponseHeaders(result.response?.headers);
+      // Smart member failover: a lane whose accounts keep failing (e.g. a
+      // campaign-wide 429) stops here — the combo moves to its next member
+      // at once instead of grinding the rest of this pool.
+      memberFallbackFailures++;
+      if (comboMemberAttemptCap !== null && memberFallbackFailures >= comboMemberAttemptCap) {
+        log.warn("COMBO", `Member ${provider}/${model} failed ${memberFallbackFailures} accounts in this request — moving to next combo member`);
+        return result.response;
+      }
       continue;
     }
 

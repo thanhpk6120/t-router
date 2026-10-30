@@ -45,8 +45,6 @@ export default function TokenSaverClient() {
   const [cavemanLevel, setCavemanLevel] = useState("full");
   const [ponytailEnabled, setPonytailEnabled] = useState(false);
   const [ponytailLevel, setPonytailLevel] = useState("full");
-  const [customPromptEnabled, setCustomPromptEnabled] = useState(false);
-  const [customPrompt, setCustomPrompt] = useState("");
   const [pxpipeEnabled, setPxpipeEnabled] = useState(false);
   const [pxpipeMinChars, setPxpipeMinChars] = useState(25000);
   const [pxpipeStatus, setPxpipeStatus] = useState({
@@ -356,14 +354,6 @@ export default function TokenSaverClient() {
     patchSetting({ ponytailLevel: level });
   };
 
-  const handleCustomPromptEnabled = (value) => {
-    setCustomPromptEnabled(value);
-    patchSetting({ customPromptEnabled: value });
-  };
-
-  const handleCustomPromptBlur = () => {
-    patchSetting({ customPrompt });
-  };
 
   const refreshPxpipeStatus = useCallback(async () => {
     setPxpipeStatus((s) => ({ ...s, loading: true }));
@@ -441,8 +431,6 @@ export default function TokenSaverClient() {
           setCavemanLevel(data.cavemanLevel || "full");
           setPonytailEnabled(!!data.ponytailEnabled);
           setPonytailLevel(data.ponytailLevel || "full");
-          setCustomPromptEnabled(!!data.customPromptEnabled);
-          setCustomPrompt(data.customPrompt || "");
           setPxpipeEnabled(!!data.pxpipeEnabled);
           if (typeof data.pxpipeMinChars === "number") setPxpipeMinChars(data.pxpipeMinChars);
           refreshHeadroomStatus();
@@ -487,7 +475,7 @@ export default function TokenSaverClient() {
       : "bg-warning/15 text-warning";
 
   return (
-    <div className="space-y-6 p-6">
+    <div className="space-y-6">
       <Card id="rtk">
         <div className="flex items-center justify-between mb-2">
           <h2 className="text-lg font-semibold flex items-center gap-2">
@@ -511,7 +499,7 @@ export default function TokenSaverClient() {
               </a>
             </p>
             <p className="text-sm text-text-muted">
-              git/grep/ls/tree/logs → 60-90% fewer input tokens
+              RTK rewrites long tool output into fewer tokens: git/grep/ls/tree/logs → 60-90% fewer input tokens
             </p>
           </div>
           <Toggle
@@ -547,7 +535,7 @@ export default function TokenSaverClient() {
               </button>
             </div>
             <p className="text-sm text-text-muted mt-1">
-              Compress prompts via /v1/compress before routing to the model
+              Headroom is a separate service that compresses prompts via /v1/compress before routing to the model
             </p>
           </div>
           <Toggle
@@ -756,35 +744,17 @@ export default function TokenSaverClient() {
         </div>
         <div className="flex items-center justify-between pt-4 mt-4 border-t border-border gap-4 flex-wrap">
           <div className="min-w-0 flex-1">
-            <p className="font-medium">Custom system prompt</p>
+            <p className="font-medium">Global instruction</p>
             <p className="text-sm text-text-muted">
-              Appends your own instruction to every request, independently of
-              the savers above
+              One global prompt lives in Prompt Injection now, so there is a
+              single place for it —{" "}
+              <a href="/dashboard/prompt-injection" className="font-medium text-primary hover:underline">
+                set it there
+              </a>
+              .
             </p>
           </div>
-          <Toggle
-            checked={customPromptEnabled}
-            onChange={() => handleCustomPromptEnabled(!customPromptEnabled)}
-          />
         </div>
-        {customPromptEnabled && (
-          <div className="pt-3">
-            <textarea
-              id="custom-prompt"
-              aria-label="Custom system prompt"
-              value={customPrompt}
-              onChange={(e) => setCustomPrompt(e.target.value)}
-              onBlur={handleCustomPromptBlur}
-              rows={4}
-              placeholder="e.g. Prefer editing existing files over creating new ones."
-              className="w-full rounded border border-border bg-transparent p-2 text-xs"
-            />
-            <p className="text-xs text-text-muted mt-1">
-              Applied to every provider and model. Sent as-is to upstream; an
-              empty prompt injects nothing.
-            </p>
-          </div>
-        )}
         {/* PXPIPE hidden from UI — experimental, not exposed to users yet */}
         {false && (
         <div className="flex items-center justify-between pt-4 mt-4 border-t border-border gap-4 flex-wrap">

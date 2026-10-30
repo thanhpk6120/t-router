@@ -29,7 +29,7 @@ function SkillRow({ skill }) {
   const url = getSkillRawUrl(skill.id);
   return (
     <div
-      className={`flex items-start gap-3 p-4 rounded-[14px] border shadow-[var(--shadow-soft)] transition-colors ${
+      className={`flex flex-col gap-3 sm:flex-row sm:items-start p-4 rounded-[14px] border shadow-[var(--shadow-soft)] transition-colors ${
         skill.isEntry
           ? "border-brand-500/40 bg-brand-500/5"
           : "border-border-subtle bg-surface hover:bg-surface-2"
@@ -73,6 +73,8 @@ function SkillRow({ skill }) {
 }
 
 export default function SkillsPage() {
+  // Intentional width (G21): a reading-width column for the skill link
+  // list, narrower than the default max-w-7xl dashboard width.
   return (
     <div className="max-w-4xl mx-auto space-y-6">
       <Card padding="md">

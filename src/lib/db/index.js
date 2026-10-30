@@ -59,7 +59,7 @@ export {
 
 // API keys
 export {
-  getApiKeys, getApiKeyById, getApiKeyByKey, createApiKey, updateApiKey, deleteApiKey, validateApiKey,
+  getApiKeys, getApiKeyById, getApiKeyByKey, createApiKey, updateApiKey, deleteApiKey, validateApiKey, isKeyExpired,
 } from "./repos/apiKeysRepo.js";
 
 // Combos
@@ -81,14 +81,14 @@ export {
   getInjectUserPrompts, setInjectUserPrompt, deleteInjectUserPrompt,
   getInjectKeyModelPrompts, setInjectKeyModelPrompt, deleteInjectKeyModelPrompt,
   getInjectVariants, setInjectVariant, deleteInjectVariant, migrateModelPromptsToVariants,
-  getInjectGlobal, setInjectGlobal, resolvePromptInjections,
+  getInjectGlobal, setInjectGlobal, resolvePromptInjections, resolveVariantSampling, applyVariantSampling, cleanSamplingParams,
   getPromptTemplates, upsertPromptTemplate, deletePromptTemplate,
 } from "./repos/promptInjectRepo.js";
 
 // Key Quotas (T Router)
 export {
   getKeyQuota, getAllKeyQuotas, setKeyQuota, deleteKeyQuota,
-  getKeyUsageInWindow, checkKeyQuota,
+  getKeyUsageInWindow, getKeyCostInWindow, checkKeyQuota,
 } from "./repos/keyQuotaRepo.js";
 
 // Key Limits (T Router) — per-key RPM/TPM/RPH/RPD/concurrency config

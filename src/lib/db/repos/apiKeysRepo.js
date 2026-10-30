@@ -2,6 +2,7 @@ import { v4 as uuidv4 } from "uuid";
 import { getAdapter } from "../driver.js";
 import { keyAccessFromColumns, keyAccessToColumns } from "@/shared/utils/keyAccess.js";
 import { KEY_ACCESS_UNRESTRICTED } from "@/shared/constants/keyAccess.js";
+import { invalidateModelsListCache } from "@/sse/services/modelsListCache.js";
 
 function rowToKey(row) {
   if (!row) return null;
@@ -12,8 +13,20 @@ function rowToKey(row) {
     machineId: row.machineId,
     isActive: row.isActive === 1 || row.isActive === true,
     createdAt: row.createdAt,
+    expiresAt: row.expiresAt || null,
     access: keyAccessFromColumns(row.accessRestricted, row.accessAllow),
   };
+}
+
+// Per-key policy (P3-26): a key is expired only when expiresAt parses to a
+// date in the past. Garbage values fail open (treated as no expiry) so a
+// corrupt row cannot lock out an otherwise valid key; the dashboard PUT
+// route validates the format on write.
+export function isKeyExpired(expiresAt, now = Date.now()) {
+  if (!expiresAt) return false;
+  const t = new Date(expiresAt).getTime();
+  if (!Number.isFinite(t)) return false;
+  return t <= now;
 }
 
 export async function getApiKeys() {
@@ -36,11 +49,12 @@ export async function getApiKeyByKey(key) {
   return rowToKey(row);
 }
 
-export async function createApiKey(name, machineId) {
+export async function createApiKey(name, machineId, opts = {}) {
   if (!machineId) throw new Error("machineId is required");
   const db = await getAdapter();
   const { generateApiKeyWithMachine } = await import("@/shared/utils/apiKey");
   const result = generateApiKeyWithMachine(machineId);
+  const expiresAt = opts.expiresAt || null;
   const apiKey = {
     id: uuidv4(),
     name,
@@ -48,13 +62,15 @@ export async function createApiKey(name, machineId) {
     machineId,
     isActive: true,
     createdAt: new Date().toISOString(),
+    expiresAt,
     access: { restricted: false, allow: [] },
   };
   const cols = keyAccessToColumns(KEY_ACCESS_UNRESTRICTED);
   db.run(
-    `INSERT INTO apiKeys(id, key, name, machineId, isActive, createdAt, accessRestricted, accessAllow) VALUES(?, ?, ?, ?, ?, ?, ?, ?)`,
-    [apiKey.id, apiKey.key, apiKey.name, apiKey.machineId, 1, apiKey.createdAt, cols.accessRestricted, cols.accessAllow]
+    `INSERT INTO apiKeys(id, key, name, machineId, isActive, createdAt, expiresAt, accessRestricted, accessAllow) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [apiKey.id, apiKey.key, apiKey.name, apiKey.machineId, 1, apiKey.createdAt, expiresAt, cols.accessRestricted, cols.accessAllow]
   );
+  invalidateModelsListCache();
   return apiKey;
 }
 
@@ -67,23 +83,27 @@ export async function updateApiKey(id, data) {
     const merged = { ...rowToKey(row), ...data };
     const cols = keyAccessToColumns(merged.access);
     db.run(
-      `UPDATE apiKeys SET key = ?, name = ?, machineId = ?, isActive = ?, accessRestricted = ?, accessAllow = ? WHERE id = ?`,
-      [merged.key, merged.name, merged.machineId, merged.isActive ? 1 : 0, cols.accessRestricted, cols.accessAllow, id]
+      `UPDATE apiKeys SET key = ?, name = ?, machineId = ?, isActive = ?, expiresAt = ?, accessRestricted = ?, accessAllow = ? WHERE id = ?`,
+      [merged.key, merged.name, merged.machineId, merged.isActive ? 1 : 0, merged.expiresAt || null, cols.accessRestricted, cols.accessAllow, id]
     );
     result = rowToKey(db.get(`SELECT * FROM apiKeys WHERE id = ?`, [id]));
   });
+  if (result) invalidateModelsListCache();
   return result;
 }
 
 export async function deleteApiKey(id) {
   const db = await getAdapter();
   const res = db.run(`DELETE FROM apiKeys WHERE id = ?`, [id]);
-  return (res?.changes ?? 0) > 0;
+  const ok = (res?.changes ?? 0) > 0;
+  if (ok) invalidateModelsListCache();
+  return ok;
 }
 
 export async function validateApiKey(key) {
   const db = await getAdapter();
-  const row = db.get(`SELECT isActive FROM apiKeys WHERE key = ?`, [key]);
+  const row = db.get(`SELECT isActive, expiresAt FROM apiKeys WHERE key = ?`, [key]);
   if (!row) return false;
-  return row.isActive === 1 || row.isActive === true;
+  if (!(row.isActive === 1 || row.isActive === true)) return false;
+  return !isKeyExpired(row.expiresAt);
 }

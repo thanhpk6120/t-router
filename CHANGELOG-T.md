@@ -5,6 +5,28 @@ Upstream changelogs (`CHANGELOG.md` and `CHANGELOG-PRO.md`) are kept intact for 
 
 ---
 
+## v0.5.112-pro.15 (2026-10-30)
+
+- **Upstream Sync & Enhancements (9router v0.5.112, 9router-pro v0.5.109-pro.15)**:
+  - **Shared Combo Dispatch Across All Modalities (P3-30)**: Replaced repeated combo dispatch boilerplate across top-level, nested, and solo branches with unified `comboDispatch.js` and consistent account-exhausted response across all 8 modalities.
+  - **Honest `/v1/models` & Model Catalog (G2/G9)**: Zero stored connections no longer returns static catalog; noAuth-servable models list truthfully, and `auto:` targets are listed as servable models. Cached via `modelsListCache.js`.
+  - **Health, Breaker Pre-Trip & Quarantine (G10/G11/P1-18)**: Added `providerBreaker.js` with pre-trip warnings and provider health summary (`/api/providers?summary=1`); automated quarantine for connections hitting repeated auth failures.
+  - **Request-ID Correlation (P1-18)**: Standardized request correlation with `x-9router-request-id` and `x-t-router-request-id`, carried through usage history, logs, and response headers.
+  - **Rival Features (R1-R15)**:
+    - **Free-Stack & Tiered Combo Advisor (R1/R2/R4)**: Auto-discover healthy free-tier stacks and tiered combos via `/api/combos/advisor` and `comboAdvisor.js`.
+    - **Persistent Trust Inbox Bell & Security Log (R3/R4)**: Added `TrustInboxBell.js` header notifications and security audit event logging (`/api/security-log`).
+    - **Read-Only Gateway MCP Server & At-Rest Encryption (R5/R6)**: Added gateway MCP server (`/api/mcp/gateway`) and AES-256-GCM at-rest credential encryption (`atRestCrypto.js`).
+    - **Locked Sampling Params & Semantic Cache (R7/R9/R13)**: Supported locked sampling params per variant, measured-latency auto-routing refinements, and opt-in per-key semantic cache (`semanticCache.js`).
+    - **Usage Heatmap & Per-Card Sparklines (R8)**: Added usage heatmap and token saver savings view inside Usage page.
+    - **Catalog Search Modal & Bulk Key Edit (R10/R11)**: Universal model search modal (`CatalogSearchModal.js`) and bulk key edit in Endpoint page.
+    - **CLI Doctor, Setup & Dry-Run (R12)**: Diagnostic tools in CLI adapted for T-Router (`doctor`, `setup`, `dry-run` with port 20126 and `~/.trouter`).
+    - **Eval Runner (R14)**: Added model evaluation runner (`/dashboard/evals`, `evalRunner.js`).
+    - **PWA & Termux (R15)**: Added `manifest.json` and Termux installer script (`termux-install.sh`).
+  - **Non-Chat Usage Accrual & Key Breakdown (G14)**: Precise non-chat usage accrual and dashboard per-key breakdown API (`/api/usage/by-key`).
+  - **New Providers**: Added `runcrate` and `ollama-local` (TTS & embeddings).
+  - **OpenCode 1.19+ CLI Protocol & TLS**: Aligned OpenCode executor with 1.19+ CLI request headers and session hashing while preserving BoringSSL TLS impersonation over Proxy Pools.
+  - **Preserved T-Router Customizations**: Azure branding (#3B82F6/#1D4ED8, icon T), `~/.trouter` SQLite database location, default port 20126, Universal Proxy Pools & Dynamic IP Rotation on all providers.
+
 ## v0.5.112-pro.14-t.1 (2026-10-28)
 
 - Automated sync and release via Telegram Bot.

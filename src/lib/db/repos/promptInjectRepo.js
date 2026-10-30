@@ -1,4 +1,4 @@
-// Prompt Injection (T Router) — prompts attached to a request by
+// Prompt Injection (9Router Pro) — prompts attached to a request by
 // TARGET COORDINATE: a scope (global / variant name) optionally narrowed
 // to one API key. Four combinations, one mental model — "who gets this
 // prompt?": everyone, one key, one variant, or one model for one key.
@@ -14,9 +14,10 @@
 // "dahlunce") backed by exactly one provider/model. Picking the variant
 // serves that model WITH the variant's prompt; picking the raw model
 // serves it WITHOUT any prompt — the original model name is never
-// disturbed by an injection. A variant resolves through a single-member
-// combo of the same name, created and synced with the variant (its id is
-// kept on the variant as comboId). Model-coordinate injections from the
+// disturbed by an injection. A variant name routes directly: dispatch
+// checks the variants map, so no combo object is created per variant
+// (comboId stays null; entries written before this change keep theirs
+// until re-saved or migrated). Model-coordinate injections from the
 // earlier concept no longer exist: any still stored are migrated to
 // variants on first read (name from the old label, else derived from the
 // model), so an existing install keeps its prompts as named variants.
@@ -49,7 +50,9 @@
 // on first read and treated as "single".
 
 import { makeKv } from "../helpers/kvStore.js";
-import { getCombos, getComboByName, getComboById, createCombo, updateCombo, deleteCombo } from "./combosRepo.js";
+import { getCombos, getComboByName, getComboById, deleteCombo } from "./combosRepo.js";
+import { getModelAliases } from "./aliasRepo.js";
+import { invalidateModelsListCache } from "../../../sse/services/modelsListCache.js";
 import { getProviderNodes, resolveRoutableBacking } from "./nodesRepo.js";
 import { normalizePromptMap, normalizeKeyModelMap, buildProviderResolver } from "../normalizeInjections.js";
 
@@ -138,18 +141,22 @@ function stamp(input = {}) {
 let migrated = false;
 async function ensureMigrated() {
   if (migrated) return;
-  migrated = true;
   try {
     const [g, k, m] = await Promise.all([
       kv.get(GLOBAL_KEY, null), kv.get(BYKEY_KEY, null), kv.get(MODELS_KEY, null),
     ]);
-    if (g || k || m) return;
+    if (g || k || m) { migrated = true; return; }
     const [lg, lk, lm] = await Promise.all([
       legacyKv.get(GLOBAL_KEY, null), legacyKv.get(BYKEY_KEY, null), legacyKv.get(MODELS_KEY, null),
     ]);
     if (lg) await kv.set(GLOBAL_KEY, lg);
     if (lk) await kv.set(BYKEY_KEY, lk);
     if (lm) await kv.set(MODELS_KEY, lm);
+    // Flag only after success: a failed first migration used to be
+    // marked done and never retried until restart, leaving legacy data
+    // silently unmigrated. On failure the flag stays false so a later
+    // read retries (reads stay fail-open either way).
+    migrated = true;
   } catch { /* fail-open: migration must never break reads */ }
 }
 
@@ -164,14 +171,13 @@ async function ensureMigrated() {
 let conceptMigrated = false;
 async function ensureConceptMigrated() {
   if (conceptMigrated) return;
-  conceptMigrated = true;
   try {
     const [promptsRaw, keyModelRaw] = await Promise.all([
       kv.get(MODELS_KEY, null),
       kv.get(BYKEYMODEL_KEY, null),
     ]);
     const hasKeys = (m) => m && typeof m === "object" && Object.keys(m).length > 0;
-    if (!hasKeys(promptsRaw) && !(keyModelRaw && typeof keyModelRaw === "object" && Object.values(keyModelRaw).some(hasKeys))) return;
+    if (!hasKeys(promptsRaw) && !(keyModelRaw && typeof keyModelRaw === "object" && Object.values(keyModelRaw).some(hasKeys))) { conceptMigrated = true; return; }
     const [combos, nodes] = await Promise.all([getCombos(), getProviderNodes()]);
     // Registry alias map is heavy (144 provider modules); load it lazily
     // and only here, never at module import time.
@@ -193,6 +199,9 @@ async function ensureConceptMigrated() {
       }
     }
     if (changed) invalidateInjectSnapshot();
+    // Same rule as ensureMigrated: only a successful run counts, so a
+    // failed run is retried on a later read instead of silently skipped.
+    conceptMigrated = true;
   } catch { /* fail-open: migration must never break reads */ }
 }
 
@@ -248,9 +257,11 @@ export async function deleteInjectModelPrompt(model) {
 // and must not contain "/" (a "/" would make it a provider/model value).
 // The backing model must be a provider/model ("provider/model").
 
+// Over-long names are rejected, not truncated: truncation silently merged
+// two distinct names into one map key (the later save overwrote the first).
 export function cleanVariantName(raw) {
-  const name = typeof raw === "string" ? raw.trim().slice(0, 80) : "";
-  if (!name || name.includes("/")) return null;
+  const name = typeof raw === "string" ? raw.trim() : "";
+  if (!name || name.length > 80 || name.includes("/")) return null;
   return name;
 }
 
@@ -260,11 +271,52 @@ function cleanVariantEntry(raw) {
   if (!backing.includes("/")) return null;
   const entry = cleanEntry(raw);
   if (!entry) return null;
-  return {
+  const out = {
     ...entry,
     model: backing,
     comboId: typeof raw.comboId === "string" && raw.comboId ? raw.comboId : null,
   };
+  // R7 locked sampling params: numbers only, validated ranges; prompt
+  // text is never touched by this path. Absent = client default.
+  const sampling = cleanSamplingParams(raw.sampling);
+  if (sampling) out.sampling = sampling;
+  return out;
+}
+
+// R7: validate locked sampling params. temperature 0–2, top_p (0,1],
+// max_tokens positive int. Anything else is dropped, never clamped
+// silently into a different behaviour the user did not ask for.
+export function cleanSamplingParams(raw) {
+  if (!raw || typeof raw !== "object") return null;
+  const out = {};
+  const t = Number(raw.temperature);
+  if (Number.isFinite(t) && t >= 0 && t <= 2) out.temperature = t;
+  const p = Number(raw.top_p);
+  if (Number.isFinite(p) && p > 0 && p <= 1) out.top_p = p;
+  const m = Number(raw.max_tokens);
+  if (Number.isFinite(m) && Number.isInteger(m) && m >= 1 && m <= 1000000) out.max_tokens = m;
+  return Object.keys(out).length ? out : null;
+}
+
+// R7: pure dispatch override — variant sampling wins over client defaults,
+// for that variant only. Returns a new body; the input is untouched.
+export function applyVariantSampling(body, sampling) {
+  if (!body || typeof body !== "object" || !sampling) return body;
+  const out = { ...body };
+  if (sampling.temperature !== undefined) out.temperature = sampling.temperature;
+  if (sampling.top_p !== undefined) out.top_p = sampling.top_p;
+  if (sampling.max_tokens !== undefined) out.max_tokens = sampling.max_tokens;
+  return out;
+}
+
+// R7: sampling for a direct variant pick (bare name, no "/"), else null.
+export async function resolveVariantSampling(requestedModel) {
+  if (typeof requestedModel !== "string" || !requestedModel || requestedModel.includes("/")) return null;
+  try {
+    const variants = await getInjectVariants();
+    const entry = variants[requestedModel];
+    return entry?.sampling ? cleanSamplingParams(entry.sampling) : null;
+  } catch { return null; }
 }
 
 function cleanVariantMap(raw) {
@@ -282,25 +334,6 @@ export async function getInjectVariants() {
   await ensureMigrated();
   return cleanVariantMap(await kv.get(VARIANTS_KEY, null));
 }
-
-// Sync the variant's single-member combo: create it on first save, keep
-// it on the same name and backing afterwards. Returns the combo id, or
-// null when a DIFFERENT combo already owns the name (the caller turns
-// that into a 400). A combo the user renamed by hand is left alone —
-// the variant then re-links to a fresh combo on its next save.
-async function syncVariantCombo(name, model, existingComboId) {
-  if (existingComboId) {
-    const combo = await getComboById(existingComboId).catch(() => null);
-    if (combo && combo.name === name) {
-      await updateCombo(combo.id, { models: [model] });
-      return combo.id;
-    }
-  }
-  if (await getComboByName(name).catch(() => null)) return null;
-  const combo = await createCombo({ name, models: [model] });
-  return combo.id;
-}
-
 export async function setInjectVariant(name, input = {}) {
   const cleanName = cleanVariantName(name);
   if (!cleanName) return null;
@@ -318,11 +351,24 @@ export async function setInjectVariant(name, input = {}) {
   const routedModel = resolveRoutableBacking(entry.model, nodes);
   if (routedModel === null) return null;
   const routedEntry = routedModel === entry.model ? entry : { ...entry, model: routedModel };
-  const comboId = await syncVariantCombo(cleanName, routedEntry.model, map[cleanName]?.comboId || null);
-  if (!comboId) return null;
-  map[cleanName] = { ...routedEntry, comboId };
+  // No backing combo: a variant name routes directly (dispatch checks the
+  // variants map), so saving a variant creates no combo object — the
+  // Kombinasi page shows only combos the user actually made.
+  // A new variant name must not shadow a real combo (dispatch checks
+  // combos first, so a colliding variant would be unreachable);
+  // re-saving an existing variant is always fine.
+  if (!(cleanName in map) && (await getComboByName(cleanName).catch(() => null))) return null;
+  // A new variant name must not shadow a model alias either: dispatch
+  // checks variants before aliases, so a colliding variant would silently
+  // hijack the alias route. Re-saving an existing variant is always fine.
+  if (!(cleanName in map)) {
+    const aliases = await getModelAliases().catch(() => ({}));
+    if (aliases && typeof aliases === "object" && cleanName in aliases) return null;
+  }
+  map[cleanName] = { ...routedEntry, comboId: null };
   await kv.set(VARIANTS_KEY, map);
   invalidateInjectSnapshot();
+  invalidateModelsListCache();
   return map[cleanName];
 }
 
@@ -341,6 +387,7 @@ export async function deleteInjectVariant(name) {
   delete map[cleanName];
   await kv.set(VARIANTS_KEY, map);
   invalidateInjectSnapshot();
+  invalidateModelsListCache();
   return true;
 }
 
@@ -362,33 +409,55 @@ function slugVariantName(model) {
   return `${providerPart}-${slugged}`.slice(0, 80);
 }
 
+// Fingerprint of the model map the last variant migration left behind.
+// Entries that cannot convert (no prompt, no backing) stay as leftovers,
+// so without this the migration would rewrite both maps and invalidate
+// both caches on every snapshot miss, forever, with nothing changing.
+// When the map matches the fingerprint, the only remainder is those same
+// leftovers — skip the run. Any user edit changes the map and re-arms it.
+let variantMigrationFingerprint = null;
+
 export async function migrateModelPromptsToVariants() {
   try {
     await ensureConceptMigrated();
     const raw = await kv.get(MODELS_KEY, null);
     if (!raw || typeof raw !== "object" || !Object.keys(raw).length) return 0;
+    if (variantMigrationFingerprint !== null && JSON.stringify(raw) === variantMigrationFingerprint) return 0;
     const variants = await getInjectVariants();
     const combos = await getCombos().catch(() => []);
     const taken = new Set([...Object.keys(variants), ...combos.map((c) => c.name)]);
     const leftovers = {};
     let migratedCount = 0;
+    // Only fingerprint when every leftover is permanently unconvertible
+    // (no prompt, or no provider/model shape). A leftover from a
+    // transient throw must retry on the next run, not be frozen in.
+    let transientLeftover = false;
     for (const [model, entryRaw] of Object.entries(raw)) {
       try {
         const entry = cleanEntry(entryRaw);
         if (!entry || !model.includes("/")) { leftovers[model] = entryRaw; continue; }
         let base = entry.name || slugVariantName(model);
-        let candidate = base;
+        // Cap the first candidate too, and build the "-N" suffix inside the
+        // 80-char budget: slicing a full-length base cut the suffix away,
+        // leaving the candidate unchanged and the loop below spinning
+        // forever on an 80-char colliding name.
+        let candidate = base.slice(0, 80);
         let n = 2;
-        while (taken.has(candidate)) candidate = `${base}-${n++}`.slice(0, 80);
-        const combo = await createCombo({ name: candidate, models: [model] });
-        variants[candidate] = { ...entry, model, comboId: combo.id };
+        while (taken.has(candidate)) {
+          const suffix = `-${n++}`;
+          candidate = base.slice(0, 80 - suffix.length) + suffix;
+        }
+        variants[candidate] = { ...entry, model, comboId: null };
         taken.add(candidate);
         migratedCount++;
       } catch {
         leftovers[model] = entryRaw;
+        transientLeftover = true;
       }
     }
+    if (!transientLeftover) variantMigrationFingerprint = JSON.stringify(leftovers);
     await kv.set(VARIANTS_KEY, variants);
+    invalidateModelsListCache();
     if (Object.keys(leftovers).length) await kv.set(MODELS_KEY, leftovers);
     else await kv.remove(MODELS_KEY);
     invalidateInjectSnapshot();
@@ -590,6 +659,7 @@ export function selectPromptInjections({ global, byKey, byModel, byKeyModel, byV
 
 const SNAPSHOT_TTL_MS = 3000;
 let snapshot = null;
+let snapshotInflight = null;
 
 function invalidateInjectSnapshot() {
   snapshot = null;
@@ -597,16 +667,26 @@ function invalidateInjectSnapshot() {
 
 async function getInjectSnapshot() {
   if (snapshot && Date.now() - snapshot.at < SNAPSHOT_TTL_MS) return snapshot;
-  await migrateModelPromptsToVariants().catch(() => {});
-  const [global, byKey, byModel, byKeyModel, byVariant] = await Promise.all([
-    getInjectGlobal(),
-    getInjectUserPrompts(),
-    getInjectModelPrompts(),
-    getInjectKeyModelPrompts(),
-    getInjectVariants(),
-  ]);
-  snapshot = { at: Date.now(), global, byKey, byModel, byKeyModel, byVariant };
-  return snapshot;
+  // Coalesce concurrent builds: without this, N simultaneous cache misses
+  // each ran the variant migration and rebuilt the snapshot (same 3s-TTL
+  // stampede the settings cache already fixed). A write during a build
+  // can still land a pre-write snapshot for up to the TTL — the same
+  // window the uncoalesced code already had.
+  if (!snapshotInflight) {
+    snapshotInflight = (async () => {
+      await migrateModelPromptsToVariants().catch(() => {});
+      const [global, byKey, byModel, byKeyModel, byVariant] = await Promise.all([
+        getInjectGlobal(),
+        getInjectUserPrompts(),
+        getInjectModelPrompts(),
+        getInjectKeyModelPrompts(),
+        getInjectVariants(),
+      ]);
+      snapshot = { at: Date.now(), global, byKey, byModel, byKeyModel, byVariant };
+      return snapshot;
+    })().finally(() => { snapshotInflight = null; });
+  }
+  return snapshotInflight;
 }
 
 // Resolve the injections for one request

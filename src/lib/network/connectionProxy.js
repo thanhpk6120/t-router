@@ -173,15 +173,15 @@ function normalizeLegacyProxy(providerSpecificData = {}) {
 export async function resolveConnectionProxyConfig(
   providerSpecificData = {}
 ) {
+  const proxyPoolIdRaw = normalizeString(
+    providerSpecificData?.proxyPoolId
+  );
+
+  // "__none__" means explicitly disabled
+  const proxyPoolId =
+    proxyPoolIdRaw === "__none__" ? "" : proxyPoolIdRaw;
+
   try {
-    const proxyPoolIdRaw = normalizeString(
-      providerSpecificData?.proxyPoolId
-    );
-
-    // "__none__" means explicitly disabled
-    const proxyPoolId =
-      proxyPoolIdRaw === "__none__" ? "" : proxyPoolIdRaw;
-
     const legacy = normalizeLegacyProxy(providerSpecificData);
 
     const directActive = await isDirectProxyActive().catch(() => true);
@@ -383,16 +383,16 @@ export async function resolveConnectionProxyConfig(
     return {
       source: "error",
 
-      proxyPoolId: null,
+      proxyPoolId: proxyPoolId || null,
       proxyPool: null,
 
       connectionProxyEnabled: false,
       connectionProxyUrl: "",
       connectionNoProxy: "",
 
-      strictProxy: false,
+      strictProxy: proxyPoolId ? true : false,
       directActive: true,
-      proxyIntended: false,
+      proxyIntended: Boolean(proxyPoolId),
     };
   }
 }

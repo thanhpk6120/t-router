@@ -5,18 +5,25 @@ import { formatRetryAfter, checkFallbackError, isModelLockActive, buildModelLock
 import { MAX_RATE_LIMIT_COOLDOWN_MS, BALANCED_WINDOW_SIZE, UNAVAILABLE_LABEL_MIN_COOLDOWN_MS, SUSPECT_PROBATION_MS, SMALL_FLEET_RESCUE_MAX_CONNECTIONS, SMALL_FLEET_RESCUE_MAX_WAIT_MS, LAST_USED_FLUSH_DELAY_MS, LAST_USED_FLUSH_MAX_BATCH } from "open-sse/config/errorConfig.js";
 import { resolveProviderId, FREE_PROVIDERS } from "@/shared/constants/providers.js";
 import { getAntigravityQuotaCache, getAntigravityModelQuota } from "./antigravityQuota.js";
+import { providerBreakerGate, recordProviderFailure } from "./providerBreaker.js";
 import * as log from "../utils/logger.js";
 
-// Mutex to prevent race conditions during account selection. Only the
-// round-robin and sticky-random branches take it (they mutate shared
-// sticky state). Balanced picks are lock-free (see below) and every
-// other branch only reads, so they never queue behind another request's
-// selection.
+// Dedicated mutex chain for round-robin / sticky-random account selection
+// (they mutate shared sticky state). It is a SEPARATE chain that no other
+// strategy touches: previously every request overwrote the shared chain
+// link, so a round-robin pick could capture a balanced request's link and
+// run concurrently with an earlier round-robin pick, double-picking the
+// same account. Balanced picks stay lock-free (see below) and never queue
+// behind another request's selection.
 
-// Sticky-random current key per provider+model: the key a
+// Sticky-random current key per provider+model (9Router Pro): the key a
 // successful request sticks to until it locks. In-memory only — a restart
 // cold-starts to a fresh random pick. The entry is dropped the moment its
-// key locks (see markAccountUnavailable).
+// key locks, so the next pick re-rolls instead of re-sticking to a stale
+// key. Recency alone cannot serve as the signal: after the current key
+// dies, the most-recently-used available key is a stale one.
+// Single-process assumption: sticky routing state lives here per process;
+// under multi-process, rotation/stickiness diverge per process.
 const stickyCurrentByRoute = new Map();
 function stickyRouteKey(providerId, model) {
   return `${providerId}:${model || ""}`;
@@ -24,7 +31,7 @@ function stickyRouteKey(providerId, model) {
 export function resetStickyCurrent() {
   stickyCurrentByRoute.clear();
 }
-let selectionMutex = Promise.resolve();
+let stickySelectionMutex = Promise.resolve();
 
 // Deferred lastUsedAt persistence for lock-free balanced picks. The pick
 // stamps the in-memory overlay synchronously (that is what keeps
@@ -35,6 +42,35 @@ let selectionMutex = Promise.resolve();
 // stamp in memory, so rotation stays correct until restart.
 const lastUsedDirty = new Map();
 let lastUsedFlushTimer = null;
+
+// Auto-quarantine (9Router Pro): a credential that fails auth repeatedly
+// is dead, not unlucky — per-model locks alone would retry it forever
+// across models. After QUARANTINE_AFTER_AUTH_FAILURES consecutive 401/403s
+// the account is deactivated with a dashboard-visible reason (lastError)
+// and can be re-enabled by hand (which resets the counter).
+const QUARANTINE_AFTER_AUTH_FAILURES = 5;
+
+// Provider-wide auth-failure guard: if several distinct accounts of one
+// provider fail auth within a short window, the provider itself is sick
+// (endpoint change, global outage) — quarantining each account would
+// empty the fleet on a false signal. While the burst lasts, the counter
+// freezes instead of counting provider noise as account death.
+const PROVIDER_AUTH_FAILURE_WINDOW_MS = 10 * 60 * 1000;
+const PROVIDER_AUTH_FAILURE_DISTINCT_LIMIT = 5;
+const providerAuthFailures = new Map(); // providerId -> Map(accountId -> timestamp)
+function providerAuthFailureIsBroad(providerId, connectionId) {
+  const now = Date.now();
+  let perAccount = providerAuthFailures.get(providerId);
+  if (!perAccount) {
+    perAccount = new Map();
+    providerAuthFailures.set(providerId, perAccount);
+  }
+  perAccount.set(connectionId, now);
+  for (const [id, at] of perAccount) {
+    if (now - at > PROVIDER_AUTH_FAILURE_WINDOW_MS) perAccount.delete(id);
+  }
+  return perAccount.size >= PROVIDER_AUTH_FAILURE_DISTINCT_LIMIT;
+}
 function scheduleLastUsedFlush(id, lastUsedAt, consecutiveUseCount) {
   if (!id) return;
   lastUsedDirty.set(id, { lastUsedAt, consecutiveUseCount });
@@ -87,38 +123,33 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
   const preferredConnectionId = options?.preferredConnectionId || null;
   const requestedModel = options?.requestedModel || model;
   // Strategy is resolved before any lock (settings is one small row).
-  // Only round-robin mutates shared sticky counters, so only it takes
-  // the mutex, exactly like before: lock first, then read. Every other
-  // branch only reads (balanced stamps the in-memory overlay
-  // synchronously), so those requests never queue behind another
-  // request's selection. The chain link is still created for every
-  // request and resolved in finally, so the chain can never stall.
+  // Only round-robin and sticky-random mutate shared sticky state, so
+  // only they join the dedicated sticky chain: lock first, then read.
+  // Every other branch only reads (balanced stamps the in-memory overlay
+  // synchronously) and touches no mutex at all, so those requests never
+  // queue behind another request's selection and can never break the
+  // sticky chain. The chain link is resolved in finally, so the chain
+  // can never stall.
   // Resolve alias to provider ID (e.g., "kc" -> "kilocode")
   const providerId = resolveProviderId(provider);
   const settings = await getSettings();
   const providerOverride = (settings.providerStrategies || {})[providerId] || {};
   const strategy = providerOverride.fallbackStrategy || settings.fallbackStrategy || "balanced";
-  let resolveMutex;
+  let resolveStickyMutex;
   if (strategy === "round-robin" || strategy === "sticky-random") {
-    const currentMutex = selectionMutex;
-    selectionMutex = new Promise(resolve => { resolveMutex = resolve; });
+    const currentMutex = stickySelectionMutex;
+    stickySelectionMutex = new Promise(resolve => { resolveStickyMutex = resolve; });
     await currentMutex;
-  } else {
-    selectionMutex = new Promise(resolve => { resolveMutex = resolve; });
   }
 
   try {
     // Inject a virtual connection for no-auth free providers (with optional proxy pool from settings)
     if (FREE_PROVIDERS[providerId]?.noAuth) {
       const override = providerOverride;
-      if (override.disabled === true || override.isActive === false) {
-        log.warn("AUTH", `Provider ${providerId} is disabled`);
-        return null;
-      }
       const strategy = override.rotateStrategy || "none";
       let pickedId = override.proxyPoolId || null;
       const proxyConfigured = (strategy !== "none" && strategy !== "fill-first") || Boolean(override.proxyPoolId && override.proxyPoolId !== "__none__");
-      if (strategy !== "none") {
+      if (!pickedId && strategy !== "none") {
         const allPools = await getProxyPools({ isActive: true });
         const poolIds = resolveRotationPoolIds(allPools, override.proxyPoolIds, override.proxySource);
         pickedId = pickProxyPoolId(poolIds, strategy, providerId, allPools);
@@ -134,6 +165,18 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
         connectionName: "Public",
         isActive: true,
         accessToken: "public",
+        connectionProxyEnabled: resolvedProxy.connectionProxyEnabled,
+        connectionProxyUrl: resolvedProxy.connectionProxyUrl,
+        connectionNoProxy: resolvedProxy.connectionNoProxy,
+        strictProxy: resolvedProxy.strictProxy === true,
+        directActive: resolvedProxy.directActive,
+        isDirect: resolvedProxy.isDirect,
+        proxyPoolId: resolvedProxy.proxyPoolId,
+        proxyPool: resolvedProxy.proxyPool,
+        proxyIntended: resolvedProxy.proxyIntended,
+        candidateProxies: resolvedProxy.candidateProxies,
+        rotateLink: resolvedProxy.proxyPool?.rotateLink || resolvedProxy.proxyPool?.rotateUrl || "",
+        ...(resolvedProxy.vercelRelayUrl ? { vercelRelayUrl: resolvedProxy.vercelRelayUrl } : {}),
         providerSpecificData: {
           connectionProxyEnabled: resolvedProxy.connectionProxyEnabled,
           connectionProxyUrl: resolvedProxy.connectionProxyUrl,
@@ -141,12 +184,13 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
           connectionProxyPoolId: resolvedProxy.proxyPoolId || null,
           vercelRelayUrl: resolvedProxy.vercelRelayUrl || "",
           strictProxy: resolvedProxy.strictProxy === true,
-          rotateLink: resolvedProxy.rotateLink || resolvedProxy.proxyPool?.rotateLink || "",
-          proxyPool: resolvedProxy.proxyPool || null,
-          directActive: resolvedProxy.directActive !== false,
-          isDirect: resolvedProxy.isDirect === true,
-          proxyIntended: resolvedProxy.proxyIntended === true,
-          candidateProxies: resolvedProxy.candidateProxies || null,
+          directActive: resolvedProxy.directActive,
+          isDirect: resolvedProxy.isDirect,
+          proxyPoolId: resolvedProxy.proxyPoolId,
+          proxyPool: resolvedProxy.proxyPool,
+          proxyIntended: resolvedProxy.proxyIntended,
+          candidateProxies: resolvedProxy.candidateProxies,
+          rotateLink: resolvedProxy.proxyPool?.rotateLink || resolvedProxy.proxyPool?.rotateUrl || "",
         },
       };
     }
@@ -164,9 +208,34 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
     const antigravityQuotaCache = isAntigravity && model ? getAntigravityQuotaCache() : null;
 
     // Filter out model-locked, excluded, and Antigravity quota-exhausted connections.
-    let availableConnections = connections.filter(c => {
+    // Named so the small-fleet rescue below can re-derive availability
+    // after waiting out a lock, with exactly the same predicate.
+    const isAvailable = (c) => {
       if (excludeSet.has(c.id)) return false;
       if (isModelLockActive(c, model)) return false;
+      // Provider breaker (P3-27, layer 1): a tripped provider contributes
+      // nothing until its probe window. Half-open reads as available —
+      // the first probe failure re-opens immediately.
+      if (providerBreakerGate(providerId) === "skip") {
+        log.debug("AUTH", `${c.id?.slice(0, 8)} | provider breaker open for ${providerId} — skip`);
+        return false;
+      }
+      // Kiro: an account whose profileArn could not be resolved (refresh
+      // proved it, no ARN stored) must not be picked for OAuth/social
+      // auth — the translator would inject the shared default ARN, which
+      // 403s for these accounts and flaps them between active and locked.
+      // Skipped with a specific reason instead of a generic lock. This
+      // mirrors the translators' fallback condition exactly: account-bound
+      // auth (api_key / idc / external_idp) never uses the default, so it
+      // is unaffected, and a stored ARN always clears the skip.
+      if (providerId === "kiro") {
+        const psd = c.providerSpecificData || {};
+        const accountBound = psd.authMethod === "api_key" || psd.authMethod === "idc" || psd.authMethod === "external_idp";
+        if (!accountBound && psd.profileArnUnresolved === true && !psd.profileArn) {
+          log.debug("AUTH", `${c.id?.slice(0, 8)} | kiro profileArn unresolved — skip (set the real ARN from the Kiro IDE/AWS console)`);
+          return false;
+        }
+      }
       const enabled = c.providerSpecificData?.enabledModels;
       if (providerId === "codex" && Array.isArray(enabled) && enabled.length && requestedModel && !enabled.includes(requestedModel)) return false;
       // Antigravity: skip if live quota exhausted for this model
@@ -180,7 +249,8 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
         }
       }
       return true;
-    });
+    };
+    let availableConnections = connections.filter(isAvailable);
 
     log.debug("AUTH", `${provider} | available: ${availableConnections.length}/${connections.length}`);
     connections.forEach(c => {
@@ -204,22 +274,32 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
           if (resetAt && new Date(resetAt).getTime() > Date.now()) expiries.push(resetAt);
         });
       }
-      const earliest = expiries.sort()[0] || null;
-      // Small-fleet rescue (T Router): every connection is locked, but
-      // the fleet is tiny and the earliest lock lifts soon — retry that
-      // account instead of failing the request. A lock is a heuristic (a
-      // quota window, a transient error); for a 1–8 account provider one
-      // window must not read as a total outage. Never rescues an account
-      // this request already tried, and never Antigravity, whose quota
-      // cache is authoritative rather than a heuristic.
+      let earliest = expiries.sort()[0] || null;
+      // Small-fleet rescue (9Router Pro): every connection is locked, but
+      // the fleet is tiny and the earliest lock lifts soon — wait for it
+      // instead of failing the request. A lock is a heuristic (a quota
+      // window, a transient error); for a 1–8 account provider one window
+      // must not read as a total outage. Retrying at once used to re-hit
+      // the same quota error immediately; waiting (a timer, so other
+      // requests are unaffected) and re-deriving availability from the
+      // same snapshot — lock checks are time-based — retries only once
+      // the window has actually lifted. Never rescues an account this
+      // request already tried, and never Antigravity, whose quota cache
+      // is authoritative rather than a heuristic.
       if (!isAntigravity && earliest && connections.length <= SMALL_FLEET_RESCUE_MAX_CONNECTIONS) {
         const waitMs = new Date(earliest).getTime() - Date.now();
-        const rescued = lockedConns
-          .filter(c => !excludeSet.has(c.id))
-          .sort((a, b) => new Date(getEarliestModelLockUntil(a)) - new Date(getEarliestModelLockUntil(b)))[0];
-        if (rescued && waitMs <= SMALL_FLEET_RESCUE_MAX_WAIT_MS) {
-          log.warn("AUTH", `${provider} | small-fleet rescue: retrying ${rescued.id?.slice(0, 8)} despite lock (${formatRetryAfter(earliest)})`);
-          availableConnections = [rescued];
+        if (waitMs <= SMALL_FLEET_RESCUE_MAX_WAIT_MS) {
+          if (waitMs > 0) await new Promise((r) => setTimeout(r, waitMs));
+          availableConnections = connections.filter(isAvailable);
+          if (availableConnections.length > 0) {
+            log.warn("AUTH", `${provider} | small-fleet rescue: waited ${Math.max(0, waitMs)}ms for lock, ${availableConnections.length} account(s) free`);
+          } else {
+            // The wait freed nothing this request can still use (the
+            // freed accounts are all already tried). Drop the now-stale
+            // retryAfter so the fallthrough below reports plain
+            // unavailability instead of a lock that has already lifted.
+            earliest = null;
+          }
         }
       }
       if (availableConnections.length === 0 && earliest) {
@@ -238,6 +318,9 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
         return null;
       }
     }
+
+    // settings / providerOverride / strategy were resolved before the lock
+    // above and are reused here (no second settings read).
 
     let connection;
     // Pin to preferred connection if specified and available
@@ -308,7 +391,7 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
         });
       }
     } else if (strategy === "balanced") {
-      // Balanced, lock-free (T Router): clean accounts first — an
+      // Balanced, lock-free (9Router Pro): clean accounts first — an
       // account that failed recently and has not proven itself since
       // only serves when no clean account is available. Within the tier,
       // the pick is a random choice among the least-recently-used window,
@@ -332,21 +415,19 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
       // fill-first (already sorted by priority in getProviderConnections)
       connection = availableConnections[0];
     }
-    // Resolve proxy configuration: connection-level first, then fallback to provider-level proxy pool & rotation
-    let proxyPayload = connection.providerSpecificData || {};
-    const connHasProxy = Boolean(
-      (proxyPayload.proxyPoolId && proxyPayload.proxyPoolId !== "__none__") ||
-      (proxyPayload.connectionProxyPoolId && proxyPayload.connectionProxyPoolId !== "__none__") ||
-      (proxyPayload.connectionProxyEnabled && proxyPayload.connectionProxyUrl)
-    );
-    let proxyConfigured = connHasProxy;
 
-    if (!connHasProxy) {
-      const pStrategy = providerOverride.rotateStrategy || "none";
-      const hasProviderPool = Boolean(providerOverride.proxyPoolId && providerOverride.proxyPoolId !== "__none__");
-      if ((pStrategy !== "none" && pStrategy !== "fill-first") || hasProviderPool) {
-        proxyConfigured = true;
-        let pPoolId = providerOverride.proxyPoolId || null;
+    let proxyPayload = connection.providerSpecificData || {};
+    const connPoolId = proxyPayload.proxyPoolId;
+    const pStrategy = providerOverride.rotateStrategy || "none";
+    const proxyConfigured = Boolean(connPoolId && connPoolId !== "__none__") ||
+      (pStrategy !== "none" && pStrategy !== "fill-first") ||
+      Boolean(providerOverride.proxyPoolId && providerOverride.proxyPoolId !== "__none__");
+
+    if (!connPoolId) {
+      if (providerOverride.proxyPoolId) {
+        proxyPayload = { ...proxyPayload, proxyPoolId: providerOverride.proxyPoolId };
+      } else {
+        let pPoolId = null;
         if (pStrategy !== "none") {
           const allPools = await getProxyPools({ isActive: true });
           const poolIds = resolveRotationPoolIds(allPools, providerOverride.proxyPoolIds, providerOverride.proxySource);
@@ -364,6 +445,7 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
       providerProxyPoolIds: providerOverride.proxyPoolIds || null,
       proxySource: providerOverride.proxySource || "both",
     });
+
     return {
       authType: connection.authType,
       apiKey: connection.apiKey,
@@ -376,6 +458,18 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
       projectId: connection.projectId,
       connectionName: connection.displayName || connection.name || connection.email || connection.id,
       copilotToken: connection.providerSpecificData?.copilotToken,
+      connectionProxyEnabled: resolvedProxy.connectionProxyEnabled,
+      connectionProxyUrl: resolvedProxy.connectionProxyUrl,
+      connectionNoProxy: resolvedProxy.connectionNoProxy,
+      strictProxy: resolvedProxy.strictProxy === true,
+      directActive: resolvedProxy.directActive,
+      isDirect: resolvedProxy.isDirect,
+      proxyPoolId: resolvedProxy.proxyPoolId,
+      proxyPool: resolvedProxy.proxyPool,
+      proxyIntended: resolvedProxy.proxyIntended,
+      candidateProxies: resolvedProxy.candidateProxies,
+      rotateLink: resolvedProxy.proxyPool?.rotateLink || resolvedProxy.proxyPool?.rotateUrl || "",
+      ...(resolvedProxy.vercelRelayUrl ? { vercelRelayUrl: resolvedProxy.vercelRelayUrl } : {}),
       providerSpecificData: {
         ...(connection.providerSpecificData || {}),
         connectionProxyEnabled: resolvedProxy.connectionProxyEnabled,
@@ -384,12 +478,13 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
         connectionProxyPoolId: resolvedProxy.proxyPoolId || null,
         vercelRelayUrl: resolvedProxy.vercelRelayUrl || "",
         strictProxy: resolvedProxy.strictProxy === true,
-        rotateLink: resolvedProxy.rotateLink || resolvedProxy.proxyPool?.rotateLink || "",
-        proxyPool: resolvedProxy.proxyPool || null,
-        directActive: resolvedProxy.directActive !== false,
-        isDirect: resolvedProxy.isDirect === true,
-        proxyIntended: resolvedProxy.proxyIntended === true,
-        candidateProxies: resolvedProxy.candidateProxies || null,
+        directActive: resolvedProxy.directActive,
+        isDirect: resolvedProxy.isDirect,
+        proxyPoolId: resolvedProxy.proxyPoolId,
+        proxyPool: resolvedProxy.proxyPool,
+        proxyIntended: resolvedProxy.proxyIntended,
+        candidateProxies: resolvedProxy.candidateProxies,
+        rotateLink: resolvedProxy.proxyPool?.rotateLink || resolvedProxy.proxyPool?.rotateUrl || "",
       },
       connectionId: connection.id,
       // Include current status for optimization check
@@ -399,7 +494,7 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
       _connection: connection
     };
   } finally {
-    if (resolveMutex) resolveMutex();
+    if (resolveStickyMutex) resolveStickyMutex();
   }
 }
 
@@ -414,8 +509,8 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
  * @returns {{ shouldFallback: boolean, cooldownMs: number }}
  */
 export async function markAccountUnavailable(connectionId, status, errorText, provider = null, model = null, resetsAtMs = null) {
-  if (connectionId === "noauth") {
-    if (status === 429 || status === 403) {
+  if (!connectionId || connectionId === "noauth") {
+    if (connectionId === "noauth" && (status === 429 || status === 403) && provider) {
       try {
         const settings = await getSettings();
         const override = (settings?.providerStrategies || {})[provider] || {};
@@ -430,8 +525,22 @@ export async function markAccountUnavailable(connectionId, status, errorText, pr
     }
     return { shouldFallback: false, cooldownMs: 0 };
   }
-  if (!connectionId) return { shouldFallback: false, cooldownMs: 0 };
-  const connections = await getProviderConnections({ provider });
+  // Sticky-random: a locked key stops being current for its route, so the
+  // next pick re-rolls instead of re-sticking to it. Only the entry that
+  // actually points at this key is dropped.
+  if (provider) {
+    const routeKey = stickyRouteKey(resolveProviderId(provider), model);
+    if (stickyCurrentByRoute.get(routeKey) === connectionId) stickyCurrentByRoute.delete(routeKey);
+  }
+  // Fail open: a locked or busy DB must not kill the request. If the read
+  // fails, the lock just won't persist — the caller still falls back on
+  // the cooldown computed from the status alone.
+  let connections = [];
+  try {
+    connections = await getProviderConnections({ provider });
+  } catch (err) {
+    log.warn("AUTH", `getProviderConnections failed during markAccountUnavailable, continuing without persisted lock: ${err?.message || err}`);
+  }
   const conn = connections.find(c => c.id === connectionId);
   const backoffLevel = conn?.backoffLevel || 0;
 
@@ -456,6 +565,16 @@ export async function markAccountUnavailable(connectionId, status, errorText, pr
   }
   if (!shouldFallback) return { shouldFallback: false, cooldownMs: 0 };
 
+  // Provider breaker (P3-27): only genuine outages count — 429, 5xx, or a
+  // missing status (network failure). Auth failures (401/403) are
+  // credential problems handled by quarantine; 402/404 are request-scoped
+  // and never reach here (shouldFallback is false for them).
+  if (provider) {
+    const s = Number(status);
+    const isOutage = status == null || s === 429 || (Number.isFinite(s) && s >= 500);
+    if (isOutage) recordProviderFailure(resolveProviderId(provider), connectionId);
+  }
+
   const reason = typeof errorText === "string" ? errorText.slice(0, 200) : "Provider error";
   const lockUpdate = buildModelLockUpdate(githubResetAtMs ? null : model, cooldownMs);
 
@@ -467,27 +586,49 @@ export async function markAccountUnavailable(connectionId, status, errorText, pr
     backoffLevel: newBackoffLevel ?? backoffLevel
   };
   // The "unavailable" label outlives the lock itself, so only a substantial
-  // cooldown earns it (T Router). A seconds-long transient lock must not
+  // cooldown earns it (9Router Pro). A seconds-long transient lock must not
   // brand a healthy account as dead on the dashboard.
   if (shouldStampUnavailable(cooldownMs, UNAVAILABLE_LABEL_MIN_COOLDOWN_MS)) {
     update.testStatus = "unavailable";
   }
 
-  await updateProviderConnection(connectionId, update);
+  // Account-level auth-failure quarantine: 401/403 only (402 is payment,
+  // 404 is a missing model — neither proves a dead credential). Only
+  // counted when the connection row actually loaded; a failed DB read
+  // must not clobber the true counter with a fresh 1. Success resets
+  // the counter (clearAccountError); manual re-enable resets it too.
+  if (conn && (status === 401 || status === 403)) {
+    const providerId = provider ? resolveProviderId(provider) : null;
+    const broad = providerId ? providerAuthFailureIsBroad(providerId, connectionId) : false;
+    if (!broad) {
+      const failures = (conn.consecutiveAuthFailures || 0) + 1;
+      update.consecutiveAuthFailures = failures;
+      if (failures >= QUARANTINE_AFTER_AUTH_FAILURES) {
+        update.isActive = false;
+        update.quarantinedAt = new Date().toISOString();
+        update.quarantineReason = `Auto-quarantined after ${failures} consecutive auth failures (last: ${status})`;
+        update.lastError = update.quarantineReason;
+        update.testStatus = "unavailable";
+      }
+    }
+  }
+
+  try {
+    await updateProviderConnection(connectionId, update);
+  } catch (err) {
+    // Fail open: the lock is lost, but the request still falls back below
+    // instead of dying on a busy database.
+    log.warn("AUTH", `persisting lock for ${String(connectionId).slice(0, 8)} failed, continuing in-memory only: ${err?.message || err}`);
+  }
 
   const connName = conn?.displayName || conn?.name || conn?.email || connectionId.slice(0, 8);
   const statusWords = log.describeStatus?.(status) || "";
   log.warn("AUTH", `${connName} · ${status}${statusWords ? ` ${statusWords}` : ""} · ${model || "all models"} locked ${log.fmtDuration?.(cooldownMs) || `${Math.round(cooldownMs / 1000)}s`}`);
 
   if (provider && status && reason) {
-    // Plain words only (T Router): the raw reason is an upstream JSON
+    // Plain words only (9Router Pro): the raw reason is an upstream JSON
     // body — the operator needs its one human sentence, not the dump.
     console.error(`❌ ${provider} [${status}]: ${log.plainErrorDetail?.(reason) || statusWords || "error"}`);
-  }
-
-  if (provider) {
-    const routeKey = stickyRouteKey(resolveProviderId(provider), model);
-    if (stickyCurrentByRoute.get(routeKey) === connectionId) stickyCurrentByRoute.delete(routeKey);
   }
 
   return { shouldFallback: true, cooldownMs };
@@ -539,6 +680,10 @@ export async function clearAccountError(connectionId, currentConnection, model =
       backoffLevel: 0
     });
   }
+
+  // A success proves the credential alive: the auth-failure counter
+  // resets even when other models' locks remain.
+  if (conn.consecutiveAuthFailures) clearObj.consecutiveAuthFailures = 0;
 
   await updateProviderConnection(connectionId, clearObj);
 }

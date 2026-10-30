@@ -262,6 +262,14 @@ export const PROVIDER_CAPABILITIES = {
     // catalog overlay, so maxOutput must be stated here too).
     "claude-haiku-5-5": { vision: true, reasoning: true, search: true, thinkingFormat: "claude-adaptive", contextWindow: 1000000, maxOutput: 128000 },
   },
+  // GitHub Copilot routes Claude to its Anthropic-native /v1/messages shim, which applies
+  // Anthropic's per-model thinking rules. claude-haiku-5.5 is adaptive-only there too: the
+  // budget shape the global *claude*haiku* pattern sends comes back 400 "thinking.type.enabled"
+  // is not supported for this model (live probe). Limits are stated because this override
+  // short-circuits the catalog overlay; they match the synced catalog's github entry.
+  "github": {
+    "claude-haiku-5.5": { vision: true, pdf: true, reasoning: true, search: true, thinkingFormat: "claude-adaptive", contextWindow: 1000000, maxOutput: 128000 },
+  },
   // OpenCode Free (oc) — the free lane's MiMo route is OpenRouter-backed and takes
   // the plain OpenAI reasoning_effort enum verbatim (live probe on
   // oc/mimo-v2.6-flash-free: none|minimal|low|medium|high|xhigh|max all 200, any
@@ -275,19 +283,11 @@ export const PROVIDER_CAPABILITIES = {
   // overlay, so models.dev's free-lane listing (200000/32000) has to be applied
   // here if a probe ever pins the lane's real window (a 200k `max_tokens` is
   // accepted, so the 32k figure is not enforced at request validation).
-  // GitHub Copilot routes Claude to its Anthropic-native /v1/messages shim, which applies
-  // Anthropic's per-model thinking rules. claude-haiku-5.5 is adaptive-only there too: the
-  // budget shape the global *claude*haiku* pattern sends comes back 400 "thinking.type.enabled"
-  // is not supported for this model (live probe). Limits are stated because this override
-  // short-circuits the catalog overlay; they match the synced catalog's github entry.
-  "github": {
-    "claude-haiku-5.5": { vision: true, pdf: true, reasoning: true, search: true, thinkingFormat: "claude-adaptive", contextWindow: 1000000, maxOutput: 128000 },
-  },
-  // deepseek-v4.1-flash-free: the backend rejects requests above ~330k prompt
-  // tokens (issue #5097). Cap the published context window at 330000 so clients
-  // (VS Code Copilot etc.) compact correctly instead of hard-failing mid-session.
   "opencode": {
     "mimo-v2.6-flash-free": { vision: true, audioInput: true, videoInput: true, reasoning: true, thinkingFormat: "openai", thinkingCanDisable: true, contextWindow: 1048576, maxOutput: 131072 },
+    // deepseek-v4.1-flash-free: the backend rejects requests above ~330k prompt
+    // tokens (issue #5097). Cap the published context window at 330000 so clients
+    // (VS Code Copilot etc.) compact correctly instead of hard-failing mid-session.
     "deepseek-v4.1-flash-free": { vision: true, reasoning: true, thinkingFormat: "deepseek", contextWindow: 330000, maxOutput: 128000 },
   },
   "commandcode": {

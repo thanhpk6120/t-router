@@ -13,7 +13,6 @@ import ProviderIcon from "@/shared/components/ProviderIcon";
 import { getProviderIconSrc } from "@/shared/utils/providerIcon";
 import { OAUTH_PROVIDERS, APIKEY_PROVIDERS } from "@/shared/constants/config";
 import {
-  AI_PROVIDERS,
   FREE_PROVIDERS,
   FREE_TIER_PROVIDERS,
   WEB_COOKIE_PROVIDERS,
@@ -24,9 +23,65 @@ import Link from "next/link";
 import { getErrorCode, getRelativeTime } from "@/shared/utils";
 import { useNotificationStore } from "@/store/notificationStore";
 import { useHeaderSearchStore } from "@/store/headerSearchStore";
+import { useVisibleCount } from "@/shared/hooks/useVisibleCount";
+import { useProviderSummary } from "@/shared/hooks/useProviderSummary";
 import ModelAvailabilityBadge from "./components/ModelAvailabilityBadge";
 import AddCompatibleModal from "./components/AddCompatibleModal";
+import CatalogSearchModal from "./components/CatalogSearchModal";
 import { STATUS_FILTER_OPTIONS, matchesStatusFilter } from "./utils";
+
+// Plain-language meaning for the raw error codes shown on provider cards
+// (B-F17): a code alone ("429") tells the user nothing about what broke or
+// what to do. Rendered as the badge's hover tooltip.
+const ERROR_CODE_EXPLANATIONS = {
+  AUTH: "Authentication failed — the credential is invalid or expired. Reconnect the provider.",
+  RUNTIME: "The provider call crashed at runtime — check the console log for details.",
+  NET: "Network error — the router could not reach the provider. Check connectivity.",
+  "401": "Authentication failed — the credential is invalid or expired. Reconnect the provider.",
+  "403": "Access denied — this account may not use the requested model.",
+  "404": "Not found — the model or endpoint no longer exists on the provider.",
+  "429": "Rate limited — too many requests. Wait a bit; it usually clears on its own.",
+  "5XX": "Provider server error — try again later.",
+};
+
+function explainErrorCode(errorCode) {
+  if (!errorCode) return null;
+  if (ERROR_CODE_EXPLANATIONS[errorCode]) return ERROR_CODE_EXPLANATIONS[errorCode];
+  const numeric = Number(errorCode);
+  if (Number.isFinite(numeric)) {
+    if (numeric >= 400 && numeric < 500) return "Client error — the request was rejected by the provider. Check the credential and model.";
+    if (numeric >= 500) return "Provider server error — try again later.";
+  }
+  return null;
+}
+
+// Tap-to-expand error explanation (G13/G20): the old hover-only `title`
+// tooltip never fires on touch devices, so the badge is now a button that
+// expands the plain-language explanation inline. Desktop hover still shows
+// the same text via `title`.
+function ErrorBadgeWithExplanation({ errText, explanation }) {
+  const [expanded, setExpanded] = useState(false);
+  return (
+    <span className="inline-flex flex-col gap-1">
+      <button
+        type="button"
+        onClick={() => setExpanded((v) => !v)}
+        title={explanation}
+        aria-expanded={expanded}
+        className="cursor-pointer"
+      >
+        <Badge variant="error" size="sm" dot>
+          {errText}
+        </Badge>
+      </button>
+      {expanded && (
+        <span className="max-w-[260px] text-xs leading-relaxed text-text-muted">
+          {explanation}
+        </span>
+      )}
+    </span>
+  );
+}
 
 function getStatusDisplay(connected, error, errorCode) {
   const parts = [];
@@ -41,10 +96,15 @@ function getStatusDisplay(connected, error, errorCode) {
     const errText = errorCode
       ? `${error} Error (${errorCode})`
       : `${error} Error`;
+    const explanation = explainErrorCode(errorCode);
     parts.push(
-      <Badge key="error" variant="error" size="sm" dot>
-        {errText}
-      </Badge>,
+      explanation ? (
+        <ErrorBadgeWithExplanation key="error" errText={errText} explanation={explanation} />
+      ) : (
+        <Badge key="error" variant="error" size="sm" dot>
+          {errText}
+        </Badge>
+      ),
     );
   }
   if (parts.length === 0) {
@@ -162,10 +222,11 @@ function NotConnectedProviders({ entries, forceOpen }) {
 }
 
 export default function ProvidersPage() {
-  const [statsMap, setStatsMap] = useState({});
+  const { statsMap, setStatsMap, breakers } = useProviderSummary();
   const [providerNodes, setProviderNodes] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showAddCompatibleModal, setShowAddCompatibleModal] = useState(false);
+  const [showCatalogSearch, setShowCatalogSearch] = useState(false);
   const [showAddAnthropicCompatibleModal, setShowAddAnthropicCompatibleModal] =
     useState(false);
   const [testingMode, setTestingMode] = useState(null);
@@ -238,14 +299,8 @@ export default function ProvidersPage() {
   useEffect(() => {
     const fetchData = async () => {
       try {
-        const [connectionsRes, nodesRes] = await Promise.all([
-          fetch("/api/providers?summary=1"),
-          fetch("/api/provider-nodes"),
-        ]);
-        const connectionsData = await connectionsRes.json();
+        const nodesRes = await fetch("/api/provider-nodes");
         const nodesData = await nodesRes.json();
-        if (connectionsRes.ok)
-          setStatsMap(connectionsData.stats || {});
         if (nodesRes.ok) setProviderNodes(nodesData.nodes || []);
       } catch (error) {
         console.log("Error fetching data:", error);
@@ -256,11 +311,10 @@ export default function ProvidersPage() {
     fetchData();
   }, []);
 
-  // Stats come pre-aggregated from /api/providers?summary=1 (T Router) —
+  // Stats come pre-aggregated from /api/providers?summary=1 (9Router Pro) —
   // the page no longer downloads every connection just to count them.
-  const getProviderStats = (providerId, authType, isNoAuth = false) => {
+  const getProviderStats = (providerId, authType) => {
     const authTypes = Array.isArray(authType) ? authType : [authType];
-    const noAuth = isNoAuth || !!AI_PROVIDERS[providerId]?.noAuth || providerId === "opencode";
     let connected = 0;
     let error = 0;
     let total = 0;
@@ -295,7 +349,11 @@ export default function ProvidersPage() {
       total,
       errorCode,
       errorTime,
-      allDisabled: anyEntry && (total > 0 || noAuth) ? allDisabled : false,
+      allDisabled: anyEntry && total > 0 ? allDisabled : false,
+      // Provider breaker (P3-27) keyed by registry provider id. Compatible
+      // nodes use synthetic ids, so they never match — their single
+      // endpoint is covered by the connection-cooldown layer instead.
+      breaker: breakers[providerId] || null,
     };
   };
 
@@ -311,38 +369,16 @@ export default function ProvidersPage() {
       const next = { ...prev };
       for (const t of authTypes) {
         const key = `${providerId}|${t}`;
-        if (next[key]) {
-          next[key] = { ...next[key], allDisabled: !newActive };
-        } else {
-          next[key] = {
-            provider: providerId,
-            authType: t,
-            total: 1,
-            connected: newActive ? 1 : 0,
-            error: 0,
-            allDisabled: !newActive,
-            latestError: null,
-          };
-        }
+        if (next[key]) next[key] = { ...next[key], allDisabled: !newActive };
       }
       return next;
     });
-    try {
-      const res = await fetch("/api/providers", {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ provider: providerId, authTypes, isActive: newActive }),
-      });
-      if (res.ok) {
-        const summaryRes = await fetch("/api/providers?summary=1", { cache: "no-store" });
-        if (summaryRes.ok) {
-          const freshData = await summaryRes.json();
-          if (freshData?.stats) setStatsMap(freshData.stats);
-        }
-      }
-    } catch (e) {
-      console.error("Error toggling provider:", e);
-    }
+    // One bulk UPDATE server-side (was: one PUT per connection).
+    await fetch("/api/providers", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ provider: providerId, authTypes, isActive: newActive }),
+    }).catch(() => {});
   };
 
   const batchJobRef = useRef(null);
@@ -422,20 +458,18 @@ export default function ProvidersPage() {
   // (and sometimes "api_key"). Card stats must count both so totals match detail.
   // kiro has no authModes in registry but accepts both (headless uses "api_key").
   const dualAuthTypes = (info, key) => {
-    if (info?.noAuth || key === "opencode") {
-      return ["free"];
-    }
     if (key === "kiro") return ["oauth", "apikey", "api_key"];
     const modes = info?.authModes;
+    // Free-tier and API-key providers default to supporting apikey even when the
+    // registry entry omits authModes (e.g. cloudflare-ai, byteplus, ollama,
+    // vertex) — otherwise their apikey connections are invisible on the grid card.
     if (!Array.isArray(modes)) {
       return key in FREE_TIER_PROVIDERS || key in APIKEY_PROVIDERS
         ? ["oauth", "apikey", "api_key"]
         : "oauth";
     }
-    const types = [];
-    if (modes.includes("oauth")) types.push("oauth");
-    if (modes.includes("apikey") || modes.includes("api_key")) types.push("apikey", "api_key");
-    return types.length ? types : ["oauth", "apikey", "api_key"];
+    if (!modes.includes("apikey")) return "oauth";
+    return ["oauth", "apikey", "api_key"];
   };
 
   const oauthEntries = sortByPriority(
@@ -571,6 +605,25 @@ export default function ProvidersPage() {
       return (a.name || "").localeCompare(b.name || "");
     });
 
+  // P2-20: Load-more windowing for the card grids (24 per page). The window
+  // resets whenever the search query or status filter changes, so a filtered
+  // list never strands the user on an empty later page.
+  const pageResetKey = `${searchQuery}|${statusFilter}`;
+  const allOnPage = useVisibleCount(allOnProviders.length, pageResetKey);
+  const customPage = useVisibleCount(
+    compatibleProviders.length + anthropicCompatibleProviders.length,
+    pageResetKey,
+  );
+  const oauthPage = useVisibleCount(oauthConnected.length, pageResetKey);
+  const freePage = useVisibleCount(
+    freeConnected.length + freeTierConnected.length,
+    pageResetKey,
+  );
+  const apikeyPage = useVisibleCount(
+    apikeyConnected.length + webCookieEntries.length,
+    pageResetKey,
+  );
+
   if (loading) {
     return (
       <div className="flex flex-col gap-8">
@@ -602,7 +655,7 @@ export default function ProvidersPage() {
         <select
           value={statusFilter}
           onChange={(e) => setStatusFilter(e.target.value)}
-          className="h-8 rounded-lg border border-black/10 bg-black/[0.02] px-2 text-xs text-text-primary outline-none transition-colors hover:bg-black/5 dark:border-white/10 dark:bg-white/[0.03] dark:hover:bg-white/10"
+          className="h-8 rounded-[10px] border border-black/10 bg-black/[0.02] px-2 text-xs text-text-primary outline-none transition-colors hover:bg-black/5 dark:border-white/10 dark:bg-white/[0.03] dark:hover:bg-white/10"
           aria-label="Filter providers by connection status"
         >
           {STATUS_FILTER_OPTIONS.map((option) => (
@@ -611,6 +664,9 @@ export default function ProvidersPage() {
             </option>
           ))}
         </select>
+        <Button size="sm" variant="outline" icon="search" onClick={() => setShowCatalogSearch(true)}>
+          Search catalogs
+        </Button>
       </div>
 
       {!hasAnyResult && (
@@ -686,7 +742,7 @@ export default function ProvidersPage() {
           </div>
         </div>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4 lg:grid-cols-3 xl:grid-cols-4">
-          {allOnProviders.map((entry) => entry.card === "provider" ? (
+          {allOnProviders.slice(0, allOnPage.visible).map((entry) => entry.card === "provider" ? (
             <ProviderCard
               key={`all-${entry.providerId}`}
               providerId={entry.providerId}
@@ -706,6 +762,15 @@ export default function ProvidersPage() {
             />
           ))}
         </div>
+        {allOnPage.hasMore && (
+          <button
+            type="button"
+            onClick={allOnPage.showMore}
+            className="mt-2 w-full rounded-lg border border-dashed border-border px-3 py-2 text-sm text-text-muted transition-colors hover:border-brand-500 hover:text-brand-500"
+          >
+            {`Load more (${allOnPage.remaining} remaining)`}
+          </button>
+        )}
       </div>
       )}
 
@@ -746,22 +811,33 @@ export default function ProvidersPage() {
             <span>No custom providers — use buttons above to add OpenAI/Anthropic compatible endpoints</span>
           </div>
         ) : (
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4 lg:grid-cols-3 xl:grid-cols-4">
-            {[...compatibleProviders, ...anthropicCompatibleProviders].map(
-              (info) => (
-                <ApiKeyProviderCard
-                  key={info.id}
-                  providerId={info.id}
-                  provider={info}
-                  stats={getProviderStats(info.id, "apikey")}
-                  authType="compatible"
-                  onToggle={(active) =>
-                    handleToggleProvider(info.id, "apikey", active)
-                  }
-                />
-              ),
+          <>
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4 lg:grid-cols-3 xl:grid-cols-4">
+              {[...compatibleProviders, ...anthropicCompatibleProviders].slice(0, customPage.visible).map(
+                (info) => (
+                  <ApiKeyProviderCard
+                    key={info.id}
+                    providerId={info.id}
+                    provider={info}
+                    stats={getProviderStats(info.id, "apikey")}
+                    authType="compatible"
+                    onToggle={(active) =>
+                      handleToggleProvider(info.id, "apikey", active)
+                    }
+                  />
+                ),
+              )}
+            </div>
+            {customPage.hasMore && (
+              <button
+                type="button"
+                onClick={customPage.showMore}
+                className="mt-2 w-full rounded-lg border border-dashed border-border px-3 py-2 text-sm text-text-muted transition-colors hover:border-brand-500 hover:text-brand-500"
+              >
+                {`Load more (${customPage.remaining} remaining)`}
+              </button>
             )}
-          </div>
+          </>
         )}
       </div>
 
@@ -797,21 +873,32 @@ export default function ProvidersPage() {
           </div>
         </div>
         {oauthConnected.length > 0 && (
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4 lg:grid-cols-3 xl:grid-cols-4">
-          {oauthConnected.map(([key, info]) => {
-            const authTypes = dualAuthTypes(info, key);
-            return (
-              <ProviderCard
-                key={key}
-                providerId={key}
-                provider={info}
-                stats={getProviderStats(key, authTypes)}
-                authType="oauth"
-                onToggle={(active) => handleToggleProvider(key, authTypes, active)}
-              />
-            );
-          })}
-        </div>
+        <>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4 lg:grid-cols-3 xl:grid-cols-4">
+            {oauthConnected.slice(0, oauthPage.visible).map(([key, info]) => {
+              const authTypes = dualAuthTypes(info, key);
+              return (
+                <ProviderCard
+                  key={key}
+                  providerId={key}
+                  provider={info}
+                  stats={getProviderStats(key, authTypes)}
+                  authType="oauth"
+                  onToggle={(active) => handleToggleProvider(key, authTypes, active)}
+                />
+              );
+            })}
+          </div>
+          {oauthPage.hasMore && (
+            <button
+              type="button"
+              onClick={oauthPage.showMore}
+              className="mt-2 w-full rounded-lg border border-dashed border-border px-3 py-2 text-sm text-text-muted transition-colors hover:border-brand-500 hover:text-brand-500"
+            >
+              {`Load more (${oauthPage.remaining} remaining)`}
+            </button>
+          )}
+        </>
         )}
         <NotConnectedProviders entries={oauthEmpty} forceOpen={isApikeySearching} />
       </div>
@@ -846,38 +933,48 @@ export default function ProvidersPage() {
           </button>
         </div>
         {(freeConnected.length > 0 || freeTierConnected.length > 0) && (
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4 lg:grid-cols-3 xl:grid-cols-4">
-          {freeConnected.map(([key, info]) => {
-            // Dual-auth (e.g. kiro): count/toggle oauth + apikey/api_key so the
-            // card total matches the provider detail page.
-            const freeAuthTypes = dualAuthTypes(info, key);
-            return (
-              <ProviderCard
-                key={key}
-                providerId={key}
-                provider={info}
-                stats={getProviderStats(key, freeAuthTypes)}
-                authType="free"
-                onToggle={(active) =>
-                  handleToggleProvider(key, freeAuthTypes, active)
-                }
-              />
-            );
-          })}
-          {freeTierConnected.map(([key, info]) => {
-            const freeAuthTypes = dualAuthTypes(info, key);
-            return (
-              <ApiKeyProviderCard
-                key={key}
-                providerId={key}
-                provider={info}
-                stats={getProviderStats(key, freeAuthTypes)}
-                authType={Array.isArray(freeAuthTypes) ? (freeAuthTypes[0] ?? "apikey") : freeAuthTypes}
-                onToggle={(active) => handleToggleProvider(key, freeAuthTypes, active)}
-              />
-            );
-          })}
-        </div>
+        <>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4 lg:grid-cols-3 xl:grid-cols-4">
+            {[...freeConnected.map(([key, info]) => ({ card: "provider", key, info })),
+              ...freeTierConnected.map(([key, info]) => ({ card: "apikey", key, info }))]
+              .slice(0, freePage.visible).map((entry) => {
+                const { key, info } = entry;
+                // Dual-auth (e.g. kiro): count/toggle oauth + apikey/api_key so the
+                // card total matches the provider detail page.
+                const freeAuthTypes = dualAuthTypes(info, key);
+                return entry.card === "provider" ? (
+                  <ProviderCard
+                    key={key}
+                    providerId={key}
+                    provider={info}
+                    stats={getProviderStats(key, freeAuthTypes)}
+                    authType="free"
+                    onToggle={(active) =>
+                      handleToggleProvider(key, freeAuthTypes, active)
+                    }
+                  />
+                ) : (
+                  <ApiKeyProviderCard
+                    key={key}
+                    providerId={key}
+                    provider={info}
+                    stats={getProviderStats(key, freeAuthTypes)}
+                    authType={Array.isArray(freeAuthTypes) ? (freeAuthTypes[0] ?? "apikey") : freeAuthTypes}
+                    onToggle={(active) => handleToggleProvider(key, freeAuthTypes, active)}
+                  />
+                );
+              })}
+          </div>
+          {freePage.hasMore && (
+            <button
+              type="button"
+              onClick={freePage.showMore}
+              className="mt-2 w-full rounded-lg border border-dashed border-border px-3 py-2 text-sm text-text-muted transition-colors hover:border-brand-500 hover:text-brand-500"
+            >
+              {`Load more (${freePage.remaining} remaining)`}
+            </button>
+          )}
+        </>
         )}
         <NotConnectedProviders
           entries={[...freeEmpty, ...freeTierEmpty]}
@@ -915,33 +1012,38 @@ export default function ProvidersPage() {
           </button>
         </div>
         {apikeyConnected.length > 0 && (
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4 lg:grid-cols-3 xl:grid-cols-4">
-          {apikeyConnected.map(([key, info]) => (
-            <ApiKeyProviderCard
-              key={key}
-              providerId={key}
-              provider={info}
-              stats={getProviderStats(key, "apikey")}
-              authType="apikey"
-              onToggle={(active) => handleToggleProvider(key, "apikey", active)}
-            />
-          ))}
-          {webCookieEntries.map(([key, info]) => (
-            <ApiKeyProviderCard
-              key={key}
-              providerId={key}
-              provider={info}
-              stats={getProviderStats(key, "cookie")}
-              authType="cookie"
-              onToggle={(active) => handleToggleProvider(key, "cookie", active)}
-            />
-          ))}
-        </div>
+        <>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4 lg:grid-cols-3 xl:grid-cols-4">
+            {[...apikeyConnected.map(([key, info]) => ({ authType: "apikey", key, info })),
+              ...webCookieEntries.map(([key, info]) => ({ authType: "cookie", key, info }))]
+              .slice(0, apikeyPage.visible).map(({ authType, key, info }) => (
+                <ApiKeyProviderCard
+                  key={key}
+                  providerId={key}
+                  provider={info}
+                  stats={getProviderStats(key, authType)}
+                  authType={authType}
+                  onToggle={(active) => handleToggleProvider(key, authType, active)}
+                />
+              ))}
+          </div>
+          {apikeyPage.hasMore && (
+            <button
+              type="button"
+              onClick={apikeyPage.showMore}
+              className="mt-2 w-full rounded-lg border border-dashed border-border px-3 py-2 text-sm text-text-muted transition-colors hover:border-brand-500 hover:text-brand-500"
+            >
+              {`Load more (${apikeyPage.remaining} remaining)`}
+            </button>
+          )}
+        </>
         )}
         <NotConnectedProviders entries={apikeyEmpty} forceOpen={isApikeySearching} />
       </div>
       )}
 
+      {/* R10 cross-provider catalog search */}
+      <CatalogSearchModal isOpen={showCatalogSearch} onClose={() => setShowCatalogSearch(false)} />
       <AddCompatibleModal
         variant="openai"
         isOpen={showAddCompatibleModal}
@@ -976,7 +1078,7 @@ export default function ProvidersPage() {
               <h3 className="font-semibold">Test Results</h3>
               <button
                 onClick={() => setTestResults(null)}
-                className="p-1 rounded-lg hover:bg-bg text-text-muted hover:text-text-main transition-colors"
+                className="p-2 rounded-lg hover:bg-bg text-text-muted hover:text-text-main transition-colors"
                 aria-label="Close test results"
               >
                 <span className="material-symbols-outlined text-lg">close</span>
@@ -993,7 +1095,7 @@ export default function ProvidersPage() {
 }
 
 function ProviderCard({ providerId, provider, stats, authType, onToggle }) {
-  const { connected, error, errorCode, errorTime, allDisabled } = stats;
+  const { connected, error, errorCode, errorTime, allDisabled, breaker } = stats;
   const isNoAuth = !!provider.noAuth;
 
   const dotColors = {
@@ -1052,6 +1154,27 @@ function ProviderCard({ providerId, provider, stats, authType, onToggle }) {
                 ) : (
                   <>
                     {getStatusDisplay(connected, error, errorCode)}
+                    {breaker?.state === "open" && (
+                      <span title="Provider breaker open — broad failures, no traffic until the probe window.">
+                        <Badge variant="error" size="sm">
+                          Breaker open
+                        </Badge>
+                      </span>
+                    )}
+                    {breaker?.state === "half-open" && (
+                      <span title="Provider breaker probing — traffic resumes, one failure re-opens it.">
+                        <Badge variant="warning" size="sm">
+                          Breaker probing
+                        </Badge>
+                      </span>
+                    )}
+                    {breaker?.state === "closed" && (breaker?.failuresInWindow || 0) > 0 && (
+                      <span title="Provider breaker pre-trip — recent failures in the window, still serving. It opens after repeated failures from multiple connections.">
+                        <Badge variant="default" size="sm">
+                          Breaker watching ({breaker.failuresInWindow})
+                        </Badge>
+                      </span>
+                    )}
                     {errorTime && (
                       <span className="text-text-muted">{errorTime}</span>
                     )}
@@ -1061,20 +1184,19 @@ function ProviderCard({ providerId, provider, stats, authType, onToggle }) {
             </div>
           </div>
           <div className="flex shrink-0 items-center gap-2">
-            {(stats.total > 0 || isNoAuth) && (
+            {stats.total > 0 && (
               <div
-                className="opacity-100 transition-opacity sm:opacity-0 sm:group-hover:opacity-100"
+                className="transition-opacity"
                 onClick={(e) => {
                   e.preventDefault();
                   e.stopPropagation();
+                  onToggle(!allDisabled ? false : true);
                 }}
               >
                 <Toggle
                   size="sm"
                   checked={!allDisabled}
-                  onChange={(active) => {
-                    onToggle(active);
-                  }}
+                  onChange={() => {}}
                   title={allDisabled ? "Enable provider" : "Disable provider"}
                 />
               </div>
@@ -1111,8 +1233,7 @@ function ApiKeyProviderCard({
   authType,
   onToggle,
 }) {
-  const { connected, error, errorCode, errorTime, allDisabled } = stats;
-  const isNoAuth = !!provider.noAuth;
+  const { connected, error, errorCode, errorTime, allDisabled, breaker } = stats;
   const isCompatible = providerId.startsWith(OPENAI_COMPATIBLE_PREFIX);
   const isAnthropicCompatible = providerId.startsWith(
     ANTHROPIC_COMPATIBLE_PREFIX,
@@ -1180,6 +1301,27 @@ function ApiKeyProviderCard({
                 ) : (
                   <>
                     {getStatusDisplay(connected, error, errorCode)}
+                    {breaker?.state === "open" && (
+                      <span title="Provider breaker open — broad failures, no traffic until the probe window.">
+                        <Badge variant="error" size="sm">
+                          Breaker open
+                        </Badge>
+                      </span>
+                    )}
+                    {breaker?.state === "half-open" && (
+                      <span title="Provider breaker probing — traffic resumes, one failure re-opens it.">
+                        <Badge variant="warning" size="sm">
+                          Breaker probing
+                        </Badge>
+                      </span>
+                    )}
+                    {breaker?.state === "closed" && (breaker?.failuresInWindow || 0) > 0 && (
+                      <span title="Provider breaker pre-trip — recent failures in the window, still serving. It opens after repeated failures from multiple connections.">
+                        <Badge variant="default" size="sm">
+                          Breaker watching ({breaker.failuresInWindow})
+                        </Badge>
+                      </span>
+                    )}
                     {isCompatible && (
                       <Badge variant="default" size="sm">
                         {provider.apiType === "responses"
@@ -1201,20 +1343,19 @@ function ApiKeyProviderCard({
             </div>
           </div>
           <div className="flex shrink-0 items-center gap-2">
-            {(stats.total > 0 || isNoAuth) && (
+            {stats.total > 0 && (
               <div
-                className="opacity-100 transition-opacity sm:opacity-0 sm:group-hover:opacity-100"
+                className="transition-opacity"
                 onClick={(e) => {
                   e.preventDefault();
                   e.stopPropagation();
+                  onToggle(!allDisabled ? false : true);
                 }}
               >
                 <Toggle
                   size="sm"
                   checked={!allDisabled}
-                  onChange={(active) => {
-                    onToggle(active);
-                  }}
+                  onChange={() => {}}
                   title={allDisabled ? "Enable provider" : "Disable provider"}
                 />
               </div>

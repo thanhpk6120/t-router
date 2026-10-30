@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { Card, Button } from "@/shared/components";
 import { useCopyToClipboard } from "@/shared/hooks/useCopyToClipboard";
+import { useNotificationStore } from "@/store/notificationStore";
 import dynamic from "next/dynamic";
 import { MONACO_VS_PATH } from "@/shared/constants/monaco";
 
@@ -35,6 +36,7 @@ const EDITOR_OPTIONS = {
 };
 
 export default function TranslatorPage() {
+  const notify = useNotificationStore();
   const [contents, setContents] = useState({});
   const [expanded, setExpanded] = useState({ 1: true });
   const [loading, setLoading] = useState({});
@@ -63,10 +65,10 @@ export default function TranslatorPage() {
         setContent(stepId, data.content);
         if (stepId === 1) await detectMeta(data.content);
       } else {
-        alert(data.error || "File not found");
+        notify.error(data.error || "File not found");
       }
     } catch (e) {
-      alert(e.message);
+      notify.error(e.message);
     }
     setLoad(`load-${stepId}`, false);
   };
@@ -107,11 +109,11 @@ export default function TranslatorPage() {
         body: JSON.stringify({ step: 2, body })
       });
       const data = await res.json();
-      if (!data.success) { alert(data.error); return; }
+      if (!data.success) { notify.error(data.error); return; }
       const str = JSON.stringify(data.result.body, null, 2);
       setContent(3, str);
       openNext(3);
-    } catch (e) { alert(e.message); }
+    } catch (e) { notify.error(e.message); }
     setLoad("toOpenAI", false);
   };
 
@@ -130,12 +132,12 @@ export default function TranslatorPage() {
         body: JSON.stringify({ step: 3, body: { ...openaiBody, provider: meta?.provider, model: meta?.model } })
       });
       const data = await res.json();
-      if (!data.success) { alert(data.error); return; }
+      if (!data.success) { notify.error(data.error); return; }
       // Embed provider + model so Send works even without meta
       const step4Content = { ...data.result, provider: meta?.provider, model: meta?.model };
       setContent(4, JSON.stringify(step4Content, null, 2));
       openNext(4);
-    } catch (e) { alert(e.message); }
+    } catch (e) { notify.error(e.message); }
     setLoad("toTarget", false);
   };
 
@@ -153,7 +155,7 @@ export default function TranslatorPage() {
       const model = step4.model || meta?.model;
 
       if (!provider || !model) {
-        alert("Missing provider or model. Please run step 1 first to detect them.");
+        notify.error("Missing provider or model. Please run step 1 first to detect them.");
         return;
       }
 
@@ -165,7 +167,7 @@ export default function TranslatorPage() {
 
       if (!res.ok) {
         const err = await res.json().catch(() => ({ error: res.statusText }));
-        alert(err.error || "Send failed");
+        notify.error(err.error || "Send failed");
         return;
       }
 
@@ -189,7 +191,7 @@ export default function TranslatorPage() {
         body: JSON.stringify({ file: "5_res_provider.txt", content: full })
       });
     } catch (e) {
-      alert(e.message);
+      notify.error(e.message);
     } finally {
       setLoad("send", false);
     }
@@ -218,13 +220,9 @@ export default function TranslatorPage() {
   };
 
   return (
-    <div className="p-8 space-y-3">
-      {/* Header */}
-      <div className="flex items-center justify-between mb-2">
-        <div>
-          <h1 className="text-2xl font-bold text-text-main">Translator Debug</h1>
-          <p className="text-sm text-text-muted mt-1">Replay request flow — matches log files</p>
-        </div>
+    <div className="space-y-3">
+      {/* Header: title comes from the dashboard Header (G13) — no second h1 here. */}
+      <div className="flex items-center justify-end mb-2">
         {meta && (
           <div className="flex items-center gap-2 flex-wrap justify-end">
             <MetaBadge label="src" value={meta.sourceFormat} color="blue" />
@@ -236,6 +234,12 @@ export default function TranslatorPage() {
         )}
       </div>
 
+      <p className="text-xs text-text-muted">
+        Note: this page appears in the sidebar only when the server was started with the{" "}
+        <code className="font-mono">ENABLE_TRANSLATOR</code> environment flag set to{" "}
+        <code className="font-mono">true</code> — there is no in-app toggle for it.
+      </p>
+
       {STEPS.map((step) => {
         const action = getAction(step.id);
         const isExpanded = !!expanded[step.id];
@@ -243,20 +247,20 @@ export default function TranslatorPage() {
 
         return (
           <Card key={step.id}>
-            <div className="p-4 space-y-3">
+            <div className="p-3 sm:p-4 space-y-3">
               {/* Step header */}
-              <div className="flex items-center justify-between">
-                <button onClick={() => toggle(step.id)} className="flex items-center gap-2 flex-1 text-left group">
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                <button onClick={() => toggle(step.id)} className="flex items-center gap-2 flex-1 min-w-0 text-left group">
                   <span className="material-symbols-outlined text-[20px] text-text-muted group-hover:text-primary transition-colors">
                     {isExpanded ? "expand_more" : "chevron_right"}
                   </span>
                   <span className="text-xs font-mono text-text-muted/60 w-4">{step.id}</span>
                   <h3 className="text-sm font-semibold text-text-main">{step.label}</h3>
-                  <span className="text-xs text-text-muted/60 font-mono">{step.file}</span>
+                  <span className="text-xs text-text-muted/60 font-mono truncate min-w-0">{step.file}</span>
                   {content && <span className="text-xs text-green-500">({content.length} chars)</span>}
                 </button>
                 {!isExpanded && (
-                  <div className="flex gap-1 shrink-0">
+                  <div className="flex flex-wrap gap-1 shrink-0">
                     <Button size="sm" variant="ghost" icon="folder_open" loading={loading[`load-${step.id}`]} onClick={() => handleLoad(step.id)} />
                     {action}
                   </div>

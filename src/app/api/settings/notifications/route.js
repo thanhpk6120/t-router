@@ -1,35 +1,43 @@
 import { NextResponse } from "next/server";
-import { getNotifyStatus, getNotifyConfig, saveNotifyConfig } from "@/lib/notify.js";
+import { getNotifyStatus, getNotifyConfig, saveNotifyConfig, normalizeNotifyConfig } from "@/lib/notify.js";
 
 export const dynamic = "force-dynamic";
 
 export async function GET() {
   try {
-    const status = await getNotifyStatus();
-    return NextResponse.json(status, { headers: { "Cache-Control": "no-store" } });
+    return NextResponse.json(await getNotifyStatus(), { headers: { "Cache-Control": "no-store" } });
   } catch (e) {
     return NextResponse.json({ error: e?.message || "failed" }, { status: 500 });
   }
 }
 
-// Partial update: blank secret/token keeps the current stored value.
 export async function POST(request) {
   try {
-    const body = await request.json();
-    const current = await getNotifyConfig();
-    const next = {
-      telegram: {
-        enabled: body.telegram?.enabled ?? current.telegram.enabled,
-        botToken: body.telegram?.botToken ? String(body.telegram.botToken).trim() : current.telegram.botToken,
-        chatId: body.telegram?.chatId !== undefined ? String(body.telegram.chatId).trim() : current.telegram.chatId,
-      },
-      webhook: {
-        enabled: body.webhook?.enabled ?? current.webhook.enabled,
-        url: body.webhook?.url !== undefined ? String(body.webhook.url).trim() : current.webhook.url,
-        secret: body.webhook?.secret ? String(body.webhook.secret) : current.webhook.secret,
-      },
-    };
-    await saveNotifyConfig(next);
+    const raw = await request.json();
+    const cfg = normalizeNotifyConfig(raw);
+    // Secrets are never returned by GET, so a blank field means "keep the
+    // stored one" — otherwise every save would wipe the token.
+    const existing = await getNotifyConfig();
+    // Same keep rule for structured webhook events: the legacy Automation
+    // form does not send webhookEvents, and normalizing it blind would
+    // silently switch every event off on every save.
+    if (raw?.webhookEvents === undefined && existing.webhookEvents) {
+      cfg.webhookEvents = existing.webhookEvents;
+    }
+    if (!cfg.telegram.botToken) cfg.telegram.botToken = existing.telegram.botToken;
+    if (!cfg.webhook.secret) cfg.webhook.secret = existing.webhook.secret;
+    if (cfg.telegram.enabled && (!cfg.telegram.botToken || !cfg.telegram.chatId)) {
+      return NextResponse.json({ error: "Telegram needs a bot token and a chat id" }, { status: 400 });
+    }
+    if (cfg.webhook.enabled) {
+      try {
+        const u = new URL(cfg.webhook.url);
+        if (u.protocol !== "http:" && u.protocol !== "https:") throw new Error("bad protocol");
+      } catch {
+        return NextResponse.json({ error: "Webhook needs a valid http(s) URL" }, { status: 400 });
+      }
+    }
+    await saveNotifyConfig(cfg);
     return NextResponse.json(await getNotifyStatus());
   } catch (e) {
     return NextResponse.json({ error: e?.message || "failed" }, { status: 500 });
