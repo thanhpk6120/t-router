@@ -117,17 +117,20 @@ if [ "$HAS_NEW_CODE" = true ] && [ "$HAS_NEW_VER" = true ]; then
   log "Port 20127 test PASSED with HTTP $TEST_CODE! Port 20126 active service is untouched (zero downtime)."
 
   # Notify Telegram Ubuntu Server Bot for user publish decision (awaiting user confirm)
-  LATEST_COMMIT_MSG=$(git -C "$DIR_TROUTER" log -1 --pretty=%B | head -n 3 | tr '\n' ' ')
-  JSON_PAYLOAD=$(CURRENT_VER="$CURRENT_VER" NPM_PUB_VER="$NPM_PUB_VER" COMMIT_MSG="$LATEST_COMMIT_MSG" node -e '
+  SUMMARY_TEXT=$(node "$BASE_DIR/scripts/extract-release-summary.js" --dir "$DIR_TROUTER" --version "$CURRENT_VER" --old-head "$OLD_TROUTER_HEAD" --new-head "$NEW_TROUTER_HEAD" --format html 2>/dev/null || true)
+  if [ -z "$SUMMARY_TEXT" ]; then
+    SUMMARY_TEXT=$(git -C "$DIR_TROUTER" log -1 --pretty=%B | head -n 3 | tr '\n' ' ')
+  fi
+
+  JSON_PAYLOAD=$(CURRENT_VER="$CURRENT_VER" NPM_PUB_VER="$NPM_PUB_VER" SUMMARY_TEXT="$SUMMARY_TEXT" node -e '
     console.log(JSON.stringify({
       currentVersion: process.env.CURRENT_VER || "",
       publishedVersion: process.env.NPM_PUB_VER || "",
       nextVersion: process.env.CURRENT_VER || "",
       mergedFrom: "GitHub origin/main",
-      summary: process.env.COMMIT_MSG || "Bản cập nhật mới trên GitHub"
+      summary: process.env.SUMMARY_TEXT || "Bản cập nhật mới trên GitHub"
     }));
   ')
-
   curl -s -X POST http://127.0.0.1:20129/notify-release \
     -H "Content-Type: application/json" \
     -d "$JSON_PAYLOAD" || log "Failed to call publisher daemon on 127.0.0.1:20129"
@@ -230,18 +233,20 @@ JSON_EOF
   # 10. Send interactive Telegram Notification via Ubuntu Server Bot
   log "Notifying Telegram Ubuntu Server Bot for user approval..."
   MERGE_SOURCE="9router (${LATEST_9ROUTER:-$HEAD_9ROUTER}) & 9router-pro (${LATEST_PRO:-$HEAD_PRO})"
-  COMMIT_LOG=$(git -C "$DIR_TROUTER" log -1 --pretty=%B | head -n 3 | tr '\n' ' ')
+  SUMMARY_TEXT=$(node "$BASE_DIR/scripts/extract-release-summary.js" --dir "$DIR_TROUTER" --version "$CURRENT_VER" --old-head "$OLD_HEAD" --new-head "$NEW_HEAD" --format html 2>/dev/null || true)
+  if [ -z "$SUMMARY_TEXT" ]; then
+    SUMMARY_TEXT=$(git -C "$DIR_TROUTER" log -1 --pretty=%B | head -n 3 | tr '\n' ' ')
+  fi
 
-  JSON_PAYLOAD=$(CURRENT_VER="$CURRENT_VER" UPSTREAM_9R="${LATEST_9ROUTER:-$HEAD_9ROUTER}" UPSTREAM_PRO="${LATEST_PRO:-$HEAD_PRO}" MERGE_SOURCE="$MERGE_SOURCE" COMMIT_LOG="$COMMIT_LOG" node -e '
+  JSON_PAYLOAD=$(CURRENT_VER="$CURRENT_VER" UPSTREAM_9R="${LATEST_9ROUTER:-$HEAD_9ROUTER}" UPSTREAM_PRO="${LATEST_PRO:-$HEAD_PRO}" MERGE_SOURCE="$MERGE_SOURCE" SUMMARY_TEXT="$SUMMARY_TEXT" node -e '
     console.log(JSON.stringify({
       currentVersion: process.env.CURRENT_VER || "",
       upstream9RouterVersion: process.env.UPSTREAM_9R || "",
       upstreamProVersion: process.env.UPSTREAM_PRO || "",
       mergedFrom: process.env.MERGE_SOURCE || "",
-      summary: process.env.COMMIT_LOG || ""
+      summary: process.env.SUMMARY_TEXT || ""
     }));
   ')
-
   curl -s -X POST http://127.0.0.1:20129/notify-merge \
     -H "Content-Type: application/json" \
     -d "$JSON_PAYLOAD" || log "Failed to call publisher daemon on 127.0.0.1:20129"

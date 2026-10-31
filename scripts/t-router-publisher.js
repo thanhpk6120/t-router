@@ -10,6 +10,11 @@ const http = require('http');
 const { exec, execSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
+let getReleaseSummary = null;
+try {
+  const summaryModule = require('./extract-release-summary.js');
+  getReleaseSummary = summaryModule.getReleaseSummary;
+} catch (e) {}
 
 const PORT = 20129;
 const HOST = '127.0.0.1';
@@ -392,6 +397,32 @@ const server = http.createServer(async (req, res) => {
         log('Received notify: ' + JSON.stringify(body));
 
         const targetVer = nextVersion || resolveNextVersion(currentVersion, upstreamProVersion, upstream9RouterVersion, mergedFrom);
+        // Trích xuất bản tóm tắt chi tiết (nếu chưa có bullet)
+        let summaryHtml = '';
+        let summaryMarkdown = '';
+        if (summary && summary.includes('•')) {
+          summaryHtml = summary;
+          summaryMarkdown = summary
+            .replace(/<b>(.*?)<\/b>/gi, '**$1**')
+            .replace(/<code>(.*?)<\/code>/gi, '`$1`')
+            .replace(/<i>(.*?)<\/i>/gi, '*$1*')
+            .replace(/<[^>]+>/g, '');
+        } else if (typeof getReleaseSummary === 'function') {
+          summaryHtml = getReleaseSummary({
+            dirTRouter: DIR_TROUTER,
+            targetVersion: currentVersion,
+            format: 'html',
+          });
+          summaryMarkdown = getReleaseSummary({
+            dirTRouter: DIR_TROUTER,
+            targetVersion: currentVersion,
+            format: 'markdown',
+          });
+        } else {
+          summaryHtml = escapeHtml(summary || '• Cập nhật tối ưu hóa và sửa lỗi hệ thống.');
+          summaryMarkdown = summary || '• Cập nhật tối ưu hóa và sửa lỗi hệ thống.';
+        }
+
         const stateData = {
           currentVersion: currentVersion || '0.5.109-pro.12-t.0',
           nextVersion: targetVer,
@@ -399,7 +430,8 @@ const server = http.createServer(async (req, res) => {
           upstream9RouterVersion: upstream9RouterVersion || '',
           upstreamProVersion: upstreamProVersion || '',
           mergedFrom: mergedFrom || 'Git origin/main',
-          summary: summary || 'Bản cập nhật mới trên GitHub',
+          summary: summaryMarkdown,
+          summaryHtml: summaryHtml,
           timestamp: new Date().toISOString(),
         };
 
@@ -413,10 +445,11 @@ const server = http.createServer(async (req, res) => {
           '🚀 <b>T-Router: Phát hiện Code mới & Version mới!</b>\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n' +
           '📦 <b>Phiên bản Git:</b> <code>' + escapeHtml(currentVersion || 'N/A') + '</code>\n' +
           (publishedVersion ? '🌐 <b>Phiên bản npmjs:</b> <code>' + escapeHtml(publishedVersion) + '</code>\n' : '') +
-          '🔀 <b>Nguồn:</b> ' + escapeHtml(mergedFrom || 'Git origin/main') + '\n' +
-          '📝 <b>Tóm tắt:</b> ' + escapeHtml(summary || 'Cập nhật tính năng mới') + '\n' +
-          '✅ <b>Kiểm tra:</b> Syntax OK, build hoàn tất, service active!\n\n' +
-          '💡 Đề xuất publish lên npmjs.com?';
+          '🔀 <b>Nguồn:</b> ' + escapeHtml(mergedFrom || 'Git origin/main') + '\n\n' +
+          '📋 <b>Những cập nhật mới:</b>\n' + summaryHtml + '\n\n' +
+          '━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n' +
+          '✅ <b>Kiểm tra:</b> Syntax OK, build & test cổng 20127 PASSED!\n\n' +
+          '💡 <i>Bạn có muốn publish phiên bản này lên npmjs.com không?</i>';
         const inlineKeyboard = {
           inline_keyboard: [
             [

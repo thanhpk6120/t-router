@@ -213,9 +213,10 @@ bot.onText(/\/trouter/, async (m) => {
     const data = await res.json();
     let text = "🚀 **T-Router Management**\n━━━━━━━━━━━━━━━━\n";
     if (data.pendingRelease) {
+      const summaryText = data.pendingRelease.summary || "• Cập nhật tối ưu hóa và sửa lỗi hệ thống.";
       text += "📦 **Bản cập nhật chờ duyệt:** `" + data.pendingRelease.nextVersion + "`\n" +
-              "🔀 **Nguồn:** " + data.pendingRelease.mergedFrom + "\n" +
-              "📝 **Tóm tắt:** " + data.pendingRelease.summary + "\n\n" +
+              "🔀 **Nguồn:** " + data.pendingRelease.mergedFrom + "\n\n" +
+              "📋 **Những cập nhật mới:**\n" + summaryText + "\n\n" +
               "💡 Chọn hành động bên dưới:";
       const kbd = {
         reply_markup: {
@@ -263,8 +264,11 @@ bot.on("callback_query", async (q) => {
           const d = await res.json();
           let txt = "🚀 **T-Router Management**\n━━━━━━━━━━━━━━━━\n";
           if (d.pendingRelease) {
+            const summaryText = d.pendingRelease.summary || "• Cập nhật tối ưu hóa và sửa lỗi hệ thống.";
             txt += "📦 **Chờ duyệt:** `" + d.pendingRelease.nextVersion + "`\n" +
-                   "🔀 **Nguồn:** " + d.pendingRelease.mergedFrom + "\n\n💡 Chọn hành động:";
+                   "🔀 **Nguồn:** " + d.pendingRelease.mergedFrom + "\n\n" +
+                   "📋 **Những cập nhật mới:**\n" + summaryText + "\n\n" +
+                   "💡 Chọn hành động:";
             const kb = {
               reply_markup: {
                 inline_keyboard: [
