@@ -757,9 +757,16 @@ export function selectPromptInjections({ global, byKey, byModel, byKeyModel, byV
       }
     }
 
+    const extractBareModel = (str) => {
+      if (typeof str !== "string" || !str) return "";
+      const lastSlash = str.lastIndexOf("/");
+      return lastSlash >= 0 ? str.slice(lastSlash + 1) : str;
+    };
+
     const candidateModels = [ctx.resolvedModel, ctx.requestedModel, ctx.bareModel].filter(
-      (x) => typeof x === "string" && x
+      (x) => typeof x === "string" && x.trim()
     );
+    const candidateBares = candidateModels.map(extractBareModel).filter(Boolean);
 
     for (const rule of rules) {
       if (!rule || rule.enabled === false) continue;
@@ -772,12 +779,19 @@ export function selectPromptInjections({ global, byKey, byModel, byKeyModel, byV
         (ctx.apiKeyId && rule.apiKeys.includes(ctx.apiKeyId));
       if (!keyMatch) continue;
 
-      // Model match: wildcard "*" or matching any candidateModel
+      // Model match: wildcard "*" or matching any candidateModel or bare model name
       const modelMatch =
         !rule.models ||
         !rule.models.length ||
         rule.models.includes("*") ||
-        rule.models.some((m) => candidateModels.includes(m));
+        rule.models.some((m) => {
+          if (!m || typeof m !== "string") return false;
+          const trimmed = m.trim();
+          if (trimmed === "*") return true;
+          if (candidateModels.includes(trimmed)) return true;
+          const bareM = extractBareModel(trimmed);
+          return bareM && candidateBares.includes(bareM);
+        });
       if (!modelMatch) continue;
 
       // Determine content: Live Template Reference vs Inline

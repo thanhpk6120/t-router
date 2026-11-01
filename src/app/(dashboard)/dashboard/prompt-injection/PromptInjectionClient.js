@@ -684,18 +684,96 @@ function RuleModal({ rule, templates, keys, keyName, onClose, onSave, saving }) 
             )}
           </div>
         ) : (
-          <div className="flex flex-col gap-2">
-            <InjectEditor
-              initial={{ mode, content, turns, position, enabled }}
-              saving={saving}
-              onSave={(fields) => {
-                setMode(fields.mode);
-                if (fields.mode === "chat") setTurns(fields.turns);
-                else setContent(fields.content);
-                setPosition(fields.position);
-                setEnabled(fields.enabled);
-              }}
-            />
+          <div className="flex flex-col gap-3">
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="flex overflow-hidden rounded-lg border border-border text-sm">
+                <button
+                  type="button"
+                  onClick={() => setMode("single")}
+                  className={`px-3 py-1.5 font-medium transition-colors ${
+                    mode === "single" ? "bg-primary text-white" : "bg-surface text-text-muted hover:text-text-main"
+                  }`}
+                >
+                  Single prompt
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setMode("chat")}
+                  className={`px-3 py-1.5 font-medium transition-colors ${
+                    mode === "chat" ? "bg-primary text-white" : "bg-surface text-text-muted hover:text-text-main"
+                  }`}
+                >
+                  Chat script
+                </button>
+              </div>
+              <span className="ml-auto text-xs text-text-muted">
+                ~{estimateTokens(mode === "chat" ? (turns || []).map((t) => t.content).join("\n") : content)} tokens
+              </span>
+            </div>
+
+            {mode === "single" ? (
+              <textarea
+                value={content}
+                onChange={(e) => setContent(e.target.value)}
+                rows={6}
+                placeholder="Write the system prompt…"
+                className="w-full rounded-lg border border-border bg-surface px-3 py-2 font-mono text-[13px] leading-relaxed focus:border-primary focus:outline-none"
+              />
+            ) : (
+              <div className="flex flex-col gap-2">
+                {(turns || []).map((t, i) => (
+                  <div key={i} className="flex items-start gap-2">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setTurns((ts) =>
+                          ts.map((item, j) => (j === i ? { ...item, role: item.role === "user" ? "assistant" : "user" } : item))
+                        )
+                      }
+                      className={`mt-2 flex h-7 w-7 shrink-0 items-center justify-center rounded-full transition-transform active:scale-90 ${
+                        t.role === "user" ? "bg-surface-3 text-text-muted" : "bg-primary/15 text-primary"
+                      }`}
+                      title="Click to toggle user/assistant"
+                    >
+                      <span className="material-symbols-outlined text-[16px]">
+                        {t.role === "user" ? "person" : "smart_toy"}
+                      </span>
+                    </button>
+                    <textarea
+                      value={t.content}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setTurns((ts) => ts.map((item, j) => (j === i ? { ...item, content: val } : item)));
+                      }}
+                      rows={2}
+                      placeholder={t.role === "user" ? "User message…" : "Assistant reply…"}
+                      className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm leading-relaxed focus:border-primary focus:outline-none"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setTurns((ts) => ts.filter((_, j) => j !== i))}
+                      title="Remove turn"
+                      className="mt-2 shrink-0 text-text-muted transition-colors hover:text-red-500"
+                    >
+                      <span className="material-symbols-outlined text-[18px]">close</span>
+                    </button>
+                  </div>
+                ))}
+                <button
+                  type="button"
+                  onClick={() =>
+                    setTurns((ts) => [
+                      ...(ts || []),
+                      { role: ts?.length && ts[ts.length - 1].role === "user" ? "assistant" : "user", content: "" },
+                    ])
+                  }
+                  className="flex items-center gap-1 self-start text-xs font-semibold text-primary transition-colors hover:underline"
+                >
+                  <span className="material-symbols-outlined text-[16px]">add</span>
+                  Add turn
+                </button>
+              </div>
+            )}
           </div>
         )}
 

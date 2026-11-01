@@ -272,6 +272,28 @@ describe("selectPromptInjections", () => {
     assert.deepEqual(outNone, []);
   });
 
+  it("rules: matches model when using alias prefix or bare model name", () => {
+    const rules = [
+      {
+        id: "r_alias",
+        name: "Alias Match",
+        enabled: true,
+        mode: "single",
+        content: "MATCHED_ALIAS",
+        models: ["cc/claude-sonnet-4-5"],
+        apiKeys: ["*"],
+      },
+    ];
+
+    // Request routed through combo with resolvedModel "claude/claude-sonnet-4-5" and bare "claude-sonnet-4-5"
+    const out = selectPromptInjections({ rules }, {
+      requestedModel: "my-combo",
+      resolvedModel: "claude/claude-sonnet-4-5",
+      bareModel: "claude-sonnet-4-5",
+    });
+    assert.deepEqual(out.map((p) => p.text), ["MATCHED_ALIAS"]);
+  });
+
   it("rules: stacks strictly in array order", () => {
     const ruleA = { id: "ra", name: "A", enabled: true, mode: "single", content: "AAA", models: ["*"], apiKeys: ["*"] };
     const ruleB = { id: "rb", name: "B", enabled: true, mode: "single", content: "BBB", models: ["*"], apiKeys: ["*"] };
