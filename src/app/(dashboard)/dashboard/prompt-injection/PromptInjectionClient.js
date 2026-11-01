@@ -382,6 +382,493 @@ function TemplateModal({ template, onClose, onSave, saving }) {
   );
 }
 
+// ------------------------------------------------------------ rules (multi-model, multi-key)
+
+function RuleCard({ rule, index, total, templates, keys, keyName, onMove, onToggle, onEdit, onDelete }) {
+  const tpl = rule.templateId ? templates.find((t) => t.id === rule.templateId) : null;
+  const isLive = !!rule.templateId;
+  const promptText = isLive
+    ? (tpl ? entryText(tpl) : "(Template not found)")
+    : entryText(rule);
+  const models = Array.isArray(rule.models) ? rule.models : ["*"];
+  const apiKeys = Array.isArray(rule.apiKeys) ? rule.apiKeys : ["*"];
+  const isAllModels = models.includes("*");
+  const isAllKeys = apiKeys.includes("*");
+
+  return (
+    <Card padding="sm" className={rule.enabled === false ? "opacity-60" : ""}>
+      <div className="flex items-start gap-3">
+        {/* Reordering handles */}
+        <div className="flex flex-col items-center gap-0.5 pt-0.5">
+          <button
+            type="button"
+            disabled={index === 0}
+            onClick={() => onMove(index, -1)}
+            title="Move up in order"
+            className="flex h-5 w-5 items-center justify-center rounded text-text-muted hover:bg-black/5 hover:text-text-main disabled:opacity-20 dark:hover:bg-white/5"
+          >
+            <span className="material-symbols-outlined text-[16px]">arrow_upward</span>
+          </button>
+          <span className="text-[11px] font-mono font-bold text-text-muted">#{index + 1}</span>
+          <button
+            type="button"
+            disabled={index >= total - 1}
+            onClick={() => onMove(index, 1)}
+            title="Move down in order"
+            className="flex h-5 w-5 items-center justify-center rounded text-text-muted hover:bg-black/5 hover:text-text-main disabled:opacity-20 dark:hover:bg-white/5"
+          >
+            <span className="material-symbols-outlined text-[16px]">arrow_downward</span>
+          </button>
+        </div>
+
+        {/* Content & Details */}
+        <div className="flex min-w-0 flex-1 flex-col gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <p className="min-w-0 font-semibold text-sm break-words">{rule.name || "Untitled Rule"}</p>
+            {isLive ? (
+              <span className="inline-flex items-center gap-1 rounded-md bg-blue-500/10 px-2 py-0.5 text-[11px] font-medium text-blue-500 dark:bg-blue-500/20">
+                <span className="material-symbols-outlined text-[13px]">sync</span>
+                Live: {tpl ? tpl.name : "Missing template"}
+              </span>
+            ) : (
+              <span className="rounded-md bg-surface-3 px-2 py-0.5 text-[11px] font-medium text-text-muted">
+                Custom · {rule.mode === "chat" ? `${rule.turns?.length || 0} turns` : "Single"}
+              </span>
+            )}
+            <span className="rounded-md bg-surface-3 px-2 py-0.5 text-[11px] font-mono text-text-muted uppercase">
+              {rule.position || "prepend"}
+            </span>
+            {rule.enabled === false && (
+              <span className="rounded-md bg-amber-500/10 px-2 py-0.5 text-[11px] font-medium text-amber-500">
+                Disabled
+              </span>
+            )}
+          </div>
+
+          {/* Targets: Models & Keys */}
+          <div className="flex flex-wrap items-center gap-1.5 text-xs">
+            <span className="text-text-muted text-[11px]">Models:</span>
+            {isAllModels ? (
+              <span className="rounded bg-brand-500/10 px-1.5 py-0.5 text-[11px] font-medium text-brand-500">
+                All models (*)
+              </span>
+            ) : (
+              models.map((m) => (
+                <span key={m} className="rounded bg-surface-3 px-1.5 py-0.5 font-mono text-[11px] text-text-main">
+                  {m}
+                </span>
+              ))
+            )}
+            <span className="ml-2 text-text-muted text-[11px]">Keys:</span>
+            {isAllKeys ? (
+              <span className="rounded bg-emerald-500/10 px-1.5 py-0.5 text-[11px] font-medium text-emerald-500">
+                All keys (*)
+              </span>
+            ) : (
+              apiKeys.map((k) => (
+                <span key={k} className="rounded bg-surface-3 px-1.5 py-0.5 text-[11px] text-text-main">
+                  {keyName(k)}
+                </span>
+              ))
+            )}
+          </div>
+
+          {/* Snippet */}
+          <p className="line-clamp-2 text-xs text-text-muted">
+            {promptText || "(Empty content)"}
+          </p>
+
+          <div className="flex flex-wrap items-center gap-1 pt-1">
+            <span className="text-xs text-text-muted">
+              ~{estimateTokens(promptText)} tokens
+            </span>
+            <span className="flex-1" />
+            <button
+              type="button"
+              onClick={onToggle}
+              title={rule.enabled === false ? "Enable rule" : "Disable rule"}
+              className={actionBtnClass}
+            >
+              <span className="material-symbols-outlined text-[16px]">
+                {rule.enabled === false ? "toggle_off" : "toggle_on"}
+              </span>
+              {rule.enabled === false ? "Enable" : "Disable"}
+            </button>
+            <button type="button" onClick={onEdit} title="Edit rule" className={actionBtnClass}>
+              <span className="material-symbols-outlined text-[16px]">edit</span>
+              Edit
+            </button>
+            <ConfirmButton label="Delete" icon="delete" onConfirm={onDelete} />
+          </div>
+        </div>
+      </div>
+    </Card>
+  );
+}
+
+function RuleModal({ rule, templates, keys, keyName, onClose, onSave, saving }) {
+  const isNew = !rule?.id;
+  const [name, setName] = useState(rule?.name || "");
+  const [sourceType, setSourceType] = useState(rule?.templateId ? "template" : "custom");
+  const [templateId, setTemplateId] = useState(rule?.templateId || (templates[0]?.id || ""));
+  const [mode, setMode] = useState(rule?.mode || "single");
+  const [content, setContent] = useState(rule?.content || "");
+  const [turns, setTurns] = useState(
+    rule?.turns?.length
+      ? rule.turns
+      : [
+          { role: "user", content: "" },
+          { role: "assistant", content: "" },
+        ]
+  );
+  const [position, setPosition] = useState(rule?.position || "prepend");
+  const [enabled, setEnabled] = useState(rule?.enabled !== false);
+
+  // Targets
+  const [allModels, setAllModels] = useState(!rule?.models || rule.models.includes("*"));
+  const [selectedModels, setSelectedModels] = useState(
+    rule?.models ? rule.models.filter((m) => m !== "*") : []
+  );
+  const [pickerOpen, setPickerOpen] = useState(false);
+
+  const [allKeys, setAllKeys] = useState(!rule?.apiKeys || rule.apiKeys.includes("*"));
+  const [selectedKeys, setSelectedKeys] = useState(
+    rule?.apiKeys ? rule.apiKeys.filter((k) => k !== "*") : []
+  );
+  const [keySelectVal, setKeySelectVal] = useState("");
+
+  const activeTemplate = templates.find((t) => t.id === templateId) || null;
+
+  const handleAddKey = (kId) => {
+    if (!kId) return;
+    if (!selectedKeys.includes(kId)) {
+      setSelectedKeys([...selectedKeys, kId]);
+    }
+    setKeySelectVal("");
+  };
+
+  const handleRemoveKey = (kId) => {
+    setSelectedKeys(selectedKeys.filter((k) => k !== kId));
+  };
+
+  const handleAddModel = (m) => {
+    const val = modelPickValue(m);
+    if (val && !selectedModels.includes(val)) {
+      setSelectedModels([...selectedModels, val]);
+    }
+  };
+
+  const handleRemoveModel = (m) => {
+    setSelectedModels(selectedModels.filter((x) => x !== m));
+  };
+
+  const handleSave = () => {
+    const trimmedName = name.trim() || "Untitled Rule";
+    const models = allModels || selectedModels.length === 0 ? ["*"] : selectedModels;
+    const apiKeys = allKeys || selectedKeys.length === 0 ? ["*"] : selectedKeys;
+
+    if (sourceType === "template") {
+      if (!templateId) {
+        alert("Please select a template");
+        return;
+      }
+      onSave({
+        id: rule?.id,
+        name: trimmedName,
+        templateId,
+        position,
+        enabled,
+        models,
+        apiKeys,
+      });
+    } else {
+      if (mode === "single" && !content.trim()) {
+        alert("Please provide prompt content");
+        return;
+      }
+      if (mode === "chat" && !turns.some((t) => t.content.trim())) {
+        alert("Please provide at least one conversation turn");
+        return;
+      }
+      onSave({
+        id: rule?.id,
+        name: trimmedName,
+        templateId: null,
+        mode,
+        content: mode === "single" ? content : "",
+        turns: mode === "chat" ? turns.filter((t) => t.content.trim()) : [],
+        position,
+        enabled,
+        models,
+        apiKeys,
+      });
+    }
+  };
+
+  return (
+    <Modal
+      isOpen
+      onClose={onClose}
+      title={isNew ? "New Prompt Rule" : "Edit Prompt Rule"}
+      size="lg"
+      bodyClassName="p-4 sm:p-6"
+    >
+      <div className="flex flex-col gap-4">
+        <Input
+          label="Rule name"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          placeholder="e.g. Universal Coding Assistant"
+        />
+
+        {/* Source Type Selector */}
+        <div className="flex flex-col gap-1.5">
+          <label className="text-xs font-semibold text-text-muted">Prompt Source</label>
+          <div className="flex overflow-hidden rounded-lg border border-border text-sm">
+            <button
+              type="button"
+              onClick={() => setSourceType("template")}
+              className={`flex-1 px-3 py-1.5 font-medium transition-colors ${
+                sourceType === "template"
+                  ? "bg-primary text-white"
+                  : "bg-surface text-text-muted hover:text-text-main"
+              }`}
+            >
+              Live Template Reference
+            </button>
+            <button
+              type="button"
+              onClick={() => setSourceType("custom")}
+              className={`flex-1 px-3 py-1.5 font-medium transition-colors ${
+                sourceType === "custom"
+                  ? "bg-primary text-white"
+                  : "bg-surface text-text-muted hover:text-text-main"
+              }`}
+            >
+              Custom Prompt
+            </button>
+          </div>
+        </div>
+
+        {sourceType === "template" ? (
+          <div className="flex flex-col gap-2 rounded-lg border border-border bg-surface-2 p-3">
+            {templates.length === 0 ? (
+              <p className="text-xs text-amber-500">
+                No templates exist yet. Create a template in the Templates section first, or choose Custom Prompt.
+              </p>
+            ) : (
+              <>
+                <label className="text-xs font-semibold text-text-muted">Select Template</label>
+                <select
+                  value={templateId}
+                  onChange={(e) => setTemplateId(e.target.value)}
+                  className="rounded-md border border-border bg-surface px-3 py-1.5 text-sm text-text-main focus:border-primary focus:outline-none"
+                >
+                  {templates.map((t) => (
+                    <option key={t.id} value={t.id}>
+                      {t.name} ({t.mode === "chat" ? `${t.turns?.length || 0} turns` : "Single prompt"})
+                    </option>
+                  ))}
+                </select>
+                {activeTemplate && (
+                  <div className="mt-1 flex flex-col gap-1 text-xs text-text-muted">
+                    <span className="font-medium text-text-main">
+                      Preview: {activeTemplate.mode === "chat" ? "Scripted chat" : "Single system prompt"}
+                    </span>
+                    <p className="line-clamp-3 rounded border border-border/50 bg-surface/50 p-2 font-mono text-[11px]">
+                      {entryText(activeTemplate)}
+                    </p>
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        ) : (
+          <div className="flex flex-col gap-2">
+            <InjectEditor
+              initial={{ mode, content, turns, position, enabled }}
+              saving={saving}
+              onSave={(fields) => {
+                setMode(fields.mode);
+                if (fields.mode === "chat") setTurns(fields.turns);
+                else setContent(fields.content);
+                setPosition(fields.position);
+                setEnabled(fields.enabled);
+              }}
+            />
+          </div>
+        )}
+
+        {/* Position Toggle */}
+        <div className="flex flex-col gap-1.5">
+          <label className="text-xs font-semibold text-text-muted">Position in System Prompt</label>
+          <div className="flex overflow-hidden rounded-lg border border-border text-sm">
+            <button
+              type="button"
+              onClick={() => setPosition("prepend")}
+              className={`flex-1 px-3 py-1.5 font-medium transition-colors ${
+                position === "prepend" ? "bg-primary text-white" : "bg-surface text-text-muted hover:text-text-main"
+              }`}
+            >
+              Prepend (Top of System)
+            </button>
+            <button
+              type="button"
+              onClick={() => setPosition("append")}
+              className={`flex-1 px-3 py-1.5 font-medium transition-colors ${
+                position === "append" ? "bg-primary text-white" : "bg-surface text-text-muted hover:text-text-main"
+              }`}
+            >
+              Append (Bottom of System)
+            </button>
+          </div>
+        </div>
+
+        {/* Target Models */}
+        <div className="flex flex-col gap-2 rounded-lg border border-border bg-surface-2 p-3">
+          <div className="flex items-center justify-between">
+            <label className="text-xs font-semibold text-text-main">Target Models</label>
+            <label className="inline-flex cursor-pointer items-center gap-1.5 text-xs text-text-muted">
+              <input
+                type="checkbox"
+                checked={allModels}
+                onChange={(e) => setAllModels(e.target.checked)}
+                className="rounded border-border"
+              />
+              All models (*)
+            </label>
+          </div>
+          {!allModels && (
+            <div className="flex flex-col gap-2">
+              <div className="flex flex-wrap gap-1.5">
+                {selectedModels.length === 0 ? (
+                  <span className="text-xs text-text-muted">No models selected (will apply to none).</span>
+                ) : (
+                  selectedModels.map((m) => (
+                    <span
+                      key={m}
+                      className="inline-flex items-center gap-1 rounded bg-surface px-2 py-1 text-xs font-mono text-text-main border border-border"
+                    >
+                      {m}
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveModel(m)}
+                        className="text-text-muted hover:text-red-500"
+                      >
+                        ×
+                      </button>
+                    </span>
+                  ))
+                )}
+              </div>
+              <Button
+                size="sm"
+                variant="outline"
+                icon="add"
+                onClick={() => setPickerOpen(true)}
+                className="self-start text-xs"
+              >
+                Add model
+              </Button>
+            </div>
+          )}
+        </div>
+
+        {/* Target API Keys */}
+        <div className="flex flex-col gap-2 rounded-lg border border-border bg-surface-2 p-3">
+          <div className="flex items-center justify-between">
+            <label className="text-xs font-semibold text-text-main">Target API Keys</label>
+            <label className="inline-flex cursor-pointer items-center gap-1.5 text-xs text-text-muted">
+              <input
+                type="checkbox"
+                checked={allKeys}
+                onChange={(e) => setAllKeys(e.target.checked)}
+                className="rounded border-border"
+              />
+              All API keys (*)
+            </label>
+          </div>
+          {!allKeys && (
+            <div className="flex flex-col gap-2">
+              <div className="flex flex-wrap gap-1.5">
+                {selectedKeys.length === 0 ? (
+                  <span className="text-xs text-text-muted">No keys selected (will apply to none).</span>
+                ) : (
+                  selectedKeys.map((k) => (
+                    <span
+                      key={k}
+                      className="inline-flex items-center gap-1 rounded bg-surface px-2 py-1 text-xs text-text-main border border-border"
+                    >
+                      {keyName(k)}
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveKey(k)}
+                        className="text-text-muted hover:text-red-500"
+                      >
+                        ×
+                      </button>
+                    </span>
+                  ))
+                )}
+              </div>
+              <div className="flex items-center gap-2">
+                <select
+                  value={keySelectVal}
+                  onChange={(e) => {
+                    handleAddKey(e.target.value);
+                  }}
+                  className="rounded-md border border-border bg-surface px-2.5 py-1 text-xs text-text-main focus:border-primary focus:outline-none"
+                >
+                  <option value="">+ Add an API key...</option>
+                  {keys
+                    .filter((k) => !selectedKeys.includes(k.id))
+                    .map((k) => (
+                      <option key={k.id} value={k.id}>
+                        {k.name || k.id}
+                      </option>
+                    ))}
+                </select>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Enabled Checkbox */}
+        <label className="inline-flex cursor-pointer items-center gap-2 text-sm text-text-main">
+          <input
+            type="checkbox"
+            checked={enabled}
+            onChange={(e) => setEnabled(e.target.checked)}
+            className="rounded border-border"
+          />
+          Enable this rule
+        </label>
+
+        {/* Modal Actions */}
+        <div className="flex items-center justify-end gap-2 pt-2 border-t border-border">
+          <Button variant="ghost" size="sm" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button variant="primary" size="sm" onClick={handleSave} disabled={saving}>
+            {saving ? "Saving…" : "Save Rule"}
+          </Button>
+        </div>
+      </div>
+
+      <ModelSelectModal
+        isOpen={pickerOpen}
+        onClose={() => setPickerOpen(false)}
+        onSelect={(m) => {
+          handleAddModel(m);
+          setPickerOpen(false);
+        }}
+        title="Add target model"
+        hideCombos
+        hideInjections
+      />
+    </Modal>
+  );
+}
 // ------------------------------------------------------------ injections
 // One coordinate = one injection. A coordinate is a scope (global, or a
 // model name) optionally narrowed to one API key.
@@ -762,7 +1249,9 @@ export default function PromptInjectionClient() {
   const [editingCoordId, setEditingCoordId] = useState(null);
   const [createSaving, setCreateSaving] = useState(false);
   const [createFormKey, setCreateFormKey] = useState(0);
-
+  const [rules, setRules] = useState([]);
+  const [editingRule, setEditingRule] = useState(undefined); // undefined=closed, null=new, object=edit
+  const [ruleSaving, setRuleSaving] = useState(false);
   const load = useCallback(async () => {
     try {
       const [injRes, keyRes, modelsRes, nodesRes] = await Promise.all([
@@ -777,6 +1266,7 @@ export default function PromptInjectionClient() {
       setVariants(inj.variants || {});
       setKeyModelPrompts(inj.keyModelPrompts || {});
       setTemplates(Array.isArray(inj.templates) ? inj.templates : []);
+      setRules(Array.isArray(inj.rules) ? inj.rules : []);
       const keyData = await keyRes.json();
       const list = Array.isArray(keyData?.keys) ? keyData.keys : Array.isArray(keyData) ? keyData : [];
       setKeys(list);
@@ -1067,6 +1557,9 @@ export default function PromptInjectionClient() {
           await send({ keyId, model, ...entry });
         }
       }
+      if (Array.isArray(data.rules) && data.rules.length) {
+        await send({ rules: data.rules });
+      }
       showToast(`Imported ${applied} item(s)${skipped ? `, ${skipped} skipped` : ""}`, "success");
       await load();
     } catch {
@@ -1074,6 +1567,36 @@ export default function PromptInjectionClient() {
     }
   };
 
+  // ---- Rule actions ----
+  const saveRule = async (ruleData) => {
+    setRuleSaving(true);
+    try {
+      const ok = await put({ rule: ruleData }, "rule", "Prompt rule saved");
+      if (ok) setEditingRule(undefined);
+    } finally {
+      setRuleSaving(false);
+    }
+  };
+
+  const deleteRule = async (ruleId) => {
+    await del(`ruleId=${encodeURIComponent(ruleId)}`, `rule-${ruleId}`, "Prompt rule deleted");
+  };
+
+  const moveRule = async (index, dir) => {
+    const targetIdx = index + dir;
+    if (targetIdx < 0 || targetIdx >= rules.length) return;
+    const next = [...rules];
+    const temp = next[index];
+    next[index] = next[targetIdx];
+    next[targetIdx] = temp;
+    setRules(next);
+    await put({ rules: next }, "reorder-rules", "Rules reordered");
+  };
+
+  const toggleRuleEnabled = async (rule) => {
+    const updated = { ...rule, enabled: rule.enabled === false ? true : false };
+    await put({ rule: updated }, `toggle-${rule.id}`, rule.enabled === false ? "Rule enabled" : "Rule disabled");
+  };
   // ---- Stack Preview — re-runs automatically on any change ----
   const [pvModel, setPvModel] = useState("");
   const [pvKeyId, setPvKeyId] = useState("");
@@ -1094,7 +1617,7 @@ export default function PromptInjectionClient() {
     if (loading) return;
     const t = setTimeout(runPreview, 400);
     return () => clearTimeout(t);
-  }, [runPreview, loading, global_, userPrompts, variants, keyModelPrompts]);
+  }, [runPreview, loading, global_, userPrompts, variants, keyModelPrompts, rules, templates]);
 
   return (
     <div className="mx-auto flex max-w-3xl flex-col gap-6 p-4 sm:p-6">
@@ -1186,6 +1709,62 @@ export default function PromptInjectionClient() {
             )}
           </section>
 
+          <section className="flex flex-col gap-3">
+            <SectionTitle
+              icon="tune"
+              title="Prompt Rules"
+              info={{
+                title: "How Prompt Rules work",
+                paras: [
+                  "A Prompt Rule binds one prompt (either a dynamic Live Template or custom text) to multiple models and multiple API keys at once.",
+                  "Live Reference: When bound to a Template, editing that template immediately updates the prompt across all models and keys bound to this rule.",
+                  "Array Order: Rules are applied in the exact top-to-bottom order shown below. Use the Up/Down arrow buttons to adjust the sequence.",
+                ],
+                bullets: [
+                  "Models: Choose specific models or wildcard '*' for all models.",
+                  "API Keys: Choose specific keys or wildcard '*' for all keys.",
+                  "Position: Prepend (top of system prompt) or Append (bottom of system prompt).",
+                ],
+              }}
+              action={
+                <Button size="sm" icon="add" onClick={() => setEditingRule(null)} className="shrink-0 whitespace-nowrap">
+                  New rule
+                </Button>
+              }
+            >
+              Multi-model and multi-key prompt bindings. Injected in exact top-to-bottom array order.
+            </SectionTitle>
+
+            {rules.length === 0 ? (
+              <div className="flex flex-col items-center gap-2 rounded-xl border border-dashed border-border px-4 py-6 text-center">
+                <span className="material-symbols-outlined text-[28px] text-text-muted">tune</span>
+                <p className="text-sm text-text-muted">
+                  No multi-target rules yet — create a rule to bind a prompt or template to multiple models and keys.
+                </p>
+                <Button size="sm" variant="outline" icon="add" onClick={() => setEditingRule(null)}>
+                  Create first rule
+                </Button>
+              </div>
+            ) : (
+              <div className="flex flex-col gap-2">
+                {rules.map((rule, idx) => (
+                  <RuleCard
+                    key={rule.id || idx}
+                    rule={rule}
+                    index={idx}
+                    total={rules.length}
+                    templates={templates}
+                    keys={keys}
+                    keyName={keyName}
+                    onMove={moveRule}
+                    onToggle={() => toggleRuleEnabled(rule)}
+                    onEdit={() => setEditingRule(rule)}
+                    onDelete={() => deleteRule(rule.id)}
+                  />
+                ))}
+              </div>
+            )}
+          </section>
           <section className="flex flex-col gap-3">
             <SectionTitle
               icon="input"
@@ -1442,6 +2021,18 @@ export default function PromptInjectionClient() {
           onClose={() => setEditingTemplate(undefined)}
           onSave={saveTemplate}
           saving={saving === "template"}
+        />
+      )}
+      {editingRule !== undefined && (
+        <RuleModal
+          rule={editingRule}
+          templates={templates}
+          keys={keys}
+          keyName={keyName}
+          modelOptions={modelOptions}
+          onClose={() => setEditingRule(undefined)}
+          onSave={saveRule}
+          saving={ruleSaving}
         />
       )}
     </div>

@@ -90,6 +90,12 @@ function countInjections(scope) {
       }
     }
   }
+  const rules = scope.rules;
+  if (Array.isArray(rules)) {
+    for (const r of rules) {
+      if (r && (entryHasContent(r) || r.templateId)) n += 1;
+    }
+  }
   return n;
 }
 

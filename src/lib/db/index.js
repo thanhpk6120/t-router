@@ -83,12 +83,13 @@ export {
   getInjectVariants, setInjectVariant, deleteInjectVariant, migrateModelPromptsToVariants,
   getInjectGlobal, setInjectGlobal, resolvePromptInjections, resolveVariantSampling, applyVariantSampling, cleanSamplingParams,
   getPromptTemplates, upsertPromptTemplate, deletePromptTemplate,
+  getInjectRules, setInjectRules, upsertInjectRule, deleteInjectRule, cleanRule,
 } from "./repos/promptInjectRepo.js";
 
 // Key Quotas (T Router)
 export {
   getKeyQuota, getAllKeyQuotas, setKeyQuota, deleteKeyQuota,
-  getKeyUsageInWindow, getKeyCostInWindow, checkKeyQuota,
+  getKeyUsageInWindow, checkKeyQuota,
 } from "./repos/keyQuotaRepo.js";
 
 // Key Limits (T Router) — per-key RPM/TPM/RPH/RPD/concurrency config

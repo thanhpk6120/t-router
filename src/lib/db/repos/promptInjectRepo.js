@@ -65,6 +65,7 @@ const MODELS_KEY = "prompts";
 const BYKEYMODEL_KEY = "byKeyModel";
 const VARIANTS_KEY = "variants";
 const TEMPLATES_KEY = "list";
+const RULES_KEY = "rules";
 const MAX_TURNS = 50;
 
 function cleanTurns(raw) {
@@ -587,6 +588,7 @@ export async function upsertPromptTemplate(input = {}) {
   if (idx >= 0) list[idx] = template;
   else list.push(template);
   await templatesKv.set(TEMPLATES_KEY, list);
+  invalidateInjectSnapshot();
   return template;
 }
 
@@ -595,6 +597,131 @@ export async function deletePromptTemplate(id) {
   const next = list.filter((t) => t.id !== id);
   if (next.length === list.length) return false;
   await templatesKv.set(TEMPLATES_KEY, next);
+  invalidateInjectSnapshot();
+  return true;
+}
+
+// --------------------------------------------------------------- rules (multi-model, multi-key)
+
+export function cleanRule(raw, nodes = []) {
+  if (!raw || typeof raw !== "object") return null;
+  const id =
+    typeof raw.id === "string" && raw.id.trim()
+      ? raw.id.trim()
+      : `rule-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+  const name =
+    typeof raw.name === "string" && raw.name.trim()
+      ? raw.name.trim().slice(0, 80)
+      : "Untitled Rule";
+  const enabled = raw.enabled !== false;
+  const position = raw.position === "append" ? "append" : "prepend";
+  const templateId =
+    typeof raw.templateId === "string" && raw.templateId.trim()
+      ? raw.templateId.trim()
+      : null;
+
+  // Clean models: array of strings. Normalizes non-"*" entries via resolveRoutableBacking.
+  const rawModels = Array.isArray(raw.models) ? raw.models : ["*"];
+  const cleanModels = [];
+  for (const m of rawModels) {
+    if (typeof m !== "string") continue;
+    const trimmed = m.trim();
+    if (!trimmed) continue;
+    if (trimmed === "*") {
+      if (!cleanModels.includes("*")) cleanModels.push("*");
+    } else {
+      const routed = resolveRoutableBacking(trimmed, nodes) || trimmed;
+      if (!cleanModels.includes(routed)) cleanModels.push(routed);
+    }
+  }
+  const models = cleanModels.length ? cleanModels : ["*"];
+
+  // Clean apiKeys: array of strings.
+  const rawKeys = Array.isArray(raw.apiKeys) ? raw.apiKeys : ["*"];
+  const cleanKeys = [];
+  for (const k of rawKeys) {
+    if (typeof k !== "string") continue;
+    const trimmed = k.trim();
+    if (!trimmed) continue;
+    if (trimmed === "*") {
+      if (!cleanKeys.includes("*")) cleanKeys.push("*");
+    } else {
+      if (!cleanKeys.includes(trimmed)) cleanKeys.push(trimmed);
+    }
+  }
+  const apiKeys = cleanKeys.length ? cleanKeys : ["*"];
+
+  const mode = raw.mode === "chat" ? "chat" : "single";
+  const content = typeof raw.content === "string" ? raw.content : "";
+  const turns = cleanTurns(raw.turns);
+
+  // If rule has no templateId, it requires content or turns
+  if (!templateId) {
+    if (mode === "chat" && !turns.length) return null;
+    if (mode === "single" && !content.trim()) return null;
+  }
+
+  return {
+    id,
+    name,
+    enabled,
+    templateId,
+    mode,
+    content,
+    turns,
+    position,
+    models,
+    apiKeys,
+    updatedAt: raw.updatedAt || new Date().toISOString(),
+  };
+}
+
+export async function getInjectRules() {
+  await ensureMigrated();
+  const raw = await kv.get(RULES_KEY, []);
+  if (!Array.isArray(raw)) return [];
+  const nodes = await getProviderNodes().catch(() => []);
+  const out = [];
+  for (const r of raw) {
+    const cleaned = cleanRule(r, nodes);
+    if (cleaned) out.push(cleaned);
+  }
+  return out;
+}
+
+export async function setInjectRules(inputList = []) {
+  if (!Array.isArray(inputList)) return [];
+  const nodes = await getProviderNodes().catch(() => []);
+  const out = [];
+  for (const r of inputList) {
+    const cleaned = cleanRule(r, nodes);
+    if (cleaned) out.push(cleaned);
+  }
+  await kv.set(RULES_KEY, out);
+  invalidateInjectSnapshot();
+  return out;
+}
+
+export async function upsertInjectRule(input = {}) {
+  const nodes = await getProviderNodes().catch(() => []);
+  const cleaned = cleanRule({ ...input, updatedAt: new Date().toISOString() }, nodes);
+  if (!cleaned) return null;
+  const list = await getInjectRules();
+  const idx = list.findIndex((r) => r.id === cleaned.id);
+  if (idx >= 0) list[idx] = cleaned;
+  else list.push(cleaned);
+  await kv.set(RULES_KEY, list);
+  invalidateInjectSnapshot();
+  return cleaned;
+}
+
+export async function deleteInjectRule(id) {
+  if (!id || typeof id !== "string") return false;
+  const list = await getInjectRules();
+  const next = list.filter((r) => r.id !== id.trim());
+  if (next.length === list.length) return false;
+  await kv.set(RULES_KEY, next);
+  invalidateInjectSnapshot();
   return true;
 }
 
@@ -606,18 +733,92 @@ export async function deletePromptTemplate(id) {
 // variant by its bare name, in which case the variant matches instead
 // and the model scopes stay silent (a variant pick is a different model
 // identity). Combo names never match.
-export function selectPromptInjections({ global, byKey, byModel, byKeyModel, byVariant } = {}, ctx = {}) {
+export function selectPromptInjections({ global, byKey, byModel, byKeyModel, byVariant, rules, templates } = {}, ctx = {}) {
   const out = [];
   const push = (name, e) => {
     if (!e || !e.enabled) return;
     if (e.mode === "chat") out.push({ name, mode: "chat", turns: e.turns, position: e.position });
-    else out.push({ name, mode: "single", text: e.content, position: e.position });
+    else out.push({ name, mode: "single", text: e.content || e.text, position: e.position });
   };
 
   push("global", cleanEntry(global));
 
   if (ctx.apiKeyId) {
     push("user", cleanMap(byKey)[ctx.apiKeyId]);
+  }
+
+  // Multi-target Rules: evaluated in exact array order.
+  // Supports Live Reference to templates via templateId.
+  if (Array.isArray(rules) && rules.length) {
+    const tplMap = new Map();
+    if (Array.isArray(templates)) {
+      for (const t of templates) {
+        if (t && t.id) tplMap.set(t.id, t);
+      }
+    }
+
+    const candidateModels = [ctx.resolvedModel, ctx.requestedModel, ctx.bareModel].filter(
+      (x) => typeof x === "string" && x
+    );
+
+    for (const rule of rules) {
+      if (!rule || rule.enabled === false) continue;
+
+      // API Key match: wildcard "*" or matching apiKeyId
+      const keyMatch =
+        !rule.apiKeys ||
+        !rule.apiKeys.length ||
+        rule.apiKeys.includes("*") ||
+        (ctx.apiKeyId && rule.apiKeys.includes(ctx.apiKeyId));
+      if (!keyMatch) continue;
+
+      // Model match: wildcard "*" or matching any candidateModel
+      const modelMatch =
+        !rule.models ||
+        !rule.models.length ||
+        rule.models.includes("*") ||
+        rule.models.some((m) => candidateModels.includes(m));
+      if (!modelMatch) continue;
+
+      // Determine content: Live Template Reference vs Inline
+      if (rule.templateId && tplMap.has(rule.templateId)) {
+        const tpl = tplMap.get(rule.templateId);
+        if (tpl && tpl.enabled !== false) {
+          if (tpl.mode === "chat") {
+            push(rule.name || tpl.name || "rule", {
+              mode: "chat",
+              turns: tpl.turns,
+              position: rule.position || tpl.position || "prepend",
+              enabled: true,
+            });
+          } else if (tpl.content && tpl.content.trim()) {
+            push(rule.name || tpl.name || "rule", {
+              mode: "single",
+              content: tpl.content,
+              position: rule.position || tpl.position || "prepend",
+              enabled: true,
+            });
+          }
+        }
+      } else {
+        // Inline prompt
+        if (rule.mode === "chat") {
+          push(rule.name || "rule", {
+            mode: "chat",
+            turns: rule.turns,
+            position: rule.position || "prepend",
+            enabled: true,
+          });
+        } else if (rule.content && rule.content.trim()) {
+          push(rule.name || "rule", {
+            mode: "single",
+            content: rule.content,
+            position: rule.position || "prepend",
+            enabled: true,
+          });
+        }
+      }
+    }
   }
 
   // A bare requested name (no "/") is a variant pick: its prompt fires
@@ -675,15 +876,16 @@ async function getInjectSnapshot() {
   if (!snapshotInflight) {
     snapshotInflight = (async () => {
       await migrateModelPromptsToVariants().catch(() => {});
-      const [global, byKey, byModel, byKeyModel, byVariant] = await Promise.all([
+      const [global, byKey, byModel, byKeyModel, byVariant, rules, templates] = await Promise.all([
         getInjectGlobal(),
         getInjectUserPrompts(),
         getInjectModelPrompts(),
         getInjectKeyModelPrompts(),
         getInjectVariants(),
+        getInjectRules(),
+        getPromptTemplates(),
       ]);
-      snapshot = { at: Date.now(), global, byKey, byModel, byKeyModel, byVariant };
-      return snapshot;
+      snapshot = { at: Date.now(), global, byKey, byModel, byKeyModel, byVariant, rules, templates };
     })().finally(() => { snapshotInflight = null; });
   }
   return snapshotInflight;

@@ -15,6 +15,12 @@ try {
   const summaryModule = require('./extract-release-summary.js');
   getReleaseSummary = summaryModule.getReleaseSummary;
 } catch (e) {}
+let routerManager = null;
+try {
+  routerManager = require('./router-manager.js');
+} catch (e) {
+  console.log('RouterManager load notice: ' + e.message);
+}
 
 const PORT = 20129;
 const HOST = '127.0.0.1';
@@ -225,6 +231,17 @@ async function doPublish(targetVersion) {
   }
   isPublishing = true;
   try {
+    if (routerManager) {
+      try {
+        let curr = 'unknown';
+        try {
+          curr = JSON.parse(fs.readFileSync(path.join(DIR_TROUTER, 'package.json'), 'utf8')).version || curr;
+        } catch (e) {}
+        routerManager.createTRouterBackup(curr);
+      } catch (bkErr) {
+        log('Auto-backup before publish notice: ' + bkErr.message);
+      }
+    }
     const published = new Set(getPublishedVersions());
     if (published.has(targetVersion)) {
       const orig = targetVersion;
@@ -379,6 +396,23 @@ const server = http.createServer(async (req, res) => {
         pendingRelease: pending,
       });
     }
+    if (url.pathname === '/router-manager/status') {
+      if (!routerManager) return sendJson(500, { error: 'routerManager not loaded' });
+      return sendJson(200, {
+        router9: routerManager.get9RouterStatus(),
+        trouter: routerManager.getTRouterStatus(),
+      });
+    }
+
+    if (url.pathname === '/router-manager/9router/backups') {
+      if (!routerManager) return sendJson(500, { error: 'routerManager not loaded' });
+      return sendJson(200, { backups: routerManager.get9RouterBackups() });
+    }
+
+    if (url.pathname === '/router-manager/trouter/backups') {
+      if (!routerManager) return sendJson(500, { error: 'routerManager not loaded' });
+      return sendJson(200, { backups: routerManager.getTRouterBackups() });
+    }
   }
 
   if (req.method === 'POST') {
@@ -503,6 +537,49 @@ const server = http.createServer(async (req, res) => {
         });
 
         return sendJson(200, { ok: true, targetVersion, status: 'started' });
+      }
+      if (url.pathname === '/router-manager/9router/update') {
+        if (!routerManager) return sendJson(500, { error: 'routerManager not loaded' });
+        routerManager.update9Router().then(result => {
+          sendJson(200, result);
+        }).catch(err => {
+          sendJson(500, { error: err.message });
+        });
+        return;
+      }
+
+      if (url.pathname === '/router-manager/9router/restore') {
+        if (!routerManager) return sendJson(500, { error: 'routerManager not loaded' });
+        const backupId = body.backupId || url.searchParams.get('backupId');
+        if (!backupId) return sendJson(400, { error: 'Missing backupId' });
+        routerManager.restore9Router(backupId).then(result => {
+          sendJson(200, result);
+        }).catch(err => {
+          sendJson(500, { error: err.message });
+        });
+        return;
+      }
+
+      if (url.pathname === '/router-manager/trouter/update') {
+        if (!routerManager) return sendJson(500, { error: 'routerManager not loaded' });
+        routerManager.updateTRouter().then(result => {
+          sendJson(200, result);
+        }).catch(err => {
+          sendJson(500, { error: err.message });
+        });
+        return;
+      }
+
+      if (url.pathname === '/router-manager/trouter/restore') {
+        if (!routerManager) return sendJson(500, { error: 'routerManager not loaded' });
+        const backupId = body.backupId || url.searchParams.get('backupId');
+        if (!backupId) return sendJson(400, { error: 'Missing backupId' });
+        routerManager.restoreTRouter(backupId).then(result => {
+          sendJson(200, result);
+        }).catch(err => {
+          sendJson(500, { error: err.message });
+        });
+        return;
       }
 
       return sendJson(404, { error: 'Not found' });

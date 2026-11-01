@@ -5,6 +5,7 @@ import {
   deleteInjectModelPrompt, deleteInjectUserPrompt, deleteInjectKeyModelPrompt,
   getInjectVariants, setInjectVariant, deleteInjectVariant, migrateModelPromptsToVariants,
   getPromptTemplates, upsertPromptTemplate, deletePromptTemplate,
+  getInjectRules, setInjectRules, upsertInjectRule, deleteInjectRule,
 } from "@/lib/localDb";
 import { getComboByName } from "@/lib/db/repos/combosRepo.js";
 import { selectPromptInjections } from "@/lib/db/repos/promptInjectRepo.js";
@@ -36,20 +37,21 @@ import { selectPromptInjections } from "@/lib/db/repos/promptInjectRepo.js";
 export async function GET(request) {
   try {
     await migrateModelPromptsToVariants().catch(() => {});
-    const [global, userPrompts, prompts, keyModelPrompts, variants, templates] = await Promise.all([
+    const [global, userPrompts, prompts, keyModelPrompts, variants, templates, rules] = await Promise.all([
       getInjectGlobal(),
       getInjectUserPrompts(),
       getInjectModelPrompts(),
       getInjectKeyModelPrompts(),
       getInjectVariants(),
       getPromptTemplates(),
+      getInjectRules(),
     ]);
     // Stack preview: exactly what one request would receive, in order.
     const params = new URL(request.url).searchParams;
     if (params.get("preview")) {
       const model = params.get("model") || "";
       const stack = selectPromptInjections(
-        { global, byKey: userPrompts, byModel: prompts, byKeyModel: keyModelPrompts, byVariant: variants },
+        { global, byKey: userPrompts, byModel: prompts, byKeyModel: keyModelPrompts, byVariant: variants, rules, templates },
         {
           apiKeyId: params.get("keyId") || null,
           requestedModel: model,
@@ -59,7 +61,7 @@ export async function GET(request) {
       );
       return NextResponse.json({ stack });
     }
-    return NextResponse.json({ global, userPrompts, prompts, keyModelPrompts, variants, templates });
+    return NextResponse.json({ global, userPrompts, prompts, keyModelPrompts, variants, templates, rules });
   } catch (error) {
     console.log("Error fetching prompt injections:", error);
     return NextResponse.json({ error: "Failed to fetch prompt injections" }, { status: 500 });
@@ -72,6 +74,17 @@ export async function PUT(request) {
     if ("global" in body) {
       const saved = await setInjectGlobal(body.global || {});
       return NextResponse.json({ global: saved });
+    }
+    if (body.rule && typeof body.rule === "object") {
+      const saved = await upsertInjectRule(body.rule);
+      if (!saved) {
+        return NextResponse.json({ error: "Invalid rule: needs a prompt or valid template" }, { status: 400 });
+      }
+      return NextResponse.json({ rule: saved });
+    }
+    if (Array.isArray(body.rules)) {
+      const saved = await setInjectRules(body.rules);
+      return NextResponse.json({ rules: saved });
     }
     if (body.template && typeof body.template === "object") {
       const saved = await upsertPromptTemplate(body.template);
@@ -149,12 +162,14 @@ export async function DELETE(request) {
     const model = params.get("model");
     const keyId = params.get("keyId");
     const templateId = params.get("templateId");
+    const ruleId = params.get("ruleId");
+    if (ruleId) return NextResponse.json({ deleted: await deleteInjectRule(ruleId) });
     if (templateId) return NextResponse.json({ deleted: await deletePromptTemplate(templateId) });
     if (variant) return NextResponse.json({ deleted: await deleteInjectVariant(variant) });
     if (model && keyId) return NextResponse.json({ deleted: await deleteInjectKeyModelPrompt(keyId, model) });
     if (model) return NextResponse.json({ deleted: await deleteInjectModelPrompt(model) });
     if (keyId) return NextResponse.json({ deleted: await deleteInjectUserPrompt(keyId) });
-    return NextResponse.json({ error: "Provide variant, model, keyId, or templateId" }, { status: 400 });
+    return NextResponse.json({ error: "Provide ruleId, variant, model, keyId, or templateId" }, { status: 400 });
   } catch (error) {
     console.log("Error deleting prompt injection:", error);
     return NextResponse.json({ error: "Failed to delete prompt injection" }, { status: 500 });
