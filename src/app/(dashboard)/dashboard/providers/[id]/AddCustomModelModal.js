@@ -7,7 +7,10 @@ import { CAPACITY_META, STT_TRANSPORT_META, STT_TRANSPORTS } from "@/shared/cons
 
 const defaultCaps = () => Object.fromEntries(Object.keys(CAPACITY_META).map((key) => [key, false]));
 
-export default function AddCustomModelModal({ isOpen, providerAlias, providerDisplayAlias, onSave, onClose }) {
+export default function AddCustomModelModal({ isOpen, providerAlias, providerDisplayAlias, onSave, onClose, editTarget = null }) {
+  // editTarget = { id, caps } turns this into a caps editor for an existing
+  // model (built-in or custom): the id is locked and only capabilities change.
+  const editing = !!editTarget;
   const [modelId, setModelId] = useState("");
   const [caps, setCaps] = useState(defaultCaps);
   const [testStatus, setTestStatus] = useState(null); // null | "testing" | "ok" | "error"
@@ -18,8 +21,18 @@ export default function AddCustomModelModal({ isOpen, providerAlias, providerDis
 
   // Reset state when modal opens
   useEffect(() => {
-    if (isOpen) { setModelId(""); setCaps(defaultCaps()); setTransport(""); setTestStatus(null); setTestError(""); }
-  }, [isOpen]);
+    if (!isOpen) return;
+    setTransport("");
+    setTestStatus(null);
+    setTestError("");
+    if (editTarget) {
+      setModelId(editTarget.id || "");
+      setCaps({ ...defaultCaps(), ...(editTarget.caps || {}) });
+    } else {
+      setModelId("");
+      setCaps(defaultCaps());
+    }
+  }, [isOpen, editTarget]);
 
   // Strip provider's own alias prefix (e.g. "cc/model" -> "model" for cc provider)
   const stripAlias = (id) => {
@@ -65,29 +78,37 @@ export default function AddCustomModelModal({ isOpen, providerAlias, providerDis
   };
 
   return (
-    <Modal isOpen={isOpen} onClose={onClose} title="Add Custom Model">
+    <Modal isOpen={isOpen} onClose={onClose} title={editing ? "Edit Capabilities" : "Add Custom Model"}>
       <div className="flex flex-col gap-4">
         <div>
           <label className="text-sm font-medium mb-1.5 block">Model ID</label>
           <div className="flex gap-2">
-            <input
-              type="text"
-              value={modelId}
-              onChange={(e) => { setModelId(e.target.value); setTestStatus(null); setTestError(""); }}
-              onKeyDown={handleKeyDown}
-              placeholder="e.g. claude-opus-4-5"
-              className="flex-1 px-3 py-2 text-sm border border-border rounded-lg bg-background focus:outline-none focus:border-primary"
-              autoFocus
-            />
-            <Button
-              variant="secondary"
-              icon="science"
-              loading={testStatus === "testing"}
-              onClick={handleTest}
-              disabled={!modelId.trim() || testStatus === "testing"}
-            >
-              {testStatus === "testing" ? "Testing..." : "Test"}
-            </Button>
+            {editing ? (
+              <p className="rounded-lg border border-border bg-sidebar px-3 py-2 font-mono text-sm">
+                {providerDisplayAlias}/{editTarget.id}
+              </p>
+            ) : (
+              <>
+                <input
+                  type="text"
+                  value={modelId}
+                  onChange={(e) => { setModelId(e.target.value); setTestStatus(null); setTestError(""); }}
+                  onKeyDown={handleKeyDown}
+                  placeholder="e.g. claude-opus-4-5"
+                  className="flex-1 px-3 py-2 text-sm border border-border rounded-lg bg-background focus:outline-none focus:border-primary"
+                  autoFocus
+                />
+                <Button
+                  variant="secondary"
+                  icon="science"
+                  loading={testStatus === "testing"}
+                  onClick={handleTest}
+                  disabled={!modelId.trim() || testStatus === "testing"}
+                >
+                  {testStatus === "testing" ? "Testing..." : "Test"}
+                </Button>
+              </>
+            )}
           </div>
           <p className="text-xs text-text-muted mt-1">
             Sent to provider as: <code className="font-mono bg-sidebar px-1 rounded">{stripAlias(modelId.trim()) || "model-id"}</code>
@@ -158,7 +179,7 @@ export default function AddCustomModelModal({ isOpen, providerAlias, providerDis
             size="sm"
             disabled={!modelId.trim() || saving}
           >
-            {saving ? "Adding..." : "Add Model"}
+            {saving ? "Saving..." : editing ? "Save Capabilities" : "Add Model"}
           </Button>
         </div>
       </div>
@@ -172,4 +193,8 @@ AddCustomModelModal.propTypes = {
   providerDisplayAlias: PropTypes.string.isRequired,
   onSave: PropTypes.func.isRequired,
   onClose: PropTypes.func.isRequired,
+  editTarget: PropTypes.shape({
+    id: PropTypes.string,
+    caps: PropTypes.object,
+  }),
 };

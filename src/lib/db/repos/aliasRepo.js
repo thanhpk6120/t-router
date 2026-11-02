@@ -50,7 +50,9 @@ export async function addCustomModel({ providerAlias, id, type = "llm", name, ca
     db.run(`INSERT INTO kv(scope, key, value) VALUES('customModels', ?, ?)`, [k, value]);
     added = true;
   });
-  if (added) invalidateModelsListCache();
+  // Both branches change the merged catalog (caps overrides ride on existing
+  // rows), so the list cache must drop after an UPDATE as well as an INSERT.
+  invalidateModelsListCache();
   return added;
 }
 

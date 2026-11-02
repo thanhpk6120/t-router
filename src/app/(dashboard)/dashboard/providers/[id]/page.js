@@ -77,6 +77,7 @@ export default function ProviderDetailPage() {
   const [modelsTestError, setModelsTestError] = useState("");
   const [testingModelIds, setTestingModelIds] = useState(() => new Set());
   const [showAddCustomModel, setShowAddCustomModel] = useState(false);
+  const [editCapsTarget, setEditCapsTarget] = useState(null);
   const [selectedConnectionIds, setSelectedConnectionIds] = useState([]);
   const [bulkProxyPoolId, setBulkProxyPoolId] = useState("__none__");
   const [bulkScope, setBulkScope] = useState("loaded");
@@ -1373,6 +1374,7 @@ export default function ProviderDetailPage() {
             isTesting={testingModelIds.has(model.id)}
             isCustom
             isFree={false}
+            onEditCaps={() => setEditCapsTarget({ id: model.id, caps: getCaps(`${providerId}/${model.id}`) || {} })}
             caps={getCaps(`${providerId}/${model.id}`)}
             thinkingSuffix={resolveThinkingSuffix(model.id)}
           />
@@ -1399,6 +1401,7 @@ export default function ProviderDetailPage() {
               isTesting={testingModelIds.has(model.id)}
               isFree={model.isFree}
               onDisable={() => handleDisableModel(model.id)}
+              onEditCaps={() => setEditCapsTarget({ id: model.id, caps: getCaps(`${providerId}/${model.id}`) || {} })}
               caps={getCaps(`${providerId}/${model.id}`)}
               thinkingSuffix={resolveThinkingSuffix(model.id)}
             />
@@ -2072,16 +2075,18 @@ export default function ProviderDetailPage() {
       )}
       {!isCompatible && (
         <AddCustomModelModal
-          isOpen={showAddCustomModel}
+          isOpen={showAddCustomModel || !!editCapsTarget}
           providerAlias={providerStorageAlias}
           providerDisplayAlias={providerDisplayAlias}
+          editTarget={editCapsTarget}
           onSave={async (modelId, caps, transport) => {
             // caps.stt is a UI-only flag; the API accepts transports only on
             // type "stt" records, so the save derives the type from it.
             await handleAddCustomModel(modelId, caps?.stt ? "stt" : "llm", providerStorageAlias, caps, transport);
             setShowAddCustomModel(false);
+            setEditCapsTarget(null);
           }}
-          onClose={() => setShowAddCustomModel(false)}
+          onClose={() => { setShowAddCustomModel(false); setEditCapsTarget(null); }}
         />
       )}
 

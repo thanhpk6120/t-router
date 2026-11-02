@@ -63,14 +63,27 @@ export async function GET() {
     // tables are keyed by provider id, and an alias like `ocg` misses the
     // provider-scoped entries and falls back to the generic patterns.
     const seenFull = new Set(models.map((m) => m.fullModel));
-    const seenRouted = new Set(models.map((m) => m.routedModel));
+    const routedEntry = new Map(models.map((m) => [m.routedModel, m]));
     const customModels = (await getCustomModels()).filter((m) => {
       if (!m?.id || (m.kind || m.type || "llm") !== "llm") return false;
-      if (seenRouted.has(`${m.providerAlias}/${m.id}`)) return false;
-      return !seenFull.has(`${m.providerAlias}/${m.id}`);
+      const key = `${m.providerAlias}/${m.id}`;
+      const isKnown = routedEntry.has(key) || seenFull.has(key);
+      // A custom row carrying explicit caps for an existing built-in model is
+      // a caps OVERRIDE, not a shadow — keep it so the merge below applies.
+      // Without this, the shadow drop discarded every hand-set capability and
+      // a built-in model could never be marked vision for a combo pool.
+      const hasCaps = !!(m.caps && Object.keys(m.caps).length);
+      return isKnown ? hasCaps : true;
     });
     for (const m of customModels) {
       const fullModel = `${m.providerAlias}/${m.id}`;
+      const builtIn = routedEntry.get(fullModel);
+      if (builtIn) {
+        // Merge onto the built-in entry in place; the client's last-write-wins
+        // cap map then serves the overridden value.
+        builtIn.caps = { ...(builtIn.caps || {}), ...(m.caps || {}) };
+        continue;
+      }
       const providerId = ALIAS_TO_ID[m.providerAlias] || m.providerAlias;
       const c = getCapabilitiesForModel(providerId, m.id);
       models.push({

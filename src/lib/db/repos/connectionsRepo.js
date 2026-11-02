@@ -168,9 +168,11 @@ export async function getProviderConnectionStats() {
       ([k, v]) => k.startsWith(MODEL_LOCK_PREFIX) && v && new Date(v).getTime() > nowMs,
     );
     const status = extra.testStatus === "unavailable" && !cooling ? "active" : extra.testStatus;
-    if (status === "active" || status === "success") {
-      s.connected++;
-    } else if (status === "error" || status === "expired" || status === "unavailable") {
+    // A connection is "connected" unless it carries a concrete failure status.
+    // "unknown" / null / undefined means never tested — still usable, not an
+    // error. Counting only active/success made fresh connections invisible
+    // (total > 0, connected = 0, error = 0 -> UI printed "No connections").
+    if (status === "error" || status === "expired" || status === "unavailable") {
       s.error++;
       if (!s.latestError || new Date(extra.lastErrorAt || 0) > new Date(s.latestError.lastErrorAt || 0)) {
         s.latestError = {
@@ -180,6 +182,8 @@ export async function getProviderConnectionStats() {
           lastErrorAt: extra.lastErrorAt || null,
         };
       }
+    } else {
+      s.connected++;
     }
     if (!s.lastTested || (extra.lastTested && new Date(extra.lastTested) > new Date(s.lastTested))) {
       s.lastTested = extra.lastTested || null;
