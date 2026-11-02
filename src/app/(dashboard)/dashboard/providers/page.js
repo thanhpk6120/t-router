@@ -295,7 +295,7 @@ function NotConnectedProviders({ entries, forceOpen }) {
 }
 
 export default function ProvidersPage() {
-  const { statsMap, setStatsMap, breakers, refresh } = useProviderSummary();
+  const { statsMap, setStatsMap, breakers, refresh, loading: summaryLoading } = useProviderSummary();
   const [providerNodes, setProviderNodes] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showAddCompatibleModal, setShowAddCompatibleModal] = useState(false);
@@ -788,7 +788,10 @@ export default function ProvidersPage() {
     pageResetKey,
   );
 
-  if (loading) {
+  // Both fetches feed the grid: provider nodes supply the compatible rows,
+  // the summary supplies every connected/error count. Rendering on nodes
+  // alone painted every card as "No connections" until stats arrived.
+  if (loading || summaryLoading) {
     return (
       <div className="flex flex-col gap-8">
         <CardSkeleton />
