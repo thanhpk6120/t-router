@@ -116,6 +116,26 @@ export async function getProviderConnections(filter = {}) {
   return list;
 }
 
+// 9Router Pro (opt26): quota page only — fetch usage-eligible connections
+// straight from SQLite instead of loading + decrypting the whole table.
+// Mirrors the providers/client route's eligibility rule exactly: the provider
+// must support usage AND (oauth auth OR apikey-whitelisted provider).
+export async function getUsageEligibleConnections(usageProviders, apikeyProviders) {
+  const db = await getAdapter();
+  const usage = Array.isArray(usageProviders) ? usageProviders.filter(Boolean) : [];
+  const apikey = Array.isArray(apikeyProviders) ? apikeyProviders.filter(Boolean) : [];
+  if (!usage.length) return [];
+  const usagePlaceholders = usage.map(() => "?").join(", ");
+  const apikeyPlaceholders = apikey.length ? apikey.map(() => "?").join(", ") : null;
+  const sql = apikeyPlaceholders
+    ? `SELECT * FROM providerConnections WHERE provider IN (${usagePlaceholders}) AND (authType = 'oauth' OR provider IN (${apikeyPlaceholders}))`
+    : `SELECT * FROM providerConnections WHERE provider IN (${usagePlaceholders}) AND authType = 'oauth'`;
+  const rows = db.all(sql, [...usage, ...apikey]);
+  const list = rows.map(rowToConn);
+  list.sort((a, b) => (a.priority || 999) - (b.priority || 999));
+  return list;
+}
+
 export async function getProviderConnectionById(id) {
   const db = await getAdapter();
   const row = db.get(`SELECT * FROM providerConnections WHERE id = ?`, [id]);
@@ -136,10 +156,14 @@ export async function getProviderConnectionStats() {
     const key = `${row.provider}|${row.authType}`;
     const s = (stats[key] ||= {
       provider: row.provider, authType: row.authType,
-      total: 0, connected: 0, error: 0, allDisabled: true, latestError: null,
+      total: 0, connected: 0, error: 0, allDisabled: true, latestError: null, lastTested: null,
     });
     s.total++;
     if (row.isActive === 1 || row.isActive === true) s.allDisabled = false;
+    // A switched-off row is not connected anywhere: connected/error (and
+    // the latest error) count active rows only. total still covers all
+    // stored rows, so the shelf can show stored vs serving totals distinctly.
+    if (!(row.isActive === 1 || row.isActive === true)) continue;
     const cooling = Object.entries(extra).some(
       ([k, v]) => k.startsWith(MODEL_LOCK_PREFIX) && v && new Date(v).getTime() > nowMs,
     );
@@ -157,26 +181,10 @@ export async function getProviderConnectionStats() {
         };
       }
     }
-  }
-  try {
-    const settingsRow = db.get("SELECT data FROM settings WHERE id = 1 OR id = 'main'");
-    const settings = settingsRow ? parseJson(settingsRow.data, {}) : {};
-    const providerStrategies = settings.providerStrategies || {};
-    const noAuthProviders = ["opencode", "mimo-free", "devin-cli"];
-    for (const pId of noAuthProviders) {
-      const override = providerStrategies[pId] || {};
-      const isDisabled = override.disabled === true || override.isActive === false;
-      stats[`${pId}|free`] = {
-        provider: pId,
-        authType: "free",
-        total: 1,
-        connected: isDisabled ? 0 : 1,
-        error: 0,
-        allDisabled: isDisabled,
-        latestError: null,
-      };
+    if (!s.lastTested || (extra.lastTested && new Date(extra.lastTested) > new Date(s.lastTested))) {
+      s.lastTested = extra.lastTested || null;
     }
-  } catch {}
+  }
   return stats;
 }
 
@@ -273,6 +281,19 @@ function reorderInTx(db, providerId) {
       db.run(`UPDATE providerConnections SET priority = ? WHERE id = ?`, [want, c.id]);
     }
   });
+}
+
+// Names of existing apikey connections for one provider, for server-side
+// bulk name allocation (opt21). Served by idx_pc_provider; names only, no
+// secrets. The conflict check in createProviderConnection is (provider,
+// authType, name), so allocation queries the same scope.
+export async function getApikeyConnectionNames(provider) {
+  const db = await getAdapter();
+  const rows = db.all(
+    `SELECT name FROM providerConnections WHERE provider = ? AND authType = ?`,
+    [provider, "apikey"]
+  );
+  return rows.map((row) => row.name).filter((name) => typeof name === "string" && name);
 }
 
 export async function createProviderConnection(data) {

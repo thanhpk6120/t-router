@@ -13,7 +13,7 @@ import { getAppVersion } from "./version.js";
 // older backup never wipes newer data (prompt injections, quotas, brief
 // modes) it knows nothing of. tokenSaverStats is statistics rather than
 // configuration, but it rides along so a restore keeps the savings history.
-const EXTRA_KV_SCOPES = ["promptInjections", "promptPresets", "keyQuotas", "keyLimits", "disabledModels", "briefMode", "tokenSaverStats"];
+const EXTRA_KV_SCOPES = ["promptInjections", "promptPresets", "keyQuotas", "keyLimits", "disabledModels", "briefMode", "tokenSaverStats", "promptInjectStats"];
 
 // Which backup section group each KV scope belongs to (selective backup).
 const KV_SCOPE_GROUPS = {
@@ -24,6 +24,7 @@ const KV_SCOPE_GROUPS = {
   disabledModels: "settings",
   briefMode: "settings",
   tokenSaverStats: "settings",
+  promptInjectStats: "settings",
 };
 import { keyAccessFromColumns, keyAccessToColumns, validateKeyAccessInput } from "@/shared/utils/keyAccess.js";
 import { KEY_ACCESS_UNRESTRICTED } from "@/shared/constants/keyAccess.js";
@@ -36,11 +37,12 @@ export {
 
 // Provider connections
 export {
-  getProviderConnections, getProviderConnectionById,
+  getProviderConnections, getProviderConnectionById, getUsageEligibleConnections,
   getProviderConnectionStats, bulkSetConnectionsActive, getProviderConnectionsPage,
   createProviderConnection, updateProviderConnection,
   deleteProviderConnection, deleteProviderConnectionsByProvider,
   reorderProviderConnections, cleanupProviderConnections,
+  getApikeyConnectionNames,
 } from "./repos/connectionsRepo.js";
 
 // Provider nodes
@@ -81,10 +83,15 @@ export {
   getInjectUserPrompts, setInjectUserPrompt, deleteInjectUserPrompt,
   getInjectKeyModelPrompts, setInjectKeyModelPrompt, deleteInjectKeyModelPrompt,
   getInjectVariants, setInjectVariant, deleteInjectVariant, migrateModelPromptsToVariants,
-  getInjectGlobal, setInjectGlobal, resolvePromptInjections, resolveVariantSampling, applyVariantSampling, cleanSamplingParams,
+  isReservedVariantName,
+  getInjectGlobal, setInjectGlobal, resolvePromptInjections, resolvePromptInjectionMeta,
+  resolveVariantSampling, applyVariantSampling, cleanSamplingParams,
   getPromptTemplates, upsertPromptTemplate, deletePromptTemplate,
   getInjectRules, setInjectRules, upsertInjectRule, deleteInjectRule, cleanRule,
 } from "./repos/promptInjectRepo.js";
+export {
+  recordPromptInjectFire, classifyInjectStack, flushPromptInjectStats, getPromptInjectStats,
+} from "./repos/promptInjectStatsRepo.js";
 
 // Key Quotas (T Router)
 export {
@@ -217,12 +224,19 @@ export async function importDb(payload, options = {}) {
   // Safety snapshot BEFORE the wipe: importing a wrong-but-valid file must
   // never be unrecoverable. Same lightweight backup the schema migrator
   // takes (excludes the request-details log); newest 3 are kept.
+  // opt44: fail CLOSED — if the safety backup itself fails, the import is
+  // cancelled instead of wiping without a fallback. Pruning old backups is
+  // best-effort cleanup and never blocks an import.
   try {
     const dir = makeBackupDir("pre-import");
     backupDbLite(db, dir);
+  } catch (e) {
+    throw new Error(`Pre-import safety backup failed — import cancelled to protect current data: ${e?.message || e}`);
+  }
+  try {
     pruneOldBackups();
   } catch (e) {
-    console.warn("[DB] Pre-import backup failed (continuing):", e?.message || e);
+    console.warn("[DB] Pre-import backup pruning failed (continuing):", e?.message || e);
   }
 
   db.transaction(() => {

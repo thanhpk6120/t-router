@@ -5,6 +5,36 @@ Upstream changelogs (`CHANGELOG.md` and `CHANGELOG-PRO.md`) are kept intact for 
 
 ---
 
+## v0.5.112-pro.16 (2026-11-02)
+
+- **Upstream Sync & Enhancements (9router v0.5.112, 9router-pro v0.5.109-pro.16)**:
+  - **Re-audit Fixes & Security Hardening**:
+    - Database export/import verifies CLI token value with machine-salted validation (`hasValidCliToken`) instead of header presence alone.
+    - Fail-closed pre-import safety backup: imports cancel safely if the pre-import snapshot fails.
+    - SSO-only test gate actively verifies connection tests whenever IdP fields change in passwordless modes.
+    - Single-level deep merge for `responseCache` and `dbMaintenance` settings preventing accidental wipes of nested configs.
+    - First-setup password accepts custom `INITIAL_PASSWORD` env value alongside built-in fallbacks.
+    - Quota check endpoints neutrally refuse inactive connections before making upstream calls.
+    - Bulk-enable wording refined with live post-toggle refetch.
+    - Proxy health check strictly records test status without overwriting operator-disabled active flags; skips inactive pools on default runs.
+    - Scrubbing authorization credentials from translator logs and responses.
+    - Single-key PUT merges quota/limits instead of dropping untouched fields.
+  - **New BYOK Providers**:
+    - Added **OrcaRouter** (OpenAI-compatible gateway supporting 40+ providers) with live catalog fetching.
+    - Added **TOTU AI** (NewAPI gateway with automated model pricing sync).
+  - **Usage & Dashboard Polish**:
+    - Usage today chart renders all 24 hourly buckets.
+    - Usage overview sparklines with Catmull-Rom smoothing for Cached and Output metrics.
+    - Usage recent requests displays serving provider sub-line under model and new Latency column.
+    - Interactive topology map with solar-system circular layout, active electric current flow, and starfield canvas background.
+    - Unified key edit modal with custom key / prefix support and expiry controls.
+    - Cleaned up redundant catalog search and dead experimental code.
+  - **T-Router Preservation**:
+    - Preserved Azure branding (#3B82F6 / #1D4ED8), Azure T icon, and default port 20126.
+    - Maintained database location `~/.trouter/db/data.sqlite` and dataDir `~/.trouter`.
+    - Preserved advanced proxy features: dynamic IP rotation (rotateLink), Rotate IP button, Proxy Source filters, auto-rotate on 429/403, shorthand parsing, and Universal Proxy Pools for all providers.
+    - Preserved multi-model, multi-key prompt injection rules with inline prompt editor and live templates.
+
 ## v0.5.112-pro.15-t.1 (2026-10-30)
 
 - Automated sync and release via Telegram Bot.

@@ -27,9 +27,6 @@ import {
   getPaginationPageValue,
   getProviderOptions,
   reconcileConnectionsPage,
-  getQuotaCache,
-  setQuotaCache,
-  QUOTA_CACHE_KEY,
   REFRESH_INTERVAL_MS,
   CLAUDE_REFRESH_INTERVAL_MS,
   DEPLETED_QUOTA_THRESHOLD,
@@ -126,8 +123,20 @@ function claudeGrantStatus(grant) {
   return grant.useRequiresLimit ? "at limit only" : "unavailable";
 }
 
-function providerLabel(providerId) {
-  return AI_PROVIDERS[providerId]?.name || providerId;
+function providerLabel(providerId, nodeMap) {
+  return nodeMap?.[providerId]?.name || AI_PROVIDERS[providerId]?.name || providerId;
+}
+
+// m5: icon props for one provider id — display name (name tier) + node
+// type (type-brand tier) + base URL (brand/favicon tiers). Built-ins have
+// no node entry, so they fall back to the built-in label (id tier first).
+function providerIconProps(nodeMap, providerId) {
+  const n = nodeMap?.[providerId];
+  return {
+    alt: n?.name || providerLabel(providerId, nodeMap),
+    providerType: n?.type,
+    detectBaseUrl: n?.baseUrl,
+  };
 }
 
 function formatCreditDate(value) {
@@ -200,6 +209,10 @@ export default function ProviderLimits() {
     } catch { /* non-fatal: URL sync is best-effort */ }
   }, [pathname, router, searchParams]);
   const [providerOptions, setProviderOptions] = useState([]);
+  // m5: custom-node map (id → {name, type, baseUrl}) for icons. ProviderIcon
+  // needs the display name (name tier) + node type (type-brand tier) — the
+  // raw node id alone resolves to nothing for custom providers.
+  const [nodeMap, setNodeMap] = useState({});
   const [accountFilter, setAccountFilter] = useState("all");
   const [quotaSortMode, setQuotaSortMode] = useState("default");
   const [quotaVisibility, setQuotaVisibility] = useState({});
@@ -225,6 +238,20 @@ export default function ProviderLimits() {
   const intervalRef = useRef(null);
   const countdownRef = useRef(null);
   const tickCountRef = useRef(0);
+
+  // m5: load custom provider nodes once — icon names/types come from here.
+  useEffect(() => {
+    fetch("/api/provider-nodes")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        const map = {};
+        for (const n of d?.nodes || []) {
+          if (n?.id) map[n.id] = { name: n.name, type: n.type, baseUrl: n.baseUrl };
+        }
+        setNodeMap(map);
+      })
+      .catch(() => {});
+  }, []);
 
   const fetchConnections = useCallback(
     async (targetPage = page) => {
@@ -268,8 +295,19 @@ export default function ProviderLimits() {
     [accountFilter, expiringFirst, page, pageSize, providerFilter],
   );
 
-  // Fetch quota for a specific connection
-  const fetchQuota = useCallback(async (connectionId, provider, { force = false } = {}) => {
+  // Fetch quota for a specific connection. Inactive accounts never reach
+  // upstream: no quota call, no token refresh attempt. They keep a neutral
+  // state (not an error) so the row stays visible but quiet.
+  const fetchQuota = useCallback(async (connectionId, provider, { force = false, isActive = true } = {}) => {
+    if (isActive === false) {
+      setLoading((prev) => ({ ...prev, [connectionId]: false }));
+      setErrors((prev) => ({ ...prev, [connectionId]: null }));
+      setQuotaData((prev) => ({
+        ...prev,
+        [connectionId]: { quotas: [], message: null },
+      }));
+      return;
+    }
     setLoading((prev) => ({ ...prev, [connectionId]: true }));
     setErrors((prev) => ({ ...prev, [connectionId]: null }));
 
@@ -307,7 +345,6 @@ export default function ProviderLimits() {
             ...prev,
             [connectionId]: quotaEntry,
           }));
-          setQuotaCache(connectionId, quotaEntry);
           return;
         }
 
@@ -331,7 +368,6 @@ export default function ProviderLimits() {
         ...prev,
         [connectionId]: quotaEntry,
       }));
-      setQuotaCache(connectionId, quotaEntry);
     } catch (error) {
       console.error(
         `[ProviderLimits] Error fetching quota for ${provider} (${connectionId}):`,
@@ -348,15 +384,15 @@ export default function ProviderLimits() {
 
   // Refresh quota for a specific provider
   const refreshProvider = useCallback(
-    async (connectionId, provider) => {
-      await fetchQuota(connectionId, provider, { force: true });
+    async (connectionId, provider, isActive) => {
+      await fetchQuota(connectionId, provider, { force: true, isActive });
       setLastUpdated(new Date());
     },
     [fetchQuota],
   );
 
   const handleResetCodexLimit = useCallback(
-    async (connectionId, provider) => {
+    async (connectionId, provider, isActive) => {
       if ((provider !== "codex" && provider !== "claude") || resettingLimitId) return;
 
       setResettingLimitId(connectionId);
@@ -376,7 +412,7 @@ export default function ProviderLimits() {
           throw new Error(result.message || result.error || result.code || "Failed to reset limit");
         }
 
-        await fetchQuota(connectionId, provider, { force: true });
+        await fetchQuota(connectionId, provider, { force: true, isActive });
         setLastUpdated(new Date());
       } catch (error) {
         setErrors((prev) => ({ ...prev, [connectionId]: error.message || "Failed to reset limit" }));
@@ -413,6 +449,7 @@ export default function ProviderLimits() {
   }, []);
 
   const [deleteConfirmId, setDeleteConfirmId] = useState(null);
+  const [bulkConfirmState, setBulkConfirmState] = useState(null);
 
   const handleDeleteConnection = useCallback(
     async (id) => {
@@ -437,21 +474,6 @@ export default function ProviderLimits() {
             return next;
           });
 
-          if (typeof window !== "undefined") {
-            try {
-              const cache = getQuotaCache();
-              if (cache[id]) {
-                delete cache[id];
-                window.localStorage.setItem(
-                  QUOTA_CACHE_KEY,
-                  JSON.stringify(cache),
-                );
-              }
-            } catch (e) {
-              console.error("Error deleting cache entry:", e);
-            }
-          }
-
           await reconcileConnectionsPage(fetchConnections, page);
         }
       } catch (error) {
@@ -473,11 +495,11 @@ export default function ProviderLimits() {
           body: JSON.stringify({ isActive }),
         });
         if (res.ok) {
-          setQuotaData((prev) => {
-            const next = { ...prev };
-            return next;
-          });
+          // opt46 (Q2): refetch this row's quota right away instead of
+          // leaving it empty until auto-refresh (or stale after disable).
           await reconcileConnectionsPage(fetchConnections, page);
+          const provider = connections.find((c) => c.id === id)?.provider;
+          if (provider) await fetchQuota(id, provider, { isActive });
         }
       } catch (error) {
         console.error("Error updating connection status:", error);
@@ -485,7 +507,7 @@ export default function ProviderLimits() {
         setTogglingId(null);
       }
     },
-    [fetchConnections, page],
+    [connections, fetchConnections, fetchQuota, page],
   );
 
   const handleUpdateConnection = useCallback(
@@ -504,7 +526,7 @@ export default function ProviderLimits() {
           setShowEditModal(false);
           setSelectedConnection(null);
           if (USAGE_SUPPORTED_PROVIDERS.includes(provider)) {
-            await fetchQuota(connectionId, provider);
+            await fetchQuota(connectionId, provider, { isActive: selectedConnection.isActive });
           }
         }
       } catch (error) {
@@ -555,7 +577,7 @@ export default function ProviderLimits() {
       await Promise.all(
         visibleConnections
           .filter(shouldFetch)
-          .map((conn) => fetchQuota(conn.id, conn.provider)),
+          .map((conn) => fetchQuota(conn.id, conn.provider, { isActive: conn.isActive })),
       );
 
       setLastUpdated(new Date());
@@ -582,7 +604,7 @@ export default function ProviderLimits() {
       );
 
       await Promise.all(
-        visibleConnections.map((conn) => fetchQuota(conn.id, conn.provider)),
+        visibleConnections.map((conn) => fetchQuota(conn.id, conn.provider, { isActive: conn.isActive })),
       );
       setLastUpdated(new Date());
     };
@@ -819,37 +841,47 @@ export default function ProviderLimits() {
           ),
         );
         await reconcileConnectionsPage(fetchConnections, page);
+        // opt46 (Q2): newly toggled rows used to stay quota-empty until the
+        // 60s auto-refresh. Refetch each row's quota now (fetchQuota itself
+        // sets the neutral empty state for turned-off rows, no fetch).
+        await Promise.all(
+          targetIds.map(async (id) => {
+            const provider = connections.find((c) => c.id === id)?.provider;
+            if (provider) await fetchQuota(id, provider, { isActive });
+          }),
+        );
       } catch (error) {
         console.error("Error bulk toggling connections:", error);
       } finally {
         setBulkToggling(false);
       }
     },
-    [bulkToggling, fetchConnections, page],
+    [bulkToggling, connections, fetchConnections, fetchQuota, page],
   );
 
   const handleDisableDepleted = () => {
     const ids = sortedConnections
       .filter((c) => (c.isActive ?? true) && isConnectionDepleted(c))
       .map((c) => c.id);
-    bulkSetActive(ids, false);
+    if (ids.length) setBulkConfirmState({ direction: "disable", ids });
   };
 
   const handleEnableAvailable = () => {
     const ids = sortedConnections
       .filter((c) => !(c.isActive ?? true) && !isConnectionDepleted(c))
       .map((c) => c.id);
-    bulkSetActive(ids, true);
+    if (ids.length) setBulkConfirmState({ direction: "enable", ids });
   };
 
   const selectedProviderLabel =
-    providerFilter === "all" ? "All providers" : providerLabel(providerFilter);
+    providerFilter === "all" ? "All providers" : providerLabel(providerFilter, nodeMap);
   const hasEligibleConnections = totals.eligibleConnections > 0;
   const hasVisibleConnections = sortedConnections.length > 0;
   const emptyState = getConnectionsEmptyMessage(
     totals,
     providerFilter,
     accountFilter,
+    providerFilter === "all" ? "All providers" : providerLabel(providerFilter, nodeMap),
   );
   const connectionsPageSummary = getConnectionsPaginationSummary(pagination);
   const isCustomPageSize = !ACCOUNT_PAGE_SIZE_OPTIONS.includes(pageSize);
@@ -923,7 +955,7 @@ export default function ProviderLimits() {
                 ) : (
                   <ProviderIcon
                     src={`/providers/${providerFilter}.png`}
-                    alt={providerFilter}
+                    {...providerIconProps(nodeMap, providerFilter)}
                     size={18}
                     className="size-[18px] rounded object-contain"
                     fallbackText={providerFilter.slice(0, 2).toUpperCase()}
@@ -985,13 +1017,13 @@ export default function ProviderLimits() {
                       >
                         <ProviderIcon
                           src={`/providers/${provider}.png`}
-                          alt={provider}
+                          {...providerIconProps(nodeMap, provider)}
                           size={24}
                           className="size-6 rounded-md object-contain"
                           fallbackText={provider.slice(0, 2).toUpperCase()}
                         />
                         <span className="font-medium">
-                          {providerLabel(provider)}
+                          {providerLabel(provider, nodeMap)}
                         </span>
                         {providerFilter === provider && (
                           <span className="material-symbols-outlined ml-auto text-[20px]">
@@ -1070,12 +1102,12 @@ export default function ProviderLimits() {
             onClick={handleEnableAvailable}
             disabled={bulkToggling}
             className="flex h-8 shrink-0 items-center gap-1 rounded-lg border border-emerald-500/30 px-2 text-xs text-emerald-500 transition-colors hover:bg-emerald-500/10 disabled:opacity-50"
-            title="Enable connections that still have quota on the current page"
+            title="Turn on turned-off accounts on the current page (quota unknown until refreshed)"
           >
             <span className="material-symbols-outlined text-[14px]">
               check_circle
             </span>
-            <span className="hidden sm:inline">Turn on Available</span>
+            <span className="hidden sm:inline">Turn on Turned Off</span>
           </button>
 
           {/* Auto-refresh toggle */}
@@ -1157,7 +1189,7 @@ export default function ProviderLimits() {
                     <div className="w-8 h-8 shrink-0 rounded-md flex items-center justify-center overflow-hidden">
                       <ProviderIcon
                         src={`/providers/${conn.provider}.png`}
-                        alt={conn.provider}
+                        {...providerIconProps(nodeMap, conn.provider)}
                         size={32}
                         className="object-contain"
                         fallbackText={
@@ -1167,7 +1199,7 @@ export default function ProviderLimits() {
                     </div>
                     <div className="min-w-0">
                       <h3 className="text-sm font-semibold text-text-primary truncate">
-                        {providerLabel(conn.provider)}
+                        {providerLabel(conn.provider, nodeMap)}
                       </h3>
                       {getConnectionLabel(conn) ? (
                         <p className="text-xs text-text-muted truncate">
@@ -1303,7 +1335,7 @@ export default function ProviderLimits() {
                     <Tooltip text="Refresh quota">
                       <button
                         type="button"
-                        onClick={() => refreshProvider(conn.id, conn.provider)}
+                        onClick={() => refreshProvider(conn.id, conn.provider, conn.isActive)}
                         disabled={isLoading || rowBusy}
                         aria-label="Refresh quota"
                         className="flex h-8 w-8 items-center justify-center rounded-lg hover:bg-black/5 dark:hover:bg-white/5 transition-colors disabled:opacity-50"
@@ -1571,7 +1603,7 @@ export default function ProviderLimits() {
         onConfirm={async () => {
           const connection = resetConfirmState?.connection;
           if (!connection) return;
-          await handleResetCodexLimit(connection.id, connection.provider);
+          await handleResetCodexLimit(connection.id, connection.provider, connection.isActive);
           setResetConfirmState(null);
         }}
         title={resetConfirmState?.connection?.provider === "claude" ? "Reset Claude limits?" : "Reset Codex limit?"}
@@ -1582,6 +1614,29 @@ export default function ProviderLimits() {
         cancelText="Cancel"
         variant="danger"
         loading={Boolean(resettingLimitId)}
+      />
+
+      <ConfirmModal
+        isOpen={Boolean(bulkConfirmState)}
+        onClose={() => {
+          if (!bulkToggling) setBulkConfirmState(null);
+        }}
+        onConfirm={async () => {
+          const state = bulkConfirmState;
+          if (!state) return;
+          setBulkConfirmState(null);
+          await bulkSetActive(state.ids, state.direction === "enable");
+        }}
+        title={bulkConfirmState?.direction === "enable" ? "Turn on turned-off accounts?" : "Turn off empty accounts?"}
+        message={bulkConfirmState
+          ? (bulkConfirmState.direction === "enable"
+            ? `This turns on ${bulkConfirmState.ids.length} turned-off account${bulkConfirmState.ids.length === 1 ? "" : "s"} on the current page. Their quota is unknown until refreshed.`
+            : `This turns off ${bulkConfirmState.ids.length} account${bulkConfirmState.ids.length === 1 ? "" : "s"} on the current page with depleted quota.`)
+          : ""}
+        confirmText={bulkConfirmState?.direction === "enable" ? "Turn on" : "Turn off"}
+        cancelText="Cancel"
+        variant={bulkConfirmState?.direction === "enable" ? "success" : "danger"}
+        loading={bulkToggling}
       />
 
       {resetCreditsState && (

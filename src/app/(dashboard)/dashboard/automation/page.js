@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { Card, Button, Input, Toggle, CardSkeleton } from "@/shared/components";
 import { useNotificationStore } from "@/store/notificationStore";
+import { translate } from "@/i18n/runtime";
 
 export default function AutomationPage() {
   const notify = useNotificationStore();
@@ -51,97 +52,77 @@ export default function AutomationPage() {
       }
       if (sRes.ok) {
         const s = await sRes.json();
-        const c = s.responseCache || {};
-        setCacheEnabled(Boolean(c.enabled));
-        if (c.ttlSeconds) setCacheTtl(c.ttlSeconds);
-        if (c.maxEntries) setCacheMax(c.maxEntries);
-        const m = s.dbMaintenance || {};
-        setMaintEnabled(m.enabled !== false);
-        if (m.retentionDays) setRetentionDays(m.retentionDays);
-        if (m.lastResult) setLastRun(m.lastResult);
+        if (s.responseCache) {
+          setCacheEnabled(s.responseCache.enabled === true);
+          setCacheTtl(s.responseCache.ttlSeconds ?? 3600);
+          setCacheMax(s.responseCache.maxEntries ?? 1000);
+        }
+        if (s.dbMaintenance) {
+          setMaintEnabled(s.dbMaintenance.enabled !== false);
+          setRetentionDays(s.dbMaintenance.retentionDays ?? 90);
+          setLastRun(s.dbMaintenance.lastResult || null);
+        }
       }
       if (tRes.ok) {
         const t = await tRes.json();
         setTotpEnabled(t.enabled === true);
-        setTotpBackupLeft(t.backupCodesRemaining || 0);
+        setTotpBackupLeft(t.backupCodesRemaining ?? 0);
       }
-    } catch {
-      notify.error("Failed to load automation settings");
-    } finally {
-      setLoading(false);
-    }
-  }, [notify]);
+    } catch { /* keep defaults */ }
+    setLoading(false);
+  }, []);
 
   useEffect(() => { load(); }, [load]);
 
   const saveNotifications = async () => {
-    const payload = {
-      telegram: { enabled: tgEnabled, ...(tgToken ? { botToken: tgToken } : {}), chatId: tgChatId },
-      webhook: { enabled: whEnabled, url: whUrl, ...(whSecret ? { secret: whSecret } : {}) },
-    };
     const res = await fetch("/api/settings/notifications", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
+      body: JSON.stringify({
+        telegram: { enabled: tgEnabled, botToken: tgToken, chatId: tgChatId },
+        webhook: { enabled: whEnabled, url: whUrl, secret: whSecret },
+      }),
     });
-    if (res.ok) {
-      notify.success("Notification settings saved");
-      setTgToken("");
-      setWhSecret("");
-      load();
-    } else {
-      notify.error("Failed to save notification settings");
-    }
+    const data = await res.json();
+    if (!res.ok) { notify.error(data.error || "Failed to save notifications"); return; }
+    setTgConfigured(data.telegram.configured);
+    setTgToken("");
+    setWhSecret("");
+    notify.success("Notification settings saved");
   };
 
   const testNotifications = async () => {
-    setTestResult("Sending…");
     const res = await fetch("/api/settings/notifications/test", { method: "POST" });
     const data = await res.json();
-    setTestResult(`Telegram: ${data.telegram || "n/a"} · Webhook: ${data.webhook || "n/a"}`);
+    setTestResult(`telegram: ${data.results?.telegram || "?"}, webhook: ${data.results?.webhook || "?"}`);
   };
 
   const saveCache = async () => {
     const res = await fetch("/api/settings", {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        responseCache: {
-          enabled: cacheEnabled,
-          ttlSeconds: Math.max(1, Number(cacheTtl) || 3600),
-          maxEntries: Math.max(10, Number(cacheMax) || 1000),
-        },
-      }),
+      body: JSON.stringify({ responseCache: { enabled: cacheEnabled, ttlSeconds: Number(cacheTtl), maxEntries: Number(cacheMax) } }),
     });
-    if (res.ok) notify.success("Response cache settings saved");
-    else notify.error("Failed to save response cache");
+    if (!res.ok) { notify.error("Failed to save response cache"); return; }
+    notify.success("Response cache saved");
   };
 
   const saveMaintenance = async () => {
     const res = await fetch("/api/settings", {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        dbMaintenance: {
-          enabled: maintEnabled,
-          retentionDays: Math.max(1, Number(retentionDays) || 90),
-        },
-      }),
+      body: JSON.stringify({ dbMaintenance: { enabled: maintEnabled, retentionDays: Number(retentionDays) } }),
     });
-    if (res.ok) notify.success("Maintenance settings saved");
-    else notify.error("Failed to save maintenance settings");
+    if (!res.ok) { notify.error("Failed to save maintenance settings"); return; }
+    notify.success("Maintenance settings saved");
   };
 
   const runMaintenance = async () => {
-    notify.info("Running database maintenance…");
     const res = await fetch("/api/settings/maintenance", { method: "POST" });
-    if (res.ok) {
-      const result = await res.json();
-      setLastRun(result);
-      notify.success(`Pruned ${result.prunedUsage} usage, ${result.prunedDetails} details, ${result.prunedCache} cache rows`);
-    } else {
-      notify.error("Maintenance run failed");
-    }
+    const data = await res.json();
+    if (!res.ok) { notify.error(data.error || "Maintenance failed"); return; }
+    setLastRun(data.result);
+    notify.success(`Pruned ${data.result.prunedUsage} usage + ${data.result.prunedDetails} detail rows`);
   };
 
   const startTotpSetup = async () => {
@@ -150,8 +131,9 @@ export default function AutomationPage() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ action: "setup" }),
     });
-    if (res.ok) setSetupData(await res.json());
-    else notify.error("Failed to start TOTP setup");
+    const data = await res.json();
+    if (!res.ok) { notify.error(data.error || "Setup failed"); return; }
+    setSetupData(data);
   };
 
   const enableTotp = async () => {
@@ -165,8 +147,8 @@ export default function AutomationPage() {
     setTotpEnabled(true);
     setSetupData(null);
     setTotpCode("");
+    setTotpBackupLeft(10);
     notify.success("Two-factor authentication enabled");
-    load();
   };
 
   const disableTotp = async () => {
@@ -185,21 +167,22 @@ export default function AutomationPage() {
   if (loading) return <CardSkeleton />;
 
   return (
-    <div className="flex min-w-0 flex-col gap-6 px-1 sm:px-0">
+    <div className="mx-auto w-full max-w-4xl flex min-w-0 flex-col gap-6 px-1 sm:px-0">
       <Card title="Notifications" subtitle="Telegram + webhook alerts for silent jobs (scheduled backup success/failure). Tokens are never shown back — leave a field blank to keep the stored value." icon="notifications">
         <div className="flex flex-col gap-4">
+          <a href="/dashboard/profile" className="text-xs font-medium text-primary hover:underline">{translate("Backup settings →")}</a>
           <Toggle label="Telegram" checked={tgEnabled} onChange={setTgEnabled} description={tgConfigured ? "Bot token stored" : "No bot token stored"} />
           {tgEnabled && (
             <div className="flex flex-col gap-2 sm:flex-row">
-              <Input type="password" placeholder="Bot token (blank = keep stored)" value={tgToken} onChange={(e) => setTgToken(e.target.value)} />
-              <Input placeholder="Chat id" value={tgChatId} onChange={(e) => setTgChatId(e.target.value)} />
+              <Input type="password" placeholder={translate("Bot token (blank = keep stored)")} value={tgToken} onChange={(e) => setTgToken(e.target.value)} />
+              <Input placeholder={translate("Chat id")} value={tgChatId} onChange={(e) => setTgChatId(e.target.value)} />
             </div>
           )}
           <Toggle label="Webhook" checked={whEnabled} onChange={setWhEnabled} description="POST JSON { event, timestamp, data } + HMAC header when a secret is set" />
           {whEnabled && (
             <div className="flex flex-col gap-2 sm:flex-row">
-              <Input placeholder="https://… webhook URL" value={whUrl} onChange={(e) => setWhUrl(e.target.value)} />
-              <Input type="password" placeholder="Secret for HMAC signature (blank = keep stored)" value={whSecret} onChange={(e) => setWhSecret(e.target.value)} />
+              <Input placeholder={translate("https://… webhook URL")} value={whUrl} onChange={(e) => setWhUrl(e.target.value)} />
+              <Input type="password" placeholder={translate("Secret for X-9Router-Signature (blank = keep stored)")} value={whSecret} onChange={(e) => setWhSecret(e.target.value)} />
             </div>
           )}
           <div className="flex flex-wrap items-center gap-2">
@@ -229,7 +212,7 @@ export default function AutomationPage() {
 
       <Card title="Two-Factor Authentication" subtitle="TOTP for dashboard password login. Setup shows the secret + backup codes once — save them before enabling." icon="shield">
         <div className="flex flex-col gap-4">
-          <p className="text-sm">Status: <b>{totpEnabled ? `Enabled (${totpBackupLeft} backup codes left)` : "Disabled"}</b></p>
+          <p className="text-sm">{translate("Status:")} <b>{totpEnabled ? <>{translate("Enabled")} ({totpBackupLeft} {translate("backup codes left")})</> : translate("Disabled")}</b></p>
           {!totpEnabled && !setupData && <div><Button variant="primary" onClick={startTotpSetup}>Start setup</Button></div>}
           {!totpEnabled && setupData && (
             <div className="flex flex-col gap-2 text-sm">
@@ -241,14 +224,14 @@ export default function AutomationPage() {
                 {setupData.backupCodes.map((c) => <span key={c}>{c}</span>)}
               </div>
               <div className="flex gap-2">
-                <Input placeholder="6-digit code from the app" value={totpCode} onChange={(e) => setTotpCode(e.target.value)} />
+                <Input placeholder={translate("6-digit code from the app")} value={totpCode} onChange={(e) => setTotpCode(e.target.value)} />
                 <Button variant="primary" onClick={enableTotp}>Enable</Button>
               </div>
             </div>
           )}
           {totpEnabled && (
             <div className="flex gap-2">
-              <Input placeholder="Current code or backup code to disable" value={totpCode} onChange={(e) => setTotpCode(e.target.value)} />
+              <Input placeholder={translate("Current code or backup code to disable")} value={totpCode} onChange={(e) => setTotpCode(e.target.value)} />
               <Button onClick={disableTotp}>Disable</Button>
             </div>
           )}

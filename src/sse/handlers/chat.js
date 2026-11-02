@@ -10,7 +10,7 @@ import {
 import { handleAntigravityQuotaError, clearAntigravityStrikes } from "../services/antigravityQuota.js";
 import { resolveComboMemberAttemptCap } from "../services/memberFailover.js";
 import { dispatchCombo, createVariantHelpers, withBreakerSuccess } from "../services/comboDispatch.js";
-import { getSettings, getApiKeyByKey, resolvePromptInjections, resolveVariantSampling, applyVariantSampling, resolveBriefLevel, recordRtkSavings, getInjectVariants, getProviderConnections } from "@/lib/localDb";
+import { getSettings, getApiKeyByKey, resolvePromptInjections, resolvePromptInjectionMeta, resolveVariantSampling, applyVariantSampling, resolveBriefLevel, recordRtkSavings, getInjectVariants, getProviderConnections, recordPromptInjectFire, classifyInjectStack, getInjectKeyModelPrompts } from "@/lib/localDb";
 import { getDisabledModels } from "@/lib/disabledModelsDb";
 import { parseAutoTarget, buildAutoCandidates, getLatencyByProviderCached, AUTO_EXPLORATION_SHARE } from "../services/autoRouting.js";
 import { getModelInfo, getComboModels, parseModel } from "../services/model.js";
@@ -394,19 +394,37 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
     // Use shared chatCore
     const chatSettings = await getSettings();
     const providerThinking = (chatSettings.providerThinking || {})[provider] || null;
-    // Prompt Injection (9Router Pro): global → the API key's → the
+    // Prompt Injection (T Router / Pro): global → the API key's → the
     // variant's (matched by the bare custom name the user requested) →
     // the model+key's (matched by resolved provider/model). A variant
     // pick suppresses the model scopes, so the raw model name is never
     // disturbed by an injection.
-    // Fail-open: resolvePromptInjections already swallows storage errors.
+    // Fail-open: resolvePromptInjectionMeta already swallows storage errors.
     const injectKeyRecord = apiKey ? await getApiKeyByKey(apiKey).catch(() => null) : null;
-    const promptInjects = await resolvePromptInjections({
-      apiKeyId: injectKeyRecord?.id || null,
-      requestedModel: injectModelName || requestedModel || modelStr,
-      resolvedModel: `${provider}/${model}`,
-      bareModel: model,
-    });
+    const apiKeyId = injectKeyRecord?.id || null;
+    let injectMeta = null;
+    let promptInjects = [];
+    try {
+      injectMeta = await resolvePromptInjectionMeta({
+        apiKeyId,
+        requestedModel: injectModelName || requestedModel || modelStr,
+        resolvedModel: `${provider}/${model}`,
+        bareModel: model,
+      });
+      promptInjects = Array.isArray(injectMeta?.stack) ? injectMeta.stack : [];
+    } catch {
+      promptInjects = [];
+    }
+    if (promptInjects.length > 0) {
+      const isVariantPick = Boolean(injectMeta?.isVariantPick);
+      Promise.all([
+        getInjectKeyModelPrompts().catch(() => ({})),
+      ]).then(([keyModelMap]) => {
+        const keyScopedNames = apiKeyId && keyModelMap?.[apiKeyId] ? Object.keys(keyModelMap[apiKeyId]) : [];
+        const classified = classifyInjectStack(promptInjects, { apiKeyId, isVariantPick, keyModelNames: keyScopedNames });
+        recordPromptInjectFire(classified);
+      }).catch(() => {});
+    }
     // R7 locked sampling: a direct variant pick (or a combo member naming
     // a variant) carries that variant's sampling params, overriding the
     // client's defaults for this request only. Prompt text untouched.

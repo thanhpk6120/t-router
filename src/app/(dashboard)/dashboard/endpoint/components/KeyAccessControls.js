@@ -7,6 +7,9 @@
 //   picked with the same shared ModelSelectModal the combo editor uses.
 // - Token quota: per-key token budget over a rolling window.
 // - Key limits: per-key rate caps for reselling (empty field = unlimited).
+// opt12: the editor also runs in draft mode inside the unified Edit modal
+// (draft=true): every change only updates the parent draft — nothing is
+// saved until Save. In immediate mode the callbacks PUT straight away.
 import { useState } from "react";
 import PropTypes from "prop-types";
 import { Toggle, ModelSelectModal } from "@/shared/components";
@@ -17,7 +20,7 @@ const QUOTA_WINDOWS = [
   { hours: 720, label: "30 days" },
 ];
 
-// T Router: per-key rate limits (for reselling). Empty field = unlimited.
+// 9Router Pro: per-key rate limits (for reselling). Empty field = unlimited.
 const LIMIT_FIELDS_UI = [
   { field: "rpm", label: "Requests / min" },
   { field: "tpm", label: "Tokens / min" },
@@ -71,12 +74,59 @@ function Chip({ icon, children, tone = "muted" }) {
 
 Chip.propTypes = { icon: PropTypes.string, children: PropTypes.node, tone: PropTypes.string };
 
-export default function KeyAccessControls({ apiKey, onChange, onRequestRestrict, onQuotaChange, onLimitsChange }) {
+// opt12: the informative chips alone, reused by the key card now that the
+// expandable panel lives only inside the unified Edit modal.
+export function KeyAccessSummary({ apiKey }) {
+  const access = apiKey.access || { restricted: false, allow: [] };
+  const quota = apiKey.quota || null;
+  const quotaUsed = apiKey.quotaUsed || 0;
+  const limits = apiKey.limits || null;
+  const quotaOver = !!quota?.enabled && quotaUsed >= quota.limit;
+  const limitsText = limitsSummary(limits);
+  return (
+    <>
+      <Chip icon={access.restricted ? "lock" : "lock_open"} tone={access.restricted ? "active" : "muted"}>
+        {access.restricted ? `${access.allow.length} allowed` : "All models"}
+      </Chip>
+      <Chip icon="data_usage" tone={quotaOver ? "danger" : quota?.enabled ? "active" : "muted"}>
+        {quota?.enabled ? `${fmt(quotaUsed)} / ${fmt(quota.limit)} tokens` : "No quota"}
+      </Chip>
+      <Chip icon="speed" tone={limitsText ? "active" : "muted"}>
+        {limitsText || "No limits"}
+      </Chip>
+    </>
+  );
+}
+
+KeyAccessSummary.propTypes = {
+  apiKey: PropTypes.shape({
+    access: PropTypes.shape({ restricted: PropTypes.bool, allow: PropTypes.arrayOf(PropTypes.string) }),
+    quota: PropTypes.shape({ enabled: PropTypes.bool, limit: PropTypes.number, windowHours: PropTypes.number }),
+    quotaUsed: PropTypes.number,
+    limits: PropTypes.shape({
+      rpm: PropTypes.number, tpm: PropTypes.number, rph: PropTypes.number,
+      rpd: PropTypes.number, maxConcurrent: PropTypes.number,
+    }),
+  }).isRequired,
+};
+
+export default function KeyAccessControls({ apiKey, onChange, onRequestRestrict, onQuotaChange, onLimitsChange, onExpiryChange, draft = false, onDraftChange }) {
   const access = apiKey.access || { restricted: false, allow: [] };
   const quota = apiKey.quota || null;
   const quotaUsed = apiKey.quotaUsed || 0;
   const limits = apiKey.limits || null;
   const limitsUsage = apiKey.limitsUsage || null;
+
+  // opt12 draft mode: every change only updates the parent draft (nothing
+  // is saved until Save). In immediate mode the callbacks PUT straight
+  // away, as before.
+  const emitAccess = (v) => (draft ? onDraftChange?.({ access: v }) : onChange(v));
+  const emitQuota = (v) => (draft ? onDraftChange?.({ quota: v }) : onQuotaChange?.(v));
+  const emitLimits = (v) => (draft ? onDraftChange?.({ limits: v }) : onLimitsChange?.(v));
+  const emitExpiry = (v) => (draft ? onDraftChange?.({ expiresAt: v }) : onExpiryChange?.(v));
+  const emitRestrict = () => (draft
+    ? onDraftChange?.({ access: { restricted: true, allow: access.allow || [] } })
+    : onRequestRestrict?.());
 
   const [open, setOpen] = useState(false);
   const [limitDraft, setLimitDraft] = useState("");
@@ -85,7 +135,7 @@ export default function KeyAccessControls({ apiKey, onChange, onRequestRestrict,
   const [modelAliases, setModelAliases] = useState({});
 
   const commitLimit = (field, rawValue) => {
-    if (!onLimitsChange) return;
+    if (!draft && !onLimitsChange) return;
     const v = parseInt(rawValue, 10);
     const next = {
       rpm: limits?.rpm ?? null,
@@ -95,7 +145,7 @@ export default function KeyAccessControls({ apiKey, onChange, onRequestRestrict,
       maxConcurrent: limits?.maxConcurrent ?? null,
     };
     next[field] = Number.isFinite(v) && v > 0 ? v : null;
-    onLimitsChange(next);
+    emitLimits(next);
   };
 
   const openPicker = async () => {
@@ -110,7 +160,7 @@ export default function KeyAccessControls({ apiKey, onChange, onRequestRestrict,
     }
   };
 
-  const setAllow = (allow) => onChange({ restricted: true, allow });
+  const setAllow = (allow) => emitAccess({ restricted: true, allow });
   const add = (model) => {
     const value = model?.value;
     if (value && !access.allow.some((e) => e.toLowerCase() === value.toLowerCase())) setAllow([...access.allow, value]);
@@ -122,41 +172,36 @@ export default function KeyAccessControls({ apiKey, onChange, onRequestRestrict,
 
   return (
     <div className="mt-2" data-testid="key-access">
-      {/* Summary row — always visible, keeps the key list scannable */}
-      <div className="flex flex-wrap items-center gap-1.5">
-        <Chip icon={access.restricted ? "lock" : "lock_open"} tone={access.restricted ? "active" : "muted"}>
-          {access.restricted ? `${access.allow.length} allowed` : "All models"}
-        </Chip>
-        <Chip icon="data_usage" tone={quotaOver ? "danger" : quota?.enabled ? "active" : "muted"}>
-          {quota?.enabled ? `${fmt(quotaUsed)} / ${fmt(quota.limit)} tokens` : "No quota"}
-        </Chip>
-        <Chip icon="speed" tone={limitsText ? "active" : "muted"}>
-          {limitsText || "No limits"}
-        </Chip>
-        <button
-          onClick={() => setOpen(!open)}
-          className="ml-1 inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[11px] font-medium text-primary transition-colors hover:bg-primary/10"
-          aria-expanded={open}
-        >
-          {open ? "Close" : "Settings"}
-          <span
-            className="material-symbols-outlined leading-none transition-transform"
-            style={{ fontSize: "14px", transform: open ? "rotate(180deg)" : undefined }}
+      {/* Summary row — always visible, keeps the key list scannable.
+          Hidden in draft mode: the Edit modal shows the editor directly. */}
+      {!draft && (
+        <div className="flex flex-wrap items-center gap-1.5">
+          <KeyAccessSummary apiKey={apiKey} />
+          <button
+            onClick={() => setOpen(!open)}
+            className="ml-1 inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[11px] font-medium text-primary transition-colors hover:bg-primary/10"
+            aria-expanded={open}
           >
-            expand_more
-          </span>
-        </button>
-      </div>
+            {open ? "Close" : "Settings"}
+            <span
+              className="material-symbols-outlined leading-none transition-transform"
+              style={{ fontSize: "14px", transform: open ? "rotate(180deg)" : undefined }}
+            >
+              expand_more
+            </span>
+          </button>
+        </div>
+      )}
 
-      {open && (
-        <div className="mt-3 rounded-2xl border border-border-subtle bg-black/[0.02] p-4 dark:bg-white/[0.02]">
+      {(open || draft) && (
+        <div className="mt-3 rounded-[14px] border border-border-subtle bg-black/[0.02] p-4 dark:bg-white/[0.02]">
           {/* Access */}
           <GroupLabel
             right={
               <Toggle
                 size="sm"
                 checked={access.restricted}
-                onChange={(checked) => (checked ? onRequestRestrict() : onChange({ restricted: false, allow: access.allow }))}
+                onChange={(checked) => (checked ? emitRestrict() : emitAccess({ restricted: false, allow: access.allow }))}
               />
             }
           >
@@ -192,7 +237,7 @@ export default function KeyAccessControls({ apiKey, onChange, onRequestRestrict,
             <p className="mt-1.5 text-xs text-text-muted">This key can call every combo and model.</p>
           )}
 
-          {/* Token quota */}
+          {/* API key token quota (per-key budget — not provider balances) */}
           <div className="mt-4 border-t border-border-subtle pt-4">
             <GroupLabel
               right={
@@ -200,18 +245,18 @@ export default function KeyAccessControls({ apiKey, onChange, onRequestRestrict,
                   size="sm"
                   checked={!!quota?.enabled}
                   onChange={(checked) => {
-                    if (!onQuotaChange) return;
+                    if (!draft && !onQuotaChange) return;
                     if (checked) {
                       const limit = parseInt(limitDraft, 10) || quota?.limit || 100000;
-                      onQuotaChange({ enabled: true, limit, windowHours: quota?.windowHours || 24 });
+                      emitQuota({ ...quota, enabled: true, limit, windowHours: quota?.windowHours || 24 });
                     } else if (quota) {
-                      onQuotaChange({ ...quota, enabled: false });
+                      emitQuota({ ...quota, enabled: false });
                     }
                   }}
                 />
               }
             >
-              Token quota
+              API key token quota
             </GroupLabel>
             {!!quota?.enabled && (
               <div className="mt-2.5">
@@ -224,7 +269,7 @@ export default function KeyAccessControls({ apiKey, onChange, onRequestRestrict,
                     placeholder="100000"
                     onBlur={(e) => {
                       const v = parseInt(e.target.value, 10);
-                      if (v > 0 && v !== quota.limit) onQuotaChange?.({ ...quota, limit: v });
+                      if (v > 0 && v !== quota.limit) emitQuota({ ...quota, limit: v });
                     }}
                     onChange={(e) => setLimitDraft(e.target.value)}
                   />
@@ -232,7 +277,7 @@ export default function KeyAccessControls({ apiKey, onChange, onRequestRestrict,
                   <select
                     className="rounded-lg border border-border bg-bg px-2 py-1.5 text-xs text-text-main outline-none transition-colors focus:border-brand-500"
                     value={quota.windowHours}
-                    onChange={(e) => onQuotaChange?.({ ...quota, windowHours: Number(e.target.value) })}
+                    onChange={(e) => emitQuota({ ...quota, windowHours: Number(e.target.value) })}
                   >
                     {QUOTA_WINDOWS.map((w) => (
                       <option key={w.hours} value={w.hours}>{w.label}</option>
@@ -248,6 +293,26 @@ export default function KeyAccessControls({ apiKey, onChange, onRequestRestrict,
                     style={{ width: `${Math.min(100, quota.limit ? (quotaUsed / quota.limit) * 100 : 0)}%` }}
                   />
                 </div>
+                <div className="mt-2.5 flex flex-wrap items-center gap-2">
+                  <span className="text-xs text-text-muted">Max spend $</span>
+                  <input
+                    type="number"
+                    min="0.01"
+                    step="any"
+                    className="w-24 rounded-lg border border-border bg-bg px-2.5 py-1.5 font-mono text-xs text-text-main outline-none transition-colors focus:border-brand-500"
+                    defaultValue={quota.costLimit ?? ""}
+                    placeholder="No cap"
+                    onBlur={(e) => {
+                      const v = parseFloat(e.target.value);
+                      if (e.target.value === "") {
+                        if (quota.costLimit !== undefined) emitQuota({ ...quota, costLimit: null });
+                      } else if (Number.isFinite(v) && v > 0 && v !== quota.costLimit) {
+                        emitQuota({ ...quota, costLimit: v });
+                      }
+                    }}
+                  />
+                  <span className="text-xs text-text-muted">USD per same window (empty = no spend cap)</span>
+                </div>
               </div>
             )}
           </div>
@@ -259,7 +324,7 @@ export default function KeyAccessControls({ apiKey, onChange, onRequestRestrict,
               right={
                 limitsText ? (
                   <button
-                    onClick={() => onLimitsChange?.(null)}
+                    onClick={() => emitLimits(null)}
                     className="text-xs font-normal normal-case tracking-normal text-text-muted transition-colors hover:text-red-500"
                   >
                     Clear all
@@ -295,6 +360,43 @@ export default function KeyAccessControls({ apiKey, onChange, onRequestRestrict,
               </p>
             )}
           </div>
+
+          {/* Expiry (P3-26): date-only input; stored as end of that day (UTC) */}
+          <div className="mt-4 border-t border-border-subtle pt-4">
+            <GroupLabel
+              optional
+              right={
+                apiKey.expiresAt ? (
+                  <button
+                    onClick={() => emitExpiry(null)}
+                    className="text-xs font-normal normal-case tracking-normal text-text-muted transition-colors hover:text-red-500"
+                  >
+                    Clear
+                  </button>
+                ) : null
+              }
+            >
+              Expiry
+            </GroupLabel>
+            <div className="mt-2.5 flex flex-wrap items-center gap-2">
+              <input
+                type="date"
+                className="rounded-lg border border-border bg-bg px-2.5 py-1.5 text-xs text-text-main outline-none transition-colors focus:border-brand-500"
+                value={apiKey.expiresAt ? apiKey.expiresAt.slice(0, 10) : ""}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  emitExpiry(v ? `${v}T23:59:59.999Z` : null);
+                }}
+              />
+              <span className="text-xs text-text-muted">
+                {apiKey.expiresAt
+                  ? (new Date(apiKey.expiresAt).getTime() <= Date.now()
+                    ? "Expired — this key is rejected on every endpoint."
+                    : "After this date the key is rejected on every endpoint.")
+                  : "Empty = never expires."}
+              </span>
+            </div>
+          </div>
         </div>
       )}
 
@@ -319,6 +421,7 @@ KeyAccessControls.propTypes = {
   apiKey: PropTypes.shape({
     id: PropTypes.string.isRequired,
     name: PropTypes.string,
+    expiresAt: PropTypes.string,
     access: PropTypes.shape({ restricted: PropTypes.bool, allow: PropTypes.arrayOf(PropTypes.string) }),
     quota: PropTypes.shape({ enabled: PropTypes.bool, limit: PropTypes.number, windowHours: PropTypes.number }),
     quotaUsed: PropTypes.number,
@@ -331,8 +434,11 @@ KeyAccessControls.propTypes = {
       tpmUsed: PropTypes.number, inFlight: PropTypes.number,
     }),
   }).isRequired,
-  onChange: PropTypes.func.isRequired,
-  onRequestRestrict: PropTypes.func.isRequired,
+  onChange: PropTypes.func,
+  onRequestRestrict: PropTypes.func,
   onQuotaChange: PropTypes.func,
   onLimitsChange: PropTypes.func,
+  onExpiryChange: PropTypes.func,
+  draft: PropTypes.bool,
+  onDraftChange: PropTypes.func,
 };

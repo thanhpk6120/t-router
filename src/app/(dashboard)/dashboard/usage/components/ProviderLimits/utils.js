@@ -1,7 +1,6 @@
 import { getModelsByProviderId } from "open-sse/config/providerModels.js";
 
 // ─── Constants ───────────────────────────────────────────────────────────────
-export const QUOTA_CACHE_KEY = "quotaCacheData";
 export const REFRESH_INTERVAL_MS = 60000;
 // Claude usage/quota endpoint rate-limits; poll it less often than other providers
 export const CLAUDE_REFRESH_INTERVAL_MS = 600000;
@@ -118,7 +117,7 @@ export function getConnectionsPageRange(pagination) {
   return { start, end };
 }
 
-export function getConnectionsEmptyMessage(totals, providerFilter, accountFilter) {
+export function getConnectionsEmptyMessage(totals, providerFilter, accountFilter, providerLabelText) {
   if (!totals.eligibleConnections) {
     return {
       icon: "cloud_off",
@@ -134,7 +133,7 @@ export function getConnectionsEmptyMessage(totals, providerFilter, accountFilter
       description:
         providerFilter === "all"
           ? "Try changing the account status filter to see more quota trackers."
-          : `No ${accountFilter === "inactive" ? "turned off" : accountFilter === "active" ? "active" : "matching"} accounts found for ${providerFilter}.`,
+          : `No ${accountFilter === "inactive" ? "turned off" : accountFilter === "active" ? "active" : "matching"} accounts found for ${providerLabelText || providerFilter}.`,
     };
   }
   return {
@@ -192,31 +191,6 @@ export function getProviderOptions(dataProviderOptions) {
 
 export async function reconcileConnectionsPage(fetchConnections, targetPage) {
   return await fetchConnections(targetPage);
-}
-
-export function getQuotaCache() {
-  if (typeof window === "undefined") return {};
-  try {
-    const cached = window.localStorage.getItem(QUOTA_CACHE_KEY);
-    return cached ? JSON.parse(cached) : {};
-  } catch (error) {
-    console.error("Error reading quota cache:", error);
-    return {};
-  }
-}
-
-export function setQuotaCache(connectionId, quotaEntry) {
-  if (typeof window === "undefined") return;
-  try {
-    const cache = getQuotaCache();
-    cache[connectionId] = {
-      ...quotaEntry,
-      cachedAt: new Date().toISOString(),
-    };
-    window.localStorage.setItem(QUOTA_CACHE_KEY, JSON.stringify(cache));
-  } catch (error) {
-    console.error("Error writing quota cache:", error);
-  }
 }
 
 /**

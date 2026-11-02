@@ -170,12 +170,24 @@ export async function getRequestDetails(filter = {}) {
   const params = [];
 
   if (filter.provider) { conds.push("provider = ?"); params.push(filter.provider); }
-  if (filter.model) { conds.push("model = ?"); params.push(filter.model); }
+  // Substring match: users type a fragment ("deepseek") and expect every
+  // model containing it, not only a model literally named that. LIKE is
+  // ASCII case-insensitive by default (no case_sensitive_like pragma set).
+  if (filter.model) {
+    const escaped = filter.model.replace(/\\/g, "\\\\").replace(/%/g, "\\%").replace(/_/g, "\\_");
+    conds.push("model LIKE ? ESCAPE '\\'");
+    params.push(`%${escaped}%`);
+  }
   if (filter.requestId) { conds.push("id = ?"); params.push(filter.requestId); }
   if (filter.connectionId) { conds.push("connectionId = ?"); params.push(filter.connectionId); }
   if (filter.status) { conds.push("status = ?"); params.push(filter.status); }
   if (filter.startDate) { conds.push("timestamp >= ?"); params.push(new Date(filter.startDate).toISOString()); }
-  if (filter.endDate) { conds.push("timestamp <= ?"); params.push(new Date(filter.endDate).toISOString()); }
+  if (filter.endDate) {
+    const end = new Date(filter.endDate);
+    // datetime-local sends minute precision: include the whole picked minute.
+    if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(filter.endDate)) end.setSeconds(59, 999);
+    conds.push("timestamp <= ?"); params.push(end.toISOString());
+  }
 
   const where = conds.length ? `WHERE ${conds.join(" AND ")}` : "";
   const cntRow = db.get(`SELECT COUNT(*) as c FROM requestDetails ${where}`, params);

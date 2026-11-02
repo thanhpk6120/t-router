@@ -1021,6 +1021,7 @@ export async function testSingleConnection(id) {
           testStatus: "error",
           lastError: proxyError,
           lastErrorAt: new Date().toISOString(),
+          lastTested: new Date().toISOString(),
         });
         return { valid: false, error: proxyError, latencyMs: 0, testedAt: new Date().toISOString() };
       }
@@ -1044,6 +1045,7 @@ export async function testSingleConnection(id) {
   const softWarning = result.valid && (result.warning || result.error);
   const updateData = {
     testStatus: result.valid ? "active" : "error",
+    lastTested: new Date().toISOString(),
     lastError: result.valid ? (softWarning || null) : result.error,
     lastErrorAt: result.valid
       ? softWarning

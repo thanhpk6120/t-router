@@ -5,16 +5,19 @@ import {
   getProviderConnectionStats,
   bulkSetConnectionsActive,
   createProviderConnection,
+  getApikeyConnectionNames,
   getProviderNodeById,
   getProviderNodes,
   getProxyPoolById,
 } from "@/models";
+import { allocateFreeName } from "@/lib/allocateName";
 import { APIKEY_PROVIDERS } from "@/shared/constants/config";
 import { AI_PROVIDERS, FREE_PROVIDERS, FREE_TIER_PROVIDERS, WEB_COOKIE_PROVIDERS, isOpenAICompatibleProvider, isAnthropicCompatibleProvider, isCustomEmbeddingProvider } from "@/shared/constants/providers";
 import { normalizeProviderId, normalizeProviderSpecificData } from "@/lib/providerNormalization";
 import { getProviderBreakerSnapshot } from "@/sse/services/providerBreaker.js";
 import { getProviderHealthSummary } from "@/lib/providerHealthSummary.js";
 import { toProviderConnectionResponse } from "@/lib/providerConnectionResponse";
+import { getStatsCache, setStatsCache, invalidateStatsCache, STATS_TTL_MS } from "@/lib/providerStatsCache";
 
 export const dynamic = "force-dynamic";
 
@@ -52,10 +55,10 @@ async function normalizeProxyPoolId(proxyPoolId) {
   return { proxyPoolId: normalizedId };
 }
 
-// T Router: summary stats are computed from up to tens of thousands of
+// T Router / Pro: summary stats are computed from up to tens of thousands of
 // rows — cache them briefly so reopening the providers page is instant.
-let statsCache = { at: 0, data: null };
-const STATS_TTL_MS = 30_000;
+// The cache lives in @/lib/providerStatsCache so every providers write path
+// (PATCH, POST, [id] PUT/DELETE, test-batch) can invalidate it.
 
 // T Router: lite projection for picker/list consumers that only need
 // identity + status — drops error strings, model locks, and token material.
@@ -92,8 +95,10 @@ export async function GET(request) {
   try {
     const params = new URL(request.url).searchParams;
     if (params.get("summary") === "1") {
-      if (!statsCache.data || Date.now() - statsCache.at > STATS_TTL_MS) {
-        statsCache = { at: Date.now(), data: await getProviderConnectionStats() };
+      let data = getStatsCache();
+      if (!data) {
+        data = await getProviderConnectionStats();
+        setStatsCache(data);
       }
       // Breaker states are live (they flip on failures) so they bypass the
       // stats cache — reading the in-memory map is cheap.
@@ -113,7 +118,7 @@ export async function GET(request) {
         };
       }
       const health = await getProviderHealthSummary();
-      return NextResponse.json({ stats: statsCache.data, breakers, health });
+      return NextResponse.json({ stats: data, breakers, health });
     }
     const providerFilter = params.get("provider") || undefined;
     const lite = params.get("lite") === "1";
@@ -180,12 +185,12 @@ export async function PATCH(request) {
       override.isActive = !!isActive;
       override.disabled = !isActive;
       await updateSettings({ providerStrategies: { ...current, [provider]: override } });
-      statsCache = { at: 0, data: null };
+      invalidateStatsCache();
       return NextResponse.json({ updated: 1 });
     }
 
     const updated = await bulkSetConnectionsActive(provider, authTypes, !!isActive);
-    statsCache = { at: 0, data: null };
+    invalidateStatsCache();
     return NextResponse.json({ updated });
   } catch (error) {
     console.log("Error bulk-toggling providers:", error);
@@ -302,6 +307,8 @@ export async function POST(request) {
       // name collision is refused rather than silently overwriting a key. #4311
       allowOverwrite: body.id ? true : (body.allowOverwrite === true || body.overwrite === true),
     });
+
+    invalidateStatsCache();
 
     return NextResponse.json(
       { connection: toProviderConnectionResponse(newConnection) },

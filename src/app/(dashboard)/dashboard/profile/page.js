@@ -74,11 +74,9 @@ export default function ProfilePage() {
   const [locale, setLocale] = useState(() => getLocaleFromCookie());
   const [langOpen, setLangOpen] = useState(false);
   const [shutdownOpen, setShutdownOpen] = useState(false);
+  const [loginOffOpen, setLoginOffOpen] = useState(false);
   const [isShuttingDown, setIsShuttingDown] = useState(false);
-  const [settings, setSettings] = useState({ requireLogin: true, fallbackStrategy: "balanced" });
-  const [updateInfo, setUpdateInfo] = useState(null);
-  const [checkingUpdate, setCheckingUpdate] = useState(false);
-  const [copiedCmd, setCopiedCmd] = useState(false);
+  const [settings, setSettings] = useState({ fallbackStrategy: "balanced" });
   const [loading, setLoading] = useState(true);
   const [passwords, setPasswords] = useState({ current: "", new: "", confirm: "" });
   const [passStatus, setPassStatus] = useState({ type: "", message: "" });
@@ -89,6 +87,7 @@ export default function ProfilePage() {
   const pendingImportRef = useRef(null);
   const pendingSnapshotRef = useRef(null);
   const [backupInfo, setBackupInfo] = useState(null);
+  const [backupInfoFailed, setBackupInfoFailed] = useState(false);
   const [importPreview, setImportPreview] = useState(null);
   const [backupSections, setBackupSections] = useState(BACKUP_GROUP_IDS);
   const [backupProvidersSel, setBackupProvidersSel] = useState(null); // null = all providers
@@ -189,29 +188,6 @@ export default function ProfilePage() {
       });
   }, []);
 
-  useEffect(() => {
-    fetch("/api/version")
-      .then((res) => res.json())
-      .then((data) => setUpdateInfo(data))
-      .catch(() => {});
-  }, []);
-
-  const checkVersionUpdate = async () => {
-    setCheckingUpdate(true);
-    try {
-      const res = await fetch("/api/version?refresh=1");
-      const data = await res.json();
-      setUpdateInfo(data);
-    } catch {}
-    setCheckingUpdate(false);
-  };
-
-  const handleCopyInstallCmd = (cmd) => {
-    try { navigator.clipboard.writeText(cmd); } catch {}
-    setCopiedCmd(true);
-    setTimeout(() => setCopiedCmd(false), 2000);
-  };
-
   const updateOutboundProxy = async (e) => {
     e.preventDefault();
     if (settings.outboundProxyEnabled !== true) return;
@@ -311,8 +287,8 @@ export default function ProfilePage() {
 
   const handlePasswordChange = async (e) => {
     e.preventDefault();
-    if (!passwords.new) {
-      setPassStatus({ type: "error", message: "Please enter a password" });
+    if (passwords.new !== passwords.confirm) {
+      setPassStatus({ type: "error", message: "Passwords do not match" });
       return;
     }
 
@@ -324,6 +300,7 @@ export default function ProfilePage() {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          currentPassword: passwords.current,
           newPassword: passwords.new,
         }),
       });
@@ -333,12 +310,11 @@ export default function ProfilePage() {
       if (res.ok) {
         setPassStatus({ type: "success", message: "Password updated successfully" });
         setPasswords({ current: "", new: "", confirm: "" });
-        setSettings((prev) => ({ ...prev, ...data, hasPassword: true }));
       } else {
         setPassStatus({ type: "error", message: data.error || "Failed to update password" });
       }
     } catch (err) {
-      setPassStatus({ type: "error", message: "An error occurred: " + err.message });
+      setPassStatus({ type: "error", message: "An error occurred" });
     } finally {
       setPassLoading(false);
     }
@@ -410,9 +386,7 @@ export default function ProfilePage() {
     }
   };
 
-  const updateRequireLogin = async (nextVal) => {
-    const requireLogin = Boolean(nextVal);
-    setSettings((prev) => ({ ...prev, requireLogin }));
+  const updateRequireLogin = async (requireLogin) => {
     try {
       const res = await fetch("/api/settings", {
         method: "PATCH",
@@ -420,8 +394,7 @@ export default function ProfilePage() {
         body: JSON.stringify({ requireLogin }),
       });
       if (res.ok) {
-        const data = await res.json();
-        setSettings((prev) => ({ ...prev, ...data, requireLogin }));
+        setSettings(prev => ({ ...prev, requireLogin }));
       }
     } catch (err) {
       console.error("Failed to update require login:", err);
@@ -513,35 +486,18 @@ export default function ProfilePage() {
     setOidcTestStatus({ type: "", message: "" });
 
     try {
-      const saveRes = await fetch("/api/settings", {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          authMode: oidcForm.authMode || settings.authMode || "password",
-          oidcIssuerUrl: issuerUrl,
-          oidcClientId: clientId,
-          oidcScopes: scopes || "openid profile email",
-          oidcLoginLabel: oidcForm.oidcLoginLabel.trim() || "Sign in with OIDC",
-          ...(secret ? { oidcClientSecret: secret } : {}),
-        }),
-      });
-
-      const saved = await saveRes.json().catch(() => ({}));
-      if (!saveRes.ok) {
-        setOidcTestStatus({
-          type: "error",
-          message: saved.error || "Failed to save OIDC settings before testing",
-        });
-        return;
-      }
-
+      // opt44: test with the form values directly — never save first, so a
+      // failed test cannot leave wrong values stored (same as the SAML test).
+      // A blank secret omits clientSecret, so the test route falls back to
+      // the stored secret (blank = keep semantics preserved).
       const res = await fetch("/api/auth/oidc/test", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          issuerUrl: saved.oidcIssuerUrl || issuerUrl,
-          clientId: saved.oidcClientId || clientId,
-          scopes: saved.oidcScopes || scopes || "openid profile email",
+          issuerUrl,
+          clientId,
+          scopes: scopes || "openid profile email",
+          ...(secret ? { clientSecret: secret } : {}),
         }),
       });
 
@@ -749,7 +705,13 @@ export default function ProfilePage() {
     try {
       const res = await fetch("/api/settings/backup");
       if (res.ok) setBackupInfo(await res.json());
-    } catch { /* the Backup card renders without live info */ }
+      else setBackupInfoFailed(true);
+    } catch {
+      // The Backup card renders without live info — but it must NOT fall
+      // back to showing the auto-backup toggle as ON (opt44: the old
+      // `?? true` default lied while the endpoint was failing).
+      setBackupInfoFailed(true);
+    }
   };
 
   useEffect(() => { loadBackupInfo(); }, []);
@@ -771,7 +733,10 @@ export default function ProfilePage() {
   };
 
   const handleAutoBackupToggle = async () => {
-    const next = !(backupInfo?.autoBackupEnabled ?? true);
+    // opt44: never toggle from an unknown state — the toggle is disabled
+    // while backup info is loading, so this is only a safety guard.
+    if (!backupInfo) return;
+    const next = !backupInfo.autoBackupEnabled;
     try {
       await fetch("/api/settings", {
         method: "PATCH",
@@ -1054,9 +1019,12 @@ export default function ProfilePage() {
   };
 
   return (
+    // Intentional width (G21): settings forms read best in a narrow
+    // column, unlike the full-width data pages.
     <div className="max-w-2xl mx-auto px-4 sm:px-0">
       <div className="flex flex-col gap-6">
-        {/* Local Mode Info */}
+        {/* Appearance: theme switcher + database location. Named to not
+            collide with the footer access-mode label ("Remote Mode"). */}
         <Card>
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-4">
             <div className="flex items-center gap-3 sm:gap-4">
@@ -1064,8 +1032,8 @@ export default function ProfilePage() {
                 <span className="material-symbols-outlined text-xl sm:text-2xl">computer</span>
               </div>
               <div>
-                <h2 className="text-lg sm:text-xl font-semibold">Local Mode</h2>
-                <p className="text-sm text-text-muted">Running on your machine</p>
+                <h2 className="text-lg sm:text-xl font-semibold">Appearance</h2>
+                <p className="text-sm text-text-muted">Theme and database location</p>
               </div>
             </div>
             <div className="inline-flex p-1 rounded-lg bg-black/5 dark:bg-white/5 w-full sm:w-auto">
@@ -1093,7 +1061,7 @@ export default function ProfilePage() {
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between p-3 rounded-lg bg-bg border border-border gap-2">
               <div>
                 <p className="font-medium text-sm sm:text-base">Database Location</p>
-                <p className="text-xs sm:text-sm text-text-muted font-mono break-all">~/.trouter/db/data.sqlite</p>
+                <p className="text-xs sm:text-sm text-text-muted font-mono break-all">{settings.databasePath || "~/.trouter/db/data.sqlite"}</p>
               </div>
             </div>
           </div>
@@ -1112,9 +1080,15 @@ export default function ProfilePage() {
           </div>
           <div className="flex flex-col gap-4">
             <div className="flex flex-col gap-2">
-              <BackupCounts counts={backupInfo?.summary?.counts} />
+              {backupInfo ? (
+                <BackupCounts counts={backupInfo?.summary?.counts} />
+              ) : (
+                <p className="text-xs text-text-muted">
+                  {backupInfoFailed ? "Backup info failed to load." : "Loading backup info…"}
+                </p>
+              )}
               <p className="text-xs text-text-muted">
-                Last backup: {backupInfo?.lastBackupAt ? formatDateTime(backupInfo.lastBackupAt) : "never"}
+                Last backup: {backupInfo ? (backupInfo.lastBackupAt ? formatDateTime(backupInfo.lastBackupAt) : "never") : backupInfoFailed ? "unknown" : "Loading…"}
               </p>
             </div>
             <div className="flex flex-col gap-1.5">
@@ -1201,8 +1175,9 @@ export default function ProfilePage() {
                   </p>
                 </div>
                 <Toggle
-                  checked={backupInfo?.autoBackupEnabled ?? true}
+                  checked={backupInfo?.autoBackupEnabled ?? false}
                   onChange={handleAutoBackupToggle}
+                  disabled={!backupInfo}
                 />
               </div>
               <div className="flex flex-wrap items-center gap-2">
@@ -1211,6 +1186,7 @@ export default function ProfilePage() {
                   id="auto-backup-keep"
                   value={backupInfo?.autoBackupKeep ?? 7}
                   onChange={(e) => handleAutoBackupKeep(Number(e.target.value))}
+                  disabled={!backupInfo}
                   className="rounded-lg border border-border bg-surface px-2.5 py-1.5 text-sm"
                 >
                   {[3, 7, 14, 30].map((n) => (
@@ -1280,41 +1256,66 @@ export default function ProfilePage() {
                 </p>
               </div>
               <Toggle
-                checked={settings.requireLogin !== false}
-                onChange={(val) => updateRequireLogin(val)}
+                checked={settings.requireLogin === true}
+                onChange={() => {
+                  // opt44: turning login OFF gets a confirmation first — one tap
+                  // otherwise opens the dashboard to anyone with the URL.
+                  if (settings.requireLogin === true) setLoginOffOpen(true);
+                  else updateRequireLogin(true);
+                }}
+                disabled={loading}
               />
             </div>
-            <form onSubmit={handlePasswordChange} className="flex flex-col gap-3 pt-4 border-t border-border/50">
-              <div className="flex items-center justify-between">
-                <p className="text-sm font-medium text-text-main">Password</p>
-                {!settings.hasPassword && (
-                  <span className="text-[11px] px-2 py-0.5 rounded bg-brand-500/10 text-brand-600 dark:text-brand-400 font-medium">
-                    Default: 123456
-                  </span>
+            {settings.requireLogin === true && (
+              <form onSubmit={handlePasswordChange} className="flex flex-col gap-4 pt-4 border-t border-border/50">
+                {settings.hasPassword && (
+                  <div className="flex flex-col gap-2">
+                    <label className="text-xs sm:text-sm font-medium">Current Password</label>
+                    <Input
+                      type="password"
+                      placeholder="Enter current password"
+                      value={passwords.current}
+                      onChange={(e) => setPasswords({ ...passwords, current: e.target.value })}
+                      required
+                    />
+                  </div>
                 )}
-              </div>
-
-              <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5">
-                <div className="flex-1">
-                  <Input
-                    type="password"
-                    placeholder="Enter new password"
-                    value={passwords.new}
-                    onChange={(e) => setPasswords({ ...passwords, new: e.target.value })}
-                    required
-                  />
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div className="flex flex-col gap-2">
+                    <label className="text-xs sm:text-sm font-medium">New Password</label>
+                    <Input
+                      type="password"
+                      placeholder="Enter new password"
+                      value={passwords.new}
+                      onChange={(e) => setPasswords({ ...passwords, new: e.target.value })}
+                      required
+                    />
+                  </div>
+                  <div className="flex flex-col gap-2">
+                    <label className="text-xs sm:text-sm font-medium">Confirm New Password</label>
+                    <Input
+                      type="password"
+                      placeholder="Confirm new password"
+                      value={passwords.confirm}
+                      onChange={(e) => setPasswords({ ...passwords, confirm: e.target.value })}
+                      required
+                    />
+                  </div>
                 </div>
-                <Button type="submit" variant="primary" loading={passLoading} className="sm:w-auto shrink-0">
-                  {settings.hasPassword ? "Update Password" : "Set Password"}
-                </Button>
-              </div>
 
-              {passStatus.message && (
-                <p className={`text-xs sm:text-sm ${passStatus.type === "error" ? "text-red-500" : "text-green-500"}`}>
-                  {passStatus.message}
-                </p>
-              )}
-            </form>
+                {passStatus.message && (
+                  <p className={`text-xs sm:text-sm ${passStatus.type === "error" ? "text-red-500" : "text-green-500"}`}>
+                    {passStatus.message}
+                  </p>
+                )}
+
+                <div className="pt-2">
+                  <Button type="submit" variant="primary" loading={passLoading} className="w-full sm:w-auto">
+                    {settings.hasPassword ? "Update Password" : "Set Password"}
+                  </Button>
+                </div>
+              </form>
+            )}
           </div>
         </Card>
 
@@ -1830,21 +1831,7 @@ export default function ProfilePage() {
               </div>
               <Toggle
                 checked={settings.fallbackStrategy === "balanced"}
-                onChange={(val) => updateFallbackStrategy(val ? "balanced" : "round-robin")}
-                disabled={loading}
-              />
-            </div>
-
-            <div className="flex items-start sm:items-center justify-between gap-4 pt-2 border-t border-border/50">
-              <div className="flex-1 min-w-0">
-                <p className="font-medium text-sm sm:text-base">Sticky Random</p>
-                <p className="text-xs sm:text-sm text-text-muted">
-                  Stick to one working account until it fails, then pick another at random
-                </p>
-              </div>
-              <Toggle
-                checked={settings.fallbackStrategy === "sticky-random"}
-                onChange={(val) => updateFallbackStrategy(val ? "sticky-random" : "balanced")}
+                onChange={() => updateFallbackStrategy("balanced")}
                 disabled={loading}
               />
             </div>
@@ -1858,7 +1845,7 @@ export default function ProfilePage() {
               </div>
               <Toggle
                 checked={settings.fallbackStrategy === "round-robin"}
-                onChange={(val) => updateFallbackStrategy(val ? "round-robin" : "balanced")}
+                onChange={() => updateFallbackStrategy("round-robin")}
                 disabled={loading}
               />
             </div>
@@ -1872,7 +1859,21 @@ export default function ProfilePage() {
               </div>
               <Toggle
                 checked={settings.fallbackStrategy === "fill-first"}
-                onChange={(val) => updateFallbackStrategy(val ? "fill-first" : "balanced")}
+                onChange={() => updateFallbackStrategy("fill-first")}
+                disabled={loading}
+              />
+            </div>
+
+            <div className="flex items-start sm:items-center justify-between gap-4 pt-2 border-t border-border/50">
+              <div className="flex-1 min-w-0">
+                <p className="font-medium text-sm sm:text-base">Sticky Random</p>
+                <p className="text-xs sm:text-sm text-text-muted">
+                  Stick to one working account until it fails, then pick another at random
+                </p>
+              </div>
+              <Toggle
+                checked={settings.fallbackStrategy === "sticky-random"}
+                onChange={() => updateFallbackStrategy("sticky-random")}
                 disabled={loading}
               />
             </div>
@@ -1944,7 +1945,9 @@ export default function ProfilePage() {
                     : "Currently using accounts in priority order (Fill First)."}
               {settings.comboStrategy === "round-robin"
                 ? ` Combos rotate after ${settings.comboStickyRoundRobinLimit || 1} call${(settings.comboStickyRoundRobinLimit || 1) === 1 ? "" : "s"} per model.`
-                : " Combos always start with their first model."}
+                : settings.comboStrategy === "fallback"
+                  ? " Combos always start with their first model."
+                  : " Combos start with their first model, except pairs with an injection rotate their starting model per request."}
             </p>
           </div>
         </Card>
@@ -2045,83 +2048,6 @@ export default function ProfilePage() {
         </Card>
 
         {/* Account actions */}
-        {/* Updates & Version Card */}
-        <Card>
-          <div className="flex items-center justify-between mb-4">
-            <div className="flex items-center gap-3">
-              <div className="p-2 rounded-lg bg-primary/10 text-primary shrink-0">
-                <span className="material-symbols-outlined text-[20px]">system_update</span>
-              </div>
-              <div>
-                <h3 className="text-base sm:text-lg font-semibold">Version & Updates</h3>
-                <p className="text-xs text-text-muted">
-                  Current version: <span className="font-mono font-medium text-text-main">v{APP_CONFIG.version}</span>
-                  {updateInfo?.latestVersion && updateInfo.latestVersion !== APP_CONFIG.version && (
-                    <span> · Latest: <span className="font-mono font-medium text-brand-500">v{updateInfo.latestVersion}</span></span>
-                  )}
-                </p>
-              </div>
-            </div>
-            {updateInfo?.hasUpdate ? (
-              <span className="px-2.5 py-1 rounded-full text-xs font-semibold bg-brand-500/10 text-brand-600 dark:text-brand-400 border border-brand-500/20">
-                Update Available
-              </span>
-            ) : (
-              <span className="px-2.5 py-1 rounded-full text-xs font-semibold bg-green-500/10 text-green-600 dark:text-green-400 border border-green-500/20">
-                Up to Date
-              </span>
-            )}
-          </div>
-
-          {updateInfo?.hasUpdate && (
-            <div className="mb-4 p-3 rounded-lg bg-brand-500/10 border border-brand-500/20 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
-              <div className="text-xs sm:text-sm text-text-main">
-                <p className="font-semibold text-brand-600 dark:text-brand-400">
-                  Phiên bản mới v{updateInfo.latestVersion} đã có sẵn trên npmjs!
-                </p>
-                <p className="text-text-muted mt-0.5">
-                  Lệnh cài đặt: <code className="font-mono bg-bg px-1.5 py-0.5 rounded border border-border">{updateInfo.installCmd || "npm i -g t-router-proxy@latest"}</code>
-                </p>
-              </div>
-              <Button
-                variant="primary"
-                size="sm"
-                onClick={() => handleCopyInstallCmd(updateInfo.installCmd || "npm i -g t-router-proxy@latest")}
-                className="whitespace-nowrap"
-              >
-                <span className="material-symbols-outlined text-[16px] mr-1">
-                  {copiedCmd ? "check" : "content_copy"}
-                </span>
-                {copiedCmd ? "Đã sao chép" : "Sao chép lệnh"}
-              </Button>
-            </div>
-          )}
-
-          <div className="flex gap-2">
-            <Button
-              variant="secondary"
-              size="sm"
-              loading={checkingUpdate}
-              onClick={checkVersionUpdate}
-            >
-              Check for Updates
-            </Button>
-            {updateInfo?.updateUrl && (
-              <a
-                href={updateInfo.updateUrl}
-                target="_blank"
-                rel="noreferrer"
-                className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg border border-border text-xs text-text-muted hover:text-text-main hover:bg-surface-2 transition-colors"
-              >
-                <span className="material-symbols-outlined text-[16px]">open_in_new</span>
-                NPM Package
-              </a>
-            )}
-          </div>
-        </Card>
-
-        <SecurityLogSection />
-
         <div className="flex flex-col sm:flex-row gap-2">
           <Button
             variant="outline"
@@ -2161,12 +2087,23 @@ export default function ProfilePage() {
         isOpen={shutdownOpen}
         onClose={() => setShutdownOpen(false)}
         onConfirm={handleShutdown}
-        title="Close Proxy"
-        message="Are you sure you want to close the proxy server?"
-        confirmText="Close"
+        title="Shut down T-Router?"
+        message="Are you sure you want to shut down T-Router? The dashboard and API will stop until PM2 restarts it."
+        confirmText="Shut down"
         cancelText="Cancel"
         variant="danger"
         loading={isShuttingDown}
+      />
+
+      <ConfirmModal
+        isOpen={loginOffOpen}
+        onClose={() => setLoginOffOpen(false)}
+        onConfirm={() => { setLoginOffOpen(false); updateRequireLogin(false); }}
+        title="Turn off login?"
+        message="Anyone with the URL can open the dashboard."
+        confirmText="Turn off"
+        cancelText="Cancel"
+        variant="danger"
       />
 
       <Modal
@@ -2266,18 +2203,23 @@ export default function ProfilePage() {
           </p>
         )}
       </Modal>
+      {/* R3 security audit log — appended section only; the Profile page
+          split shape is owner-reserved and is NOT restructured here. */}
+      <SecurityLogSection />
     </div>
   );
 }
 
 function SecurityLogSection() {
   const [events, setEvents] = useState([]);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   useEffect(() => {
     fetch("/api/security-log")
       .then((res) => (res.ok ? res.json() : Promise.reject(new Error(res.status === 401 ? "Sign in to view the security log." : "Failed to load security log."))))
       .then((data) => setEvents(data.events || []))
-      .catch((e) => setError(e.message));
+      .catch((e) => setError(e.message))
+      .finally(() => setLoading(false));
   }, []);
   return (
     <div className="rounded-xl border border-border bg-surface p-4">
@@ -2287,6 +2229,8 @@ function SecurityLogSection() {
       </p>
       {error ? (
         <p className="text-sm text-text-muted mt-3">{error}</p>
+      ) : loading ? (
+        <p className="text-sm text-text-muted mt-3">Loading security log…</p>
       ) : events.length === 0 ? (
         <p className="text-sm text-text-muted mt-3">No security events recorded yet.</p>
       ) : (
@@ -2298,7 +2242,7 @@ function SecurityLogSection() {
               {ev.breach ? <span className="text-xs font-semibold text-red-600 dark:text-red-400">Breach flag</span> : null}
               {ev.ip && <span className="text-xs text-text-muted">{ev.ip}</span>}
               {ev.detail && <span className="text-xs text-text-muted">{ev.detail}</span>}
-              {ev.userAgent && <span className="text-xs text-text-muted truncate max-w-full" title={ev.userAgent}>{ev.userAgent}</span>}
+              {ev.userAgent && <span className="text-xs text-text-muted break-all" title={ev.userAgent}>{ev.userAgent}</span>}
             </div>
           ))}
         </div>

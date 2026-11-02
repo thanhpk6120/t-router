@@ -266,6 +266,16 @@ export function cleanVariantName(raw) {
   return name;
 }
 
+// Reserved variant names (save-time only — the read path deliberately
+// keeps cleaning them through, so a pre-existing entry is never dropped
+// silently on read). "global" and "user" collide with the resolver's
+// stack entry names, so a variant with either name would produce two
+// same-named stack entries that the stats classifier cannot attribute.
+export function isReservedVariantName(raw) {
+  const name = typeof raw === "string" ? raw.trim() : "";
+  return name === "global" || name === "user";
+}
+
 function cleanVariantEntry(raw) {
   if (!raw || typeof raw !== "object") return null;
   const backing = typeof raw.model === "string" ? raw.model.trim() : "";
@@ -338,6 +348,7 @@ export async function getInjectVariants() {
 export async function setInjectVariant(name, input = {}) {
   const cleanName = cleanVariantName(name);
   if (!cleanName) return null;
+  if (isReservedVariantName(cleanName)) return null;
   const map = await getInjectVariants();
   const entry = cleanVariantEntry({ ...input, updatedAt: new Date().toISOString() });
   if (!entry) {
@@ -733,7 +744,7 @@ export async function deleteInjectRule(id) {
 // variant by its bare name, in which case the variant matches instead
 // and the model scopes stay silent (a variant pick is a different model
 // identity). Combo names never match.
-export function selectPromptInjections({ global, byKey, byModel, byKeyModel, byVariant, rules, templates } = {}, ctx = {}) {
+export function selectPromptInjectionsDetailed({ global, byKey, byModel, byKeyModel, byVariant, rules, templates } = {}, ctx = {}) {
   const out = [];
   const push = (name, e) => {
     if (!e || !e.enabled) return;
@@ -838,9 +849,13 @@ export function selectPromptInjections({ global, byKey, byModel, byKeyModel, byV
   // A bare requested name (no "/") is a variant pick: its prompt fires
   // and the raw model's scopes stay silent for this request.
   let variantHit = null;
+  let isVariantPick = false;
   if (typeof ctx.requestedModel === "string" && ctx.requestedModel && !ctx.requestedModel.includes("/")) {
     const entry = cleanVariantMap(byVariant)[ctx.requestedModel];
-    if (entry && entry.enabled) variantHit = { name: ctx.requestedModel, entry };
+    if (entry && entry.enabled) {
+      variantHit = { name: ctx.requestedModel, entry };
+      isVariantPick = true;
+    }
   }
   if (variantHit) push(variantHit.name, variantHit.entry);
 
@@ -866,7 +881,11 @@ export function selectPromptInjections({ global, byKey, byModel, byKeyModel, byV
       }
     }
   }
-  return out;
+  return { stack: out, isVariantPick };
+}
+
+export function selectPromptInjections(scope = {}, ctx = {}) {
+  return selectPromptInjectionsDetailed(scope, ctx).stack;
 }
 
 // --------------------------------------------------------------- snapshot
@@ -913,5 +932,25 @@ export async function resolvePromptInjections(ctx = {}) {
     return selectPromptInjections(snap, ctx);
   } catch {
     return [];
+  }
+}
+
+export async function resolvePromptInjectionMeta(ctx = {}) {
+  try {
+    const snap = await getInjectSnapshot();
+    const detailed = selectPromptInjectionsDetailed(snap, ctx);
+    return {
+      stack: detailed.stack,
+      isVariantPick: detailed.isVariantPick,
+      global: snap.global,
+      user: snap.byKey,
+      model: snap.byModel,
+      keyModel: snap.byKeyModel,
+      variant: snap.byVariant,
+      rules: snap.rules,
+      templates: snap.templates,
+    };
+  } catch {
+    return { stack: [], isVariantPick: false };
   }
 }

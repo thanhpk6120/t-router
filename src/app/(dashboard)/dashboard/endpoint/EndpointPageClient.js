@@ -19,8 +19,7 @@ import { useNotificationStore } from "@/store/notificationStore";
 import EndpointRow from "./components/EndpointRow";
 import StatusAlert from "./components/StatusAlert";
 import SecurityWarning from "./components/SecurityWarning";
-import KeyAccessControls from "./components/KeyAccessControls";
-import FirstRequestSnippet from "./components/FirstRequestSnippet";
+import KeyAccessControls, { KeyAccessSummary } from "./components/KeyAccessControls";
 
 
 export default function APIPageClient({ machineId }) {
@@ -31,8 +30,10 @@ export default function APIPageClient({ machineId }) {
   const [newKeyName, setNewKeyName] = useState("");
   // 9Router Pro: optional settings applied to the key right at creation time,
   // so a reseller key is fully configured in one step (editable later in the
-  // key's Settings panel).
+  // key's Edit modal).
   const emptyKeyDraft = () => ({
+    prefix: "sk",
+    customKey: "",
     restricted: false,
     allow: [],
     quotaEnabled: false,
@@ -48,6 +49,14 @@ export default function APIPageClient({ machineId }) {
   const [createPickerAliases, setCreatePickerAliases] = useState({});
   const [createdKey, setCreatedKey] = useState(null);
   const [createdKeyName, setCreatedKeyName] = useState("");
+  // opt13 M-I2: which flow produced the once-modal key, for its title.
+  const [createdKeyKind, setCreatedKeyKind] = useState("created");
+  // opt12: unified Edit modal — one draft for every editable field of one
+  // key; nothing is saved until Save (Regenerate is the only exception,
+  // being its own confirmed action that closes the modal).
+  const [editTarget, setEditTarget] = useState(null);
+  const [editDraft, setEditDraft] = useState(null);
+  const [editSaving, setEditSaving] = useState(false);
   const [confirmState, setConfirmState] = useState(null);
   // R11 bulk key edit: checkbox selection + one modal for the selection.
   const [selectedKeyIds, setSelectedKeyIds] = useState([]);
@@ -62,9 +71,15 @@ export default function APIPageClient({ machineId }) {
     if (bulkDraft.clearExpiry) updates.expiresAt = null;
     else if (bulkDraft.expiresAt) updates.expiresAt = `${bulkDraft.expiresAt}T23:59:59.999Z`;
     if (bulkDraft.clearQuota) updates.quota = null;
-    else if (bulkDraft.quotaLimit) updates.quota = { enabled: true, limit: parseInt(bulkDraft.quotaLimit, 10), windowHours: Number(bulkDraft.quotaWindow) || 24 };
+    else if (bulkDraft.quotaLimit) {
+      if (!/^\d+$/.test(bulkDraft.quotaLimit.trim()) || parseInt(bulkDraft.quotaLimit, 10) <= 0) { notify.error("Token quota limit must be a positive whole number."); return; }
+      updates.quota = { enabled: true, limit: parseInt(bulkDraft.quotaLimit, 10), windowHours: Number(bulkDraft.quotaWindow) || 24 };
+    }
     if (bulkDraft.clearTpm) updates.limits = null;
-    else if (bulkDraft.tpm) updates.limits = { tpm: parseInt(bulkDraft.tpm, 10) };
+    else if (bulkDraft.tpm) {
+      if (!/^\d+$/.test(bulkDraft.tpm.trim()) || parseInt(bulkDraft.tpm, 10) <= 0) { notify.error("TPM limit must be a positive whole number."); return; }
+      updates.limits = { tpm: parseInt(bulkDraft.tpm, 10) };
+    }
     if (bulkDraft.allowText.trim()) updates.access = { restricted: true, allow: bulkDraft.allowText.split(",").map((s) => s.trim()).filter(Boolean) };
     if (bulkDraft.active === "pause") updates.isActive = false;
     else if (bulkDraft.active === "resume") updates.isActive = true;
@@ -662,6 +677,11 @@ export default function APIPageClient({ machineId }) {
   };
 
   const handleOpenTsModal = async () => {
+    // opt13 M-I6: same Require-API-key gate as Tunnel enable.
+    if (!requireApiKey) {
+      setTsStatus({ type: "error", message: "Security required: Enable \"Require API key\" before activating Tailscale." });
+      return;
+    }
     setTsStatus(null);
     setTsInstallLog([]);
     const data = await checkTailscaleInstalled();
@@ -693,34 +713,45 @@ export default function APIPageClient({ machineId }) {
 
   const handleCreateKey = async () => {
     if (!newKeyName.trim()) return;
+    // opt13 M-I5(a): a quota switched on with an empty/invalid limit used
+    // to silently skip the quota PUT, leaving an unlimited key. Block the
+    // create so the user fixes the limit instead.
+    if (newKeyDraft.quotaEnabled) {
+      const limit = parseInt(newKeyDraft.quotaLimit, 10);
+      if (!Number.isFinite(limit) || limit <= 0) { notify.error("Token quota limit must be filled with a positive number."); return; }
+    }
 
     try {
+      const customKeyValue = (newKeyDraft.customKey || "").trim();
       const res = await fetch("/api/keys", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: newKeyName }),
+        body: JSON.stringify({ name: newKeyName, prefix: (newKeyDraft.prefix || "").trim() || "sk", ...(customKeyValue ? { customKey: customKeyValue } : {}) }),
       });
       const data = await res.json();
 
       if (res.ok) {
         // Apply the optional settings picked in the create dialog.
-        const id = data.key?.id;
+        // opt13 M-I5(b): a failed setting PUT must not stay silent — the
+        // key is still created and shown, but failures are named.
+        const id = data.id;
         if (id) {
+          const failedSettings = [];
           if (newKeyDraft.restricted) {
-            await handleUpdateKeyAccess(id, { restricted: true, allow: newKeyDraft.allow });
+            if (!(await handleUpdateKeyAccess(id, { restricted: true, allow: newKeyDraft.allow }))) failedSettings.push("Restrict access");
           }
           if (newKeyDraft.quotaEnabled) {
             const limit = parseInt(newKeyDraft.quotaLimit, 10);
             if (limit > 0) {
               const costLimit = parseFloat(newKeyDraft.quotaCostLimit);
-              await handleUpdateKeyQuota(id, {
+              if (!(await handleUpdateKeyQuota(id, {
                 enabled: true, limit, windowHours: newKeyDraft.quotaWindow,
                 ...(Number.isFinite(costLimit) && costLimit > 0 ? { costLimit } : {}),
-              });
+              }))) failedSettings.push("Token quota");
             }
           }
           if (newKeyDraft.expiresAt) {
-            await handleUpdateKeyExpiry(id, `${newKeyDraft.expiresAt}T23:59:59.999Z`);
+            if (!(await handleUpdateKeyExpiry(id, `${newKeyDraft.expiresAt}T23:59:59.999Z`))) failedSettings.push("Expiry");
           }
           const limits = {};
           let hasLimits = false;
@@ -729,10 +760,16 @@ export default function APIPageClient({ machineId }) {
             limits[f] = Number.isFinite(v) && v > 0 ? v : null;
             if (limits[f]) hasLimits = true;
           }
-          if (hasLimits) await handleUpdateKeyLimits(id, limits);
+          if (hasLimits) {
+            if (!(await handleUpdateKeyLimits(id, limits))) failedSettings.push("Rate limits");
+          }
+          if (failedSettings.length) {
+            notify.error(`Key created, but these settings failed to apply: ${failedSettings.join(", ")}. Please set them from the key's Edit menu.`);
+          }
         }
         setCreatedKey(data.key);
         setCreatedKeyName(newKeyName);
+        setCreatedKeyKind("created");
         await fetchData();
         closeAddModal();
       } else {
@@ -742,6 +779,111 @@ export default function APIPageClient({ machineId }) {
       console.log("Error creating key:", error);
       notify.error(error?.message || "Failed to create API key");
     }
+  };
+
+  // opt12: unified Edit modal — open with a draft copied from the key.
+  const openEditModal = (key) => {
+    setEditTarget(key);
+    setEditDraft({
+      name: key.name,
+      customKey: "",
+      access: key.access || { restricted: false, allow: [] },
+      quota: key.quota || null,
+      limits: key.limits || null,
+      expiresAt: key.expiresAt || null,
+    });
+  };
+
+  // Closing discards the draft untouched: Cancel/X never save anything.
+  // Also hides the key again on the card if it was revealed in the modal.
+  const closeEditModal = () => {
+    if (editTarget) {
+      const id = editTarget.id;
+      setVisibleKeys((prev) => {
+        const next = new Set(prev);
+        next.delete(id);
+        return next;
+      });
+    }
+    setEditTarget(null);
+    setEditDraft(null);
+  };
+
+  // opt12: ONE PUT carrying every changed field at once. On 400 the modal
+  // stays open with the draft intact so the user fixes it, nothing is lost.
+  const handleEditSave = async () => {
+    if (!editTarget || !editDraft) return;
+    const trimmedName = editDraft.name.trim();
+    if (!trimmedName) { notify.error("Nama key tidak boleh kosong"); return; }
+    const normAccess = (a) => a || { restricted: false, allow: [] };
+    const body = {};
+    if (trimmedName !== editTarget.name) body.name = trimmedName;
+    if (JSON.stringify(normAccess(editDraft.access)) !== JSON.stringify(normAccess(editTarget.access))) body.access = editDraft.access;
+    if (JSON.stringify(editDraft.quota ?? null) !== JSON.stringify(editTarget.quota ?? null)) body.quota = editDraft.quota;
+    if (JSON.stringify(editDraft.limits ?? null) !== JSON.stringify(editTarget.limits ?? null)) body.limits = editDraft.limits;
+    if ((editDraft.expiresAt || null) !== (editTarget.expiresAt || null)) body.expiresAt = editDraft.expiresAt;
+    const custom = editDraft.customKey.trim();
+    if (custom !== "") body.customKey = custom;
+    if (!Object.keys(body).length) { closeEditModal(); return; }
+    setEditSaving(true);
+    try {
+      const res = await fetch(`/api/keys/${editTarget.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        if (custom !== "") {
+          setCreatedKey(data.key.key);
+          setCreatedKeyName(data.key?.name || editTarget.name);
+          setCreatedKeyKind("updated");
+        }
+        closeEditModal();
+        await fetchData();
+      } else {
+        notify.error(data.error || "Failed to update API key");
+      }
+    } catch (error) {
+      console.log("Error updating key:", error);
+      notify.error(error?.message || "Failed to update API key");
+    }
+    setEditSaving(false);
+  };
+
+  // opt10: regenerate the random value (old value dies immediately; the new
+  // one is shown once, like at creation). Settings/quota/limits survive
+  // because they are keyed by the key's internal id, not its value.
+  // opt12: called from inside the Edit modal, so confirming also closes
+  // that modal — never leave it open showing a stale key value.
+  const handleRegenerateKey = (key) => {
+    setConfirmState({
+      title: "Regenerate API Key",
+      message: `Regenerate API key "${key.name}"?\n\nKey lama akan langsung tidak berlaku. Key baru akan ditampilkan sekali untuk dicopy.\n\nPerubahan yang belum disimpan di form ini akan hilang.`,
+      onConfirm: async () => {
+        setConfirmState(null);
+        closeEditModal();
+        try {
+          const res = await fetch(`/api/keys/${key.id}`, {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ regenerate: true }),
+          });
+          const data = await res.json();
+          if (res.ok) {
+            setCreatedKey(data.key.key);
+            setCreatedKeyName(key.name);
+            setCreatedKeyKind("regenerated");
+            await fetchData();
+          } else {
+            notify.error(data.error || "Failed to regenerate API key");
+          }
+        } catch (error) {
+          console.log("Error regenerating key:", error);
+          notify.error(error?.message || "Failed to regenerate API key");
+        }
+      }
+    });
   };
 
   const handleDeleteKey = async (id) => {
@@ -793,11 +935,14 @@ export default function APIPageClient({ machineId }) {
       const data = await res.json().catch(() => ({}));
       if (res.ok && data.key) {
         setKeys(prev => prev.map(k => k.id === id ? { ...k, access: data.key.access } : k));
+        return true;
       } else {
         console.log("Error updating key access:", data.error || res.status);
+        return false;
       }
     } catch (error) {
       console.log("Error updating key access:", error);
+      return false;
     }
   };
 
@@ -812,11 +957,14 @@ export default function APIPageClient({ machineId }) {
       const data = await res.json().catch(() => ({}));
       if (res.ok && data.key) {
         setKeys(prev => prev.map(k => k.id === id ? { ...k, limits: data.key.limits, limitsUsage: data.key.limitsUsage } : k));
+        return true;
       } else {
         console.log("Error updating key limits:", data.error || res.status);
+        return false;
       }
     } catch (error) {
       console.log("Error updating key limits:", error);
+      return false;
     }
   };
 
@@ -831,11 +979,16 @@ export default function APIPageClient({ machineId }) {
       const data = await res.json().catch(() => ({}));
       if (res.ok && data.key) {
         setKeys(prev => prev.map(k => k.id === id ? { ...k, expiresAt: data.key.expiresAt } : k));
+        return true;
       } else {
-        notify.error(data.error || "Failed to update key expiry");
+        // opt13 M-I5: no individual notify here — handleCreateKey reports
+        // all failed settings together, so the user sees one summary.
+        console.log("Error updating key expiry:", data.error || res.status);
+        return false;
       }
     } catch (error) {
       console.log("Error updating key expiry:", error);
+      return false;
     }
   };
 
@@ -850,11 +1003,14 @@ export default function APIPageClient({ machineId }) {
       const data = await res.json().catch(() => ({}));
       if (res.ok && data.key) {
         setKeys(prev => prev.map(k => k.id === id ? { ...k, quota: data.key.quota, quotaUsed: data.key.quotaUsed } : k));
+        return true;
       } else {
         console.log("Error updating key quota:", data.error || res.status);
+        return false;
       }
     } catch (error) {
       console.log("Error updating key quota:", error);
+      return false;
     }
   };
 
@@ -1256,21 +1412,11 @@ export default function APIPageClient({ machineId }) {
                   {key.isActive === false && (
                     <p className="text-xs text-orange-500 mt-1">Paused</p>
                   )}
-                  <KeyAccessControls
-                    apiKey={key}
-                    onChange={(access) => handleUpdateKeyAccess(key.id, access)}
-                    onExpiryChange={(expiresAt) => handleUpdateKeyExpiry(key.id, expiresAt)}
-                    onQuotaChange={(quota) => handleUpdateKeyQuota(key.id, quota)}
-                    onLimitsChange={(limits) => handleUpdateKeyLimits(key.id, limits)}
-                    onRequestRestrict={() => setConfirmState({
-                      title: "Restrict API Key",
-                      message: `Restrict API key "${key.name}"?\n\nIt will only be able to call the combos and models you add. Until you add one, it can call nothing.`,
-                      onConfirm: async () => {
-                        setConfirmState(null);
-                        handleUpdateKeyAccess(key.id, { restricted: true, allow: key.access?.allow || [] });
-                      }
-                    })}
-                  />
+                  {/* opt12: informative chips only — every edit lives in the
+                      unified Edit modal, no separate panel on the card. */}
+                  <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                    <KeyAccessSummary apiKey={key} />
+                  </div>
                 </div>
                 <div className="flex items-center gap-2 shrink-0 pt-0.5">
                   <Toggle
@@ -1293,6 +1439,13 @@ export default function APIPageClient({ machineId }) {
                     title={key.isActive ? "Pause key" : "Resume key"}
                   />
                   <button
+                    onClick={() => openEditModal(key)}
+                    className="p-2 hover:bg-black/5 dark:hover:bg-white/5 rounded text-text-muted hover:text-primary transition-all"
+                    title="Edit key"
+                  >
+                    <span className="material-symbols-outlined text-[18px]">edit</span>
+                  </button>
+                  <button
                     onClick={() => handleDeleteKey(key.id)}
                     className="p-2 hover:bg-red-500/10 rounded text-red-500 transition-all"
                   >
@@ -1301,11 +1454,6 @@ export default function APIPageClient({ machineId }) {
                 </div>
               </div>
             ))}
-          </div>
-        )}
-        {keys.length > 0 && (
-          <div className="mt-4">
-            <FirstRequestSnippet baseUrl={currentEndpoint} keyName={keys[0]?.name} />
           </div>
         )}
       </Card>
@@ -1361,6 +1509,24 @@ export default function APIPageClient({ machineId }) {
             onChange={(e) => setNewKeyName(e.target.value)}
             placeholder="Production Key"
           />
+          <div>
+            <Input
+              label="Key Prefix"
+              value={newKeyDraft.prefix}
+              onChange={(e) => setNewKeyDraft((d) => ({ ...d, prefix: e.target.value }))}
+              placeholder="sk"
+            />
+            <span className="mt-0.5 block text-[11px] text-text-muted">Ganti dengan inisial/brand kamu, huruf angka - _ saja, default sk.</span>
+          </div>
+          <div>
+            <Input
+              label="Custom Key"
+              value={newKeyDraft.customKey}
+              onChange={(e) => setNewKeyDraft((d) => ({ ...d, customKey: e.target.value }))}
+              placeholder="vio-key-saya-keren"
+            />
+            <span className="mt-0.5 block text-[11px] text-text-muted">Opsional. Jika diisi, nilai ini dipakai apa adanya (prefix diabaikan). Tanpa spasi, hanya huruf, angka, - dan _. Minimal 12 karakter.</span>
+          </div>
 
           {/* 9Router Pro: optional settings, applied at creation */}
           <div className="border-t border-border-subtle pt-3">
@@ -1535,11 +1701,86 @@ export default function APIPageClient({ machineId }) {
         )}
       </Modal>
 
+      {/* opt12: unified Edit modal — name, key value (regenerate / custom),
+          restrict, quota, limits, expiry in one place, buffered in a draft.
+          Nothing is saved until Save, except Regenerate, which is its own
+          confirmed action and closes this modal. */}
+      <Modal
+        isOpen={!!editTarget}
+        title={editTarget ? `Edit key "${editDraft?.name?.trim() || editTarget.name}"` : "Edit key"}
+        size="lg"
+        onClose={closeEditModal}
+      >
+        {editTarget && editDraft && (
+          <div className="flex flex-col gap-4">
+            <Input
+              label="Name"
+              value={editDraft.name}
+              onChange={(e) => setEditDraft((d) => ({ ...d, name: e.target.value }))}
+            />
+            {!editDraft.name.trim() && (
+              <span className="-mt-2 block text-[11px] text-red-500">Nama key tidak boleh kosong</span>
+            )}
+            <div>
+              <span className="text-sm text-text-main">Key value</span>
+              <div className="mt-2 flex items-center gap-2 min-w-0 flex-wrap">
+                <code className="text-xs text-text-muted font-mono break-all min-w-0">
+                  {visibleKeys.has(editTarget.id) ? editTarget.key : maskKey(editTarget.key)}
+                </code>
+                <div className="flex items-center gap-1 shrink-0">
+                  <button
+                    onClick={() => toggleKeyVisibility(editTarget.id)}
+                    className="p-2 hover:bg-black/5 dark:hover:bg-white/5 rounded text-text-muted hover:text-primary transition-all"
+                    title={visibleKeys.has(editTarget.id) ? "Hide key" : "Show key"}
+                  >
+                    <span className="material-symbols-outlined text-[14px]">
+                      {visibleKeys.has(editTarget.id) ? "visibility_off" : "visibility"}
+                    </span>
+                  </button>
+                  <button
+                    onClick={() => copy(editTarget.key, editTarget.id)}
+                    className="p-2 hover:bg-black/5 dark:hover:bg-white/5 rounded text-text-muted hover:text-primary transition-all"
+                  >
+                    <span className="material-symbols-outlined text-[14px]">
+                      {copied === editTarget.id ? "check" : "content_copy"}
+                    </span>
+                  </button>
+                  <Button size="sm" variant="outline" icon="refresh" onClick={() => handleRegenerateKey(editTarget)}>
+                    Regenerate
+                  </Button>
+                </div>
+              </div>
+              <span className="mt-1 block text-[11px] text-text-muted">Regenerate replaces the value immediately (old value dies at once) and shows the new value once for copying.</span>
+            </div>
+            <div>
+              <Input
+                label="Set Custom Key (optional)"
+                value={editDraft.customKey}
+                onChange={(e) => setEditDraft((d) => ({ ...d, customKey: e.target.value }))}
+                placeholder="Leave empty to keep the current value"
+              />
+              <span className="mt-0.5 block text-[11px] text-text-muted">Tanpa spasi, hanya huruf, angka, - dan _. Minimal 12 karakter. Empty = no change; a filled value replaces the current one on Save and the old value stops working immediately.</span>
+            </div>
+            <KeyAccessControls
+              apiKey={{ ...editTarget, name: editDraft.name, access: editDraft.access, quota: editDraft.quota, limits: editDraft.limits, expiresAt: editDraft.expiresAt }}
+              draft
+              onDraftChange={(patch) => setEditDraft((d) => ({ ...d, ...patch }))}
+            />
+            <div className="flex gap-2">
+              <Button onClick={handleEditSave} fullWidth disabled={editSaving || !editDraft.name.trim()}>
+                {editSaving ? "Saving..." : "Save"}
+              </Button>
+              <Button onClick={closeEditModal} variant="ghost" fullWidth>Cancel</Button>
+            </div>
+          </div>
+        )}
+      </Modal>
+
       {/* Created Key Modal */}
       <Modal
         isOpen={!!createdKey}
-        title="API Key Created"
-        onClose={() => { setCreatedKey(null); setCreatedKeyName(""); }}
+        title={createdKeyKind === "regenerated" ? "API Key Regenerated" : createdKeyKind === "updated" ? "API Key Updated" : "API Key Created"}
+        onClose={() => { setCreatedKey(null); setCreatedKeyName(""); setCreatedKeyKind("created"); }}
       >
         <div className="flex flex-col gap-4">
           <div className="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-lg p-4">
@@ -1564,8 +1805,7 @@ export default function APIPageClient({ machineId }) {
               {copied === "created_key" ? "Copied!" : "Copy"}
             </Button>
           </div>
-          <FirstRequestSnippet baseUrl={currentEndpoint} keyName={createdKeyName} />
-          <Button onClick={() => { setCreatedKey(null); setCreatedKeyName(""); }} fullWidth>
+          <Button onClick={() => { setCreatedKey(null); setCreatedKeyName(""); setCreatedKeyKind("created"); }} fullWidth>
             Done
           </Button>
         </div>

@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, useEffect, useRef, useMemo } from "react";
-import Link from "next/link";
 import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors } from "@dnd-kit/core";
 import { arrayMove, SortableContext, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
@@ -55,6 +54,7 @@ const STRATEGY_OPTIONS = [
   { value: "round-robin", label: "Round Robin — rotate" },
   { value: "smart", label: "Smart Router — System One" },
   { value: "fusion", label: "Fusion — panel + judge" },
+  { value: "capacity", label: "Capacity — most healthy accounts first" },
 ];
 
 function getPolicyBadgeLabel(strategy = {}) {
@@ -77,6 +77,7 @@ export default function CombosPage() {
   const [activeProviders, setActiveProviders] = useState([]);
   const [providerNodes, setProviderNodes] = useState([]);
   const [comboStrategies, setComboStrategies] = useState({});
+  const [comboMemberPins, setComboMemberPins] = useState({});
   const [capacityAdapter, setCapacityAdapter] = useState(EMPTY_CAPACITY_ADAPTER);
   const { getCaps } = useModelCaps();
   const [confirmState, setConfirmState] = useState(null);
@@ -87,6 +88,17 @@ export default function CombosPage() {
   const adapterSaveRef = useRef({ busy: false, pending: null });
   const [searchQuery, setSearchQuery] = useState("");
   const { copied, copy } = useCopyToClipboard();
+
+  // Client-side combo export (G22) from already-fetched state — no new API route.
+  const downloadCombosJson = () => {
+    const blob = new Blob([JSON.stringify(combos, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "t-router-combos.json";
+    a.click();
+    URL.revokeObjectURL(url);
+  };
   const notify = useNotificationStore();
   useEffect(() => {
     fetchData();
@@ -161,6 +173,7 @@ export default function CombosPage() {
         setActiveProviders((providersData.connections || []).filter((c) => c.isActive !== false));
       }
       setComboStrategies(settingsData.comboStrategies || {});
+      setComboMemberPins(settingsData.comboMemberPins || {});
       const rawAdapter = settingsData.capacityAdapter || {};
       const normalized = {};
       for (const cap of CAPACITY_ADAPTER_CAPS) {
@@ -218,7 +231,7 @@ export default function CombosPage() {
         setShowCreateModal(false);
       } else {
         const err = await res.json();
-        alert(err.error || "Failed to create combo");
+        notify.error(err.error || "Failed to create combo");
       }
     } catch (error) {
       console.log("Error creating combo:", error);
@@ -233,11 +246,40 @@ export default function CombosPage() {
         body: JSON.stringify(data),
       });
       if (res.ok) {
+        // Renaming a combo migrates its pins and its strategy to the new
+        // name (both are keyed by combo name); otherwise they would
+        // orphan. Pins of members no longer in the combo are pruned on
+        // the same save.
+        const oldName = editingCombo?.name;
+        let pinsAfter = comboMemberPins;
+        if (oldName && data.name && data.name !== oldName && pinsAfter[oldName]) {
+          pinsAfter = { ...pinsAfter };
+          pinsAfter[data.name] = pinsAfter[oldName];
+          delete pinsAfter[oldName];
+        }
+        if (data.name && pinsAfter[data.name]) {
+          const kept = {};
+          for (const m of data.models || []) if (pinsAfter[data.name][m]) kept[m] = pinsAfter[data.name][m];
+          if (Object.keys(kept).length !== Object.keys(pinsAfter[data.name]).length) {
+            pinsAfter = { ...pinsAfter, [data.name]: kept };
+          }
+        }
+        if (pinsAfter !== comboMemberPins) await persistComboMemberPins(pinsAfter);
+        // Strategies are keyed by combo name too: rename the entry with
+        // the combo, or the renamed combo silently falls back to default
+        // and the old entry orphans in settings forever (opt20 M1).
+        let strategiesAfter = comboStrategies;
+        if (oldName && data.name && data.name !== oldName && strategiesAfter[oldName]) {
+          strategiesAfter = { ...strategiesAfter };
+          strategiesAfter[data.name] = strategiesAfter[oldName];
+          delete strategiesAfter[oldName];
+        }
+        if (strategiesAfter !== comboStrategies) await persistComboStrategies(strategiesAfter);
         await fetchData();
         setEditingCombo(null);
       } else {
         const err = await res.json();
-        alert(err.error || "Failed to update combo");
+        notify.error(err.error || "Failed to update combo");
       }
     } catch (error) {
       console.log("Error updating combo:", error);
@@ -250,6 +292,16 @@ export default function CombosPage() {
     return updated;
   };
 
+  // A strategy entry is worth keeping iff it carries a meaningful value:
+  // any non-empty key counts, except fallbackStrategy === "fallback"
+  // (the default). Keeps judge/tuning/policy entries when the strategy
+  // is switched back to fallback (opt20 M2).
+  const hasMeaningfulStrategy = (entry) => Object.entries(entry || {}).some(([key, value]) => {
+    if (value == null || value === "") return false;
+    if (key === "fallbackStrategy" && value === "fallback") return false;
+    return true;
+  });
+
   const persistComboStrategies = async (updated) => {
     await fetch("/api/settings", {
       method: "PATCH",
@@ -259,11 +311,42 @@ export default function CombosPage() {
     setComboStrategies(updated);
   };
 
+  // Per-member account pins (P3-28): { [comboName]: { [member]: { id, label } } }
+  const persistComboMemberPins = async (updated) => {
+    await fetch("/api/settings", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ comboMemberPins: updated }),
+    });
+    setComboMemberPins(updated);
+  };
+  const prunePinsForNames = (names, base = comboMemberPins) => {
+    const updated = { ...base };
+    for (const name of names) delete updated[name];
+    return updated;
+  };
+
   const handleDelete = async (id) => {
     const combo = combos.find((c) => c.id === id);
+    // Delete-impact preview (opt20 m6): count live references to the
+    // combo name (restricted keys, model aliases) so a referenced combo
+    // is never deleted blind. Best-effort: plain prompt on any failure.
+    let message = combo ? `Delete combo "${combo.name}"?` : "Delete this combo?";
+    if (combo) {
+      try {
+        const refRes = await fetch(`/api/combos/${id}/references`);
+        if (refRes.ok) {
+          const { references } = await refRes.json();
+          const parts = [];
+          if (references?.keys?.length) parts.push(`${references.keys.length} key${references.keys.length === 1 ? "" : "s"} (${references.keys.join(", ")})`);
+          if (references?.aliases?.length) parts.push(`${references.aliases.length} alias${references.aliases.length === 1 ? "" : "es"} (${references.aliases.join(", ")})`);
+          if (parts.length) message += ` Referenced by: ${parts.join("; ")}.`;
+        }
+      } catch { /* plain prompt on preview failure */ }
+    }
     setConfirmState({
       title: "Delete Combo",
-      message: combo ? `Delete combo "${combo.name}"?` : "Delete this combo?",
+      message,
       onConfirm: async () => {
         setConfirmState((prev) => prev ? { ...prev, loading: true } : null);
         try {
@@ -271,11 +354,16 @@ export default function CombosPage() {
           if (res.ok) {
             if (combo?.name) {
               await persistComboStrategies(pruneStrategiesForNames([combo.name]));
+              await persistComboMemberPins(prunePinsForNames([combo.name]));
             }
             setCombos((prev) => prev.filter((c) => c.id !== id));
             setSelectedIds((prev) => prev.filter((x) => x !== id));
+            setConfirmState(null);
+          } else {
+            const err = await res.json().catch(() => ({}));
+            notify.error(err.error || "Failed to delete combo");
+            setConfirmState((prev) => prev ? { ...prev, loading: false } : null);
           }
-          setConfirmState(null);
         } catch (error) {
           console.log("Error deleting combo:", error);
           setConfirmState((prev) => prev ? { ...prev, loading: false } : null);
@@ -301,15 +389,20 @@ export default function CombosPage() {
           const results = await Promise.all(
             ids.map((id) => fetch(`/api/combos/${id}`, { method: "DELETE" }))
           );
-          const failed = results.filter((r) => !r.ok).length;
-          await persistComboStrategies(pruneStrategiesForNames(names));
-          setCombos((prev) => prev.filter((c) => !ids.includes(c.id)));
+          // Only the combos that actually deleted lose their config and
+          // leave the list; failures stay (refetch = server truth) and
+          // are named, instead of vanishing with their config (opt20 M3).
+          const succeededNames = names.filter((_, i) => results[i]?.ok);
+          const failedNames = names.filter((_, i) => !results[i]?.ok);
+          await persistComboStrategies(pruneStrategiesForNames(succeededNames));
+          await persistComboMemberPins(prunePinsForNames(succeededNames));
+          await fetchData();
           clearSelection();
           setConfirmState(null);
-          if (failed > 0) alert(`Deleted with ${failed} failure${failed === 1 ? "" : "s"}.`);
+          if (failedNames.length > 0) notify.error(`Failed to delete: ${failedNames.join(", ")}`);
         } catch (error) {
           console.log("Error bulk deleting combos:", error);
-          alert("Failed to delete selected combos");
+          notify.error("Failed to delete selected combos");
           setConfirmState((prev) => prev ? { ...prev, loading: false } : null);
         } finally {
           setBulkBusy(false);
@@ -318,14 +411,15 @@ export default function CombosPage() {
     });
   };
 
-  // Merge a per-combo strategy patch into settings.comboStrategies. Passing an empty
-  // patch (strategy back to default "fallback") drops the entry entirely.
+  // Merge a per-combo strategy patch into settings.comboStrategies. An
+  // entry is dropped only when it carries no meaningful value (default
+  // fallback with no extras); judge/tuning/policy extras keep it.
   const handleSetComboStrategy = async (comboName, patch) => {
     try {
       const updated = { ...comboStrategies };
       const next = { ...(updated[comboName] || {}), ...patch };
       // Prune to keep settings clean: default fallback with no extras = no entry.
-      if (!next.fallbackStrategy || next.fallbackStrategy === "fallback") {
+      if (!hasMeaningfulStrategy(next)) {
         delete updated[comboName];
       } else {
         updated[comboName] = next;
@@ -334,6 +428,7 @@ export default function CombosPage() {
       await persistComboStrategies(updated);
     } catch (error) {
       console.log("Error updating combo strategy:", error);
+      notify.error("Failed to update combo strategy");
     }
   };
 
@@ -343,19 +438,22 @@ export default function CombosPage() {
     try {
       const updated = { ...comboStrategies };
       for (const combo of selectedCombos) {
-        if (!strategy || strategy === "fallback") {
+        const next = {
+          ...(updated[combo.name] || {}),
+          fallbackStrategy: strategy,
+        };
+        // Same rule as single set: switching to fallback keeps extras
+        // (judge/tuning/policy); only a meaningless entry is dropped.
+        if (!hasMeaningfulStrategy(next)) {
           delete updated[combo.name];
         } else {
-          updated[combo.name] = {
-            ...(updated[combo.name] || {}),
-            fallbackStrategy: strategy,
-          };
+          updated[combo.name] = next;
         }
       }
       await persistComboStrategies(updated);
     } catch (error) {
       console.log("Error bulk updating combo strategy:", error);
-      alert("Failed to update strategy for selected combos");
+      notify.error("Failed to update strategy for selected combos");
     } finally {
       setBulkBusy(false);
     }
@@ -427,6 +525,9 @@ export default function CombosPage() {
               </button>
             )}
           </div>
+          <Button variant="outline" onClick={downloadCombosJson} disabled={combos.length === 0} className="w-full sm:w-auto whitespace-nowrap">
+            Export JSON
+          </Button>
           <Button icon="add" onClick={() => setShowCreateModal(true)} className="w-full sm:w-auto whitespace-nowrap">
             Create Combo
           </Button>
@@ -594,6 +695,15 @@ export default function CombosPage() {
           onSave={(data) => handleUpdate(editingCombo.id, data)}
           activeProviders={activeProviders}
           prefixById={prefixById}
+          pins={comboMemberPins[editingCombo.name] || {}}
+          onPinChange={(member, pin) => {
+            const next = { ...comboMemberPins };
+            const comboPins = { ...(next[editingCombo.name] || {}) };
+            if (pin) comboPins[member] = pin;
+            else delete comboPins[member];
+            next[editingCombo.name] = comboPins;
+            persistComboMemberPins(next);
+          }}
         />
       )}
 
@@ -1024,7 +1134,7 @@ function CapacityAdapterCap({ cap, entry, onChange, activeProviders, getCaps }) 
                         type="button"
                         onClick={() => handleMove(index, -1)}
                         disabled={!enabled || index === 0}
-                        className={`p-1 rounded transition-colors ${
+                        className={`p-2 rounded transition-colors ${
                           !enabled || index === 0
                             ? "text-text-muted/20 cursor-not-allowed"
                             : "text-text-muted hover:text-primary hover:bg-black/5 dark:hover:bg-white/5"
@@ -1037,7 +1147,7 @@ function CapacityAdapterCap({ cap, entry, onChange, activeProviders, getCaps }) 
                         type="button"
                         onClick={() => handleMove(index, 1)}
                         disabled={!enabled || index === models.length - 1}
-                        className={`p-1 rounded transition-colors ${
+                        className={`p-2 rounded transition-colors ${
                           !enabled || index === models.length - 1
                             ? "text-text-muted/20 cursor-not-allowed"
                             : "text-text-muted hover:text-primary hover:bg-black/5 dark:hover:bg-white/5"
@@ -1053,7 +1163,7 @@ function CapacityAdapterCap({ cap, entry, onChange, activeProviders, getCaps }) 
                       type="button"
                       onClick={() => handleRemove(index)}
                       disabled={!enabled}
-                      className={`p-1 rounded transition-colors ${
+                      className={`p-2 rounded transition-colors ${
                         !enabled
                           ? "text-text-muted/20 cursor-not-allowed"
                           : "text-text-muted hover:text-red-500 hover:bg-red-500/10"
@@ -1087,7 +1197,7 @@ function CapacityAdapterCap({ cap, entry, onChange, activeProviders, getCaps }) 
   );
 }
 
-function ModelItem({ id, index, model, prefixById = {}, isFirst, isLast, onEdit, onMoveUp, onMoveDown, onRemove }) {
+function ModelItem({ id, index, model, prefixById = {}, isFirst, isLast, onEdit, onMoveUp, onMoveDown, onRemove, pinLabel = null, onPin = null }) {
   const { attributes, listeners, setNodeRef, transform, isDragging } = useSortable({ id });
   const style = {
     transform: CSS.Transform.toString(transform),
@@ -1173,6 +1283,19 @@ function ModelItem({ id, index, model, prefixById = {}, isFirst, isLast, onEdit,
         </button>
       </div>
 
+      {/* Account pin (P3-28): only for provider/model members; variants
+          carry bare names and resolve via their backing model, so they
+          cannot be pinned here. */}
+      {onPin && model.includes("/") && (
+        <button
+          onClick={onPin}
+          className={`p-0.5 rounded shrink-0 ${pinLabel ? "text-primary" : "text-text-muted hover:text-primary hover:bg-black/5 dark:hover:bg-white/5"}`}
+          title={pinLabel ? `Pinned to ${pinLabel} — click to change` : "Pin to a specific account (falls back to normal selection when unavailable)"}
+        >
+          <span className={`material-symbols-outlined text-[12px] ${pinLabel ? "fill-1" : ""}`}>push_pin</span>
+        </button>
+      )}
+
       {/* Remove */}
       <button
         onClick={onRemove}
@@ -1185,11 +1308,92 @@ function ModelItem({ id, index, model, prefixById = {}, isFirst, isLast, onEdit,
   );
 }
 
-function ComboFormModal({ isOpen, combo, onClose, onSave, activeProviders, prefixById = {}, kindFilter = null }) {
+// Account pin picker (P3-28): picks one connection for a combo member.
+// The pin is advisory — an unavailable pinned connection falls back to
+// normal selection at request time (preferredConnectionId semantics).
+function PinPickerModal({ member, currentPin, onPick, onClose }) {
+  const [query, setQuery] = useState("");
+  const [results, setResults] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const providerId = resolveProviderId(member.split("/")[0]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      setLoading(true);
+      try {
+        const params = new URLSearchParams({ provider: providerId, pageSize: "20" });
+        if (query.trim()) params.set("search", query.trim());
+        const res = await fetch(`/api/providers?${params}`);
+        const data = await res.json().catch(() => ({}));
+        if (!cancelled) setResults(data.connections || []);
+      } catch {
+        if (!cancelled) setResults([]);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    };
+    load();
+    return () => { cancelled = true; };
+  }, [providerId, query]);
+
+  return (
+    <Modal isOpen onClose={onClose} title={`Pin account for ${member}`}>
+      <div className="flex flex-col gap-3">
+        <Input
+          placeholder="Search by name or email…"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+        />
+        {loading ? (
+          <p className="text-xs text-text-muted text-center py-4">Loading…</p>
+        ) : results.length === 0 ? (
+          <p className="text-xs text-text-muted text-center py-4">No connections found for this provider.</p>
+        ) : (
+          <div className="flex max-h-[40vh] flex-col gap-1 overflow-y-auto">
+            {results.map((c) => {
+              const label = c.name || c.email || `…${String(c.id).slice(-6)}`;
+              const isCurrent = currentPin?.id === c.id;
+              return (
+                <button
+                  key={c.id}
+                  onClick={() => onPick({ id: c.id, label })}
+                  className={`flex items-center justify-between gap-2 rounded-lg border px-3 py-2 text-left text-xs transition-colors ${isCurrent ? "border-primary/50 bg-primary/5" : "border-black/10 hover:border-primary/50 dark:border-white/10"}`}
+                >
+                  <span className="min-w-0 truncate">{label}</span>
+                  <span className="flex shrink-0 items-center gap-1.5">
+                    {c.isActive === false && <Badge variant="warning" size="sm">paused</Badge>}
+                    {isCurrent && <span className="text-primary font-medium">current</span>}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        )}
+        <div className="flex gap-2">
+          {currentPin && (
+            <Button variant="ghost" size="sm" fullWidth onClick={() => onPick(null)}>
+              Clear pin
+            </Button>
+          )}
+          <Button variant="ghost" size="sm" fullWidth onClick={onClose}>
+            Cancel
+          </Button>
+        </div>
+        <p className="text-[10px] text-text-muted">
+          If the pinned account is unavailable, the router falls back to normal selection for that member.
+        </p>
+      </div>
+    </Modal>
+  );
+}
+
+function ComboFormModal({ isOpen, combo, onClose, onSave, activeProviders, prefixById = {}, kindFilter = null, pins = null, onPinChange = null }) {
   // Initialize state with combo values - key prop on parent handles reset on remount
   const [name, setName] = useState(combo?.name || "");
   const [models, setModels] = useState(combo?.models || []);
   const [showModelSelect, setShowModelSelect] = useState(false);
+  const [pinMember, setPinMember] = useState(null);
   const [saving, setSaving] = useState(false);
   const [nameError, setNameError] = useState("");
   const [modelAliases, setModelAliases] = useState({});
@@ -1337,6 +1541,8 @@ function ComboFormModal({ isOpen, combo, onClose, onSave, activeProviders, prefi
                       onMoveUp={() => handleMoveUp(index)}
                       onMoveDown={() => handleMoveDown(index)}
                       onRemove={() => handleRemoveModel(index)}
+                      pinLabel={pins?.[model]?.label || (pins?.[model]?.id ? `…${String(pins[model].id).slice(-6)}` : null)}
+                      onPin={onPinChange ? () => setPinMember(model) : null}
                     />
                   ))}
                 </div>
@@ -1384,6 +1590,19 @@ function ComboFormModal({ isOpen, combo, onClose, onSave, activeProviders, prefi
           kindFilter={kindFilter}
           addedModelValues={models}
           closeOnSelect={false}
+        />
+      )}
+
+      {/* Account Pin Picker */}
+      {pinMember && onPinChange && (
+        <PinPickerModal
+          member={pinMember}
+          currentPin={pins?.[pinMember] || null}
+          onPick={(pin) => {
+            onPinChange(pinMember, pin);
+            setPinMember(null);
+          }}
+          onClose={() => setPinMember(null)}
         />
       )}
     </>

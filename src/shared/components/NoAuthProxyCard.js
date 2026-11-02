@@ -30,6 +30,7 @@ export default function NoAuthProxyCard({ providerId, isNoAuth = false }) {
   const [pickerOpen, setPickerOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [savedFlash, setSavedFlash] = useState(false);
+  const [saveError, setSaveError] = useState("");
   const [rotating, setRotating] = useState(false);
   const [rotateResult, setRotateResult] = useState(null);
   const [providerActive, setProviderActive] = useState(true);

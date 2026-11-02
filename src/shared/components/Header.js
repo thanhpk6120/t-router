@@ -6,7 +6,6 @@ import Link from "next/link";
 import PropTypes from "prop-types";
 import ProviderIcon from "@/shared/components/ProviderIcon";
 import HeaderMenu from "@/shared/components/HeaderMenu";
-import TrustInboxBell from "@/shared/components/TrustInboxBell";
 import { Modal, Input, Button } from "@/shared/components";
 import { getNameFontStyle, DEFAULT_NAME } from "@/shared/constants/nameStyles";
 import { cn } from "@/shared/utils/cn";
@@ -193,9 +192,9 @@ const getPageInfo = (pathname) => {
     };
   if (pathname === "/dashboard")
     return {
-      title: "Dashboard",
-      description: "Gateway status, quick actions, and recent activity",
-      icon: "dashboard",
+      title: "Endpoint",
+      description: "API endpoint configuration",
+      icon: "api",
       breadcrumbs: [],
     };
   return { title: "", description: "", breadcrumbs: [] };
@@ -396,7 +395,6 @@ export default function Header({ onMenuClick, showMenuButton = true }) {
         >
           {profileName}
         </button>
-        <TrustInboxBell />
         <HeaderMenu onLogout={handleLogout} />
       </div>
       <Modal isOpen={nameOpen} onClose={() => setNameOpen(false)} title="Customize your name" size="xs" bodyClassName="p-4">
