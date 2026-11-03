@@ -5,6 +5,12 @@ Upstream changelogs (`CHANGELOG.md` and `CHANGELOG-PRO.md`) are kept intact for 
 
 ---
 
+## v0.5.112-pro.16-t.11 (2026-11-04)
+
+- **Model list = provider catalog (9router-pro style)**: the separate "Loaded models (x/y)" allowlist panel is gone. "Available Models" is one list; **X disables** a model (it moves to "Disabled models" and can be restored), and only a disabled custom model can be deleted. "Load models from provider" no longer writes nabledModels; a stale allowlist is cleared on load.
+- **Live catalog for no-auth providers**: /api/providers/[id]/models now answers for provider ids without a connection. OpenCode Zen publishes https://opencode.ai/zen/v1/models and accepts the anonymous public credential (as opencode2api does) — verified 79 real models instead of the built-in list, with the static catalog only as fallback.
+- **Bulk controls + search**: Enable all / Disable all and a model search box, styled with the shared Button (sm/secondary/icon) like the old header action; the duplicate header pair was removed.
+- **Load after disable**: /api/models?includeDisabled=1 keeps a fully disabled provider re-listable.
 ## v0.5.112-pro.16-t.10 (2026-11-04)
 
 - Re-release of t.9 (identical code): npm accepted `0.5.112-pro.16-t.9` into its staging queue and never promoted it, so `npm i -g t-router-proxy@latest` still resolved to t.8. Bumping the patch keeps the fixes publishable; t.9 stays staged and can be ignored/deprecated.

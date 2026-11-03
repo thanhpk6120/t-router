@@ -572,6 +572,40 @@ export async function GET(request, { params }) {
     const connection = await getProviderConnectionById(id);
 
     if (!connection) {
+      // No-auth providers own no connection rows, so the dashboard cannot pass a
+      // connection id. Serve their REAL catalog when the upstream exposes one —
+      // OpenCode Zen publishes /v1/models and accepts the anonymous "public"
+      // credential (same credential the opencode2api gateway uses) — and fall
+      // back to the built-in list only when that is unavailable.
+      const ZEN_MODELS = {
+        opencode: "https://opencode.ai/zen/v1/models",
+        "opencode-go": "https://opencode.ai/zen/go/v1/models",
+      };
+      const zenUrl = ZEN_MODELS[id];
+      if (zenUrl) {
+        try {
+          const res = await fetch(zenUrl, {
+            headers: { Accept: "application/json", Authorization: "Bearer public" },
+            signal: AbortSignal.timeout(15000),
+          });
+          if (res.ok) {
+            const data = await res.json().catch(() => null);
+            const rows = Array.isArray(data) ? data : (data?.data || data?.models || []);
+            const models = rows
+              .map((m) => ({ id: m?.id || m?.model, name: m?.name || m?.id || m?.model }))
+              .filter((m) => m.id);
+            if (models.length > 0) {
+              return NextResponse.json({ provider: id, connectionId: null, models, source: "live" });
+            }
+          }
+        } catch {
+          // fall through to the built-in catalog
+        }
+      }
+      const staticModels = getStaticProviderModels(id);
+      if (staticModels.length > 0) {
+        return NextResponse.json({ provider: id, connectionId: null, models: staticModels, source: "static" });
+      }
       return NextResponse.json({ error: "Connection not found" }, { status: 404 });
     }
 

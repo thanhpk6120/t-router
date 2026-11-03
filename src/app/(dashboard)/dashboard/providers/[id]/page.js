@@ -92,6 +92,8 @@ export default function ProviderDetailPage() {
   const [liveModelsError, setLiveModelsError] = useState(null);
   const [kiloFreeModels, setKiloFreeModels] = useState([]);
   const [disabledModelIds, setDisabledModelIds] = useState([]);
+  // Free-text filter for the provider's model list.
+  const [modelSearch, setModelSearch] = useState("");
   // Per-connection allowlist (providerSpecificData.enabledModels). The provider
   // detail switch writes this, and /v1/models publishes exactly this set.
   const [selectedModelIds, setSelectedModelIds] = useState([]);
@@ -297,20 +299,6 @@ export default function ProviderDetailPage() {
     } finally {
       setSavingSelection(false);
     }
-  };
-
-  // Switching a loaded model off removes it from the allowlist; switching it
-  // back on re-adds it. An absent allowlist starts from the full catalog so the
-  // first click only excludes that one model.
-  const handleToggleActiveModel = async (modelId) => {
-    if (savingSelection) return;
-    const baseline = hasModelSelection
-      ? selectedModelIds
-      : models.map((m) => m.id || m.name).filter(Boolean);
-    const next = baseline.includes(modelId)
-      ? baseline.filter((id) => id !== modelId)
-      : [...baseline, modelId];
-    await persistModelSelection(next);
   };
 
   const handleDisableModel = async (modelId) => {
@@ -827,32 +815,60 @@ export default function ProviderDetailPage() {
   const handleLoadModels = async () => {
     if (importingLiveModels) return;
     const activeConnection = connections.find((conn) => conn.isActive !== false);
-    if (!activeConnection) {
+    // No-auth providers (OpenCode Free, …) own no connection rows — their catalog
+    // comes from the built-in registry, so they can load without one.
+    if (!activeConnection && !isFreeNoAuth) {
       notify.warning(translate("Please add an active connection first"));
       return;
     }
     setImportingLiveModels(true);
     try {
-      const res = await fetch(`/api/providers/${activeConnection.id}/models`, { cache: "no-store" });
-      const data = await res.json();
-      if (!res.ok) {
-        notify.error(data.error || translate("Failed to fetch models"));
-        return;
+      let fetched = [];
+      if (activeConnection) {
+        const res = await fetch(`/api/providers/${activeConnection.id}/models`, { cache: "no-store" });
+        const data = await res.json();
+        if (!res.ok) {
+          notify.error(data.error || translate("Failed to fetch models"));
+          return;
+        }
+        fetched = data.models || [];
+      } else {
+        // No connection: ask the provider route for the provider's own catalog
+        // (it fetches the live /models for providers that expose one).
+        const res = await fetch(`/api/providers/${encodeURIComponent(providerId)}/models`, { cache: "no-store" });
+        const data = await res.json();
+        if (!res.ok) {
+          notify.warning(translate("No models returned"));
+          return;
+        }
+        fetched = (data.models || []).map((m) => ({ id: m.id, name: m.name || m.id }));
       }
-      const fetched = data.models || [];
       if (fetched.length === 0) {
         notify.warning(translate("No models returned"));
         return;
       }
-      // Loading a catalog SELECTS every model it returned: the list below then
-      // shows them all with a per-model switch, and /v1/models publishes exactly
-      // the ones left on. It no longer creates custom rows — persisting each id
-      // as a custom model duplicated the catalog and left those rows with no
-      // switch, so the selection could not be undone.
+      // 9router-pro semantics: loading just brings the provider's catalog into
+      // the list. Nothing is "selected": every model is served unless it is
+      // switched off (denylist → "Disabled models", restorable). Any allowlist
+      // left over from the previous behaviour is cleared so /v1/models is no
+      // longer filtered by a stale selection.
       const ids = fetched.map((m) => m.id || m.name).filter(Boolean);
       setLiveModels(fetched);
-      await persistModelSelection(Array.from(new Set(ids)));
-      notify.success(translate("Loaded") + ` ${ids.length} ` + translate("models — switch off the ones you do not want"));
+      if (hasModelSelection && selectionConnection?.id) {
+        await fetch(`/api/providers/${selectionConnection.id}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            providerSpecificData: {
+              ...(selectionConnection.providerSpecificData || {}),
+              enabledModels: [],
+              enabledModelsExplicit: false,
+            },
+          }),
+        }).catch(() => {});
+        await fetchConnections();
+      }
+      notify.success(translate("Loaded") + ` ${ids.length} ` + translate("models"));
     } catch (error) {
       console.log("Error loading models:", error);
       notify.error(translate("Error fetching models") + ": " + error.message);
@@ -1445,7 +1461,10 @@ export default function ProviderDetailPage() {
       ...kiloFreeModels.filter((fm) => !models.some((m) => m.id === fm.id)),
     ].filter((m) => { const k = getModelKind(m); return !k || k === "llm"; });
     const disabledSet = new Set(disabledModelIds);
-    const disabledDisplayModels = allModels.filter((m) => disabledSet.has(m.id));
+    // Search matches the model id or its display name.
+    const q = modelSearch.trim().toLowerCase();
+    const matchSearch = (m) => !q || String(m.id || "").toLowerCase().includes(q) || String(m.name || "").toLowerCase().includes(q);
+    const disabledDisplayModels = allModels.filter((m) => disabledSet.has(m.id) && matchSearch(m));
     const customModelRows = getProviderCustomModelRows({
       customModels,
       modelAliases,
@@ -1460,23 +1479,22 @@ export default function ProviderDetailPage() {
     // `enabledModels` on the connection is the allowlist /v1/models honours;
     // empty means "no explicit selection", which keeps the historical
     // publish-everything behaviour.
+    // 9router-pro semantics: the list is the provider's catalog, and a model is
+    // switched off from here (denylist) — it moves to "Disabled models" and can
+    // be restored, instead of being merged into a separate allowlist list.
     const loadedDisplayModels = allModels
       .filter((m) => {
         const id = m.id || m.name;
-        return id && !customRowIds.has(id);
+        return id && !customRowIds.has(id) && !disabledSet.has(id);
       })
-      .map((m) => {
-        const id = m.id || m.name;
-        const enabled = hasModelSelection
-          ? selectedModelIds.includes(id)
-          : !disabledSet.has(id);
-        return { ...m, id, enabled };
-      });
+      .map((m) => ({ ...m, id: m.id || m.name, enabled: true }));
 
     return (
       <div className="flex flex-wrap gap-3">
         {/* Custom models first */}
-        {customModelRows.map((model) => (
+        {/* Active model: X switches it OFF (it moves to "Disabled models" and can
+            be restored). Deleting a row is only possible from that disabled list. */}
+        {customModelRows.filter(matchSearch).map((model) => (
           <ModelRow
             key={`${model.source}-${model.fullModel}`}
             model={{ id: model.id, name: model.name }}
@@ -1485,13 +1503,8 @@ export default function ProviderDetailPage() {
             copied={copied}
             onCopy={copy}
             onSetAlias={() => {}}
-            onDeleteAlias={() => {
-              if (model.source === "custom") {
-                handleDeleteCustomModel(model.id, "llm", providerStorageAlias);
-              } else {
-                handleDeleteAlias(model.alias);
-              }
-            }}
+            onDisable={() => handleDisableModel(model.id)}
+            onDeleteAlias={() => handleDisableModel(model.id)}
             testStatus={modelTestResults[model.id]}
             onTest={connections.length > 0 || isFreeNoAuth ? () => handleTestModel(model.id) : undefined}
             isTesting={testingModelIds.has(model.id)}
@@ -1509,14 +1522,66 @@ export default function ProviderDetailPage() {
           />
         ))}
 
-        {/* Add model button — inline, same style as model chips */}
-        <button
-          onClick={() => setShowAddCustomModel(true)}
-          className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-dashed border-primary/40 px-3 py-2 text-xs text-primary transition-colors hover:border-primary hover:bg-primary/5 sm:w-auto"
-        >
-          <span className="material-symbols-outlined text-sm">add</span>
-          Add Model
-        </button>
+        {/* Actions for this provider's model list — same style as the old
+            header "Active All" button (Button sm / secondary / icon). */}
+        <div className="mb-3 flex w-full flex-wrap items-center justify-end gap-2">
+          <Button size="sm" variant="secondary" icon="add" onClick={() => setShowAddCustomModel(true)}>
+            {translate("Add Model")}
+          </Button>
+          {(connections.some((conn) => conn.isActive !== false) || isFreeNoAuth) && (
+            <Button
+              size="sm"
+              variant="secondary"
+              icon={importingLiveModels ? "progress_activity" : "cloud_download"}
+              onClick={handleLoadModels}
+              disabled={importingLiveModels}
+            >
+              {importingLiveModels ? translate("Fetching...") : translate("Load models from provider")}
+            </Button>
+          )}
+          <Button
+            size="sm"
+            variant="secondary"
+            icon="block"
+            onClick={async () => {
+              const ids = [...customModelRows.map((r) => r.id), ...loadedDisplayModels.map((m) => m.id)].filter(Boolean);
+              if (ids.length === 0) return;
+              await fetch("/api/models/disabled", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ providerAlias: providerStorageAlias, ids }),
+              }).catch(() => {});
+              await fetchDisabledModels();
+            }}
+          >
+            {translate("Disable all")}
+          </Button>
+          <Button
+            size="sm"
+            variant="secondary"
+            icon="check_circle"
+            onClick={async () => {
+              await fetch(`/api/models/disabled?providerAlias=${encodeURIComponent(providerStorageAlias)}`, {
+                method: "DELETE",
+              }).catch(() => {});
+              await fetchDisabledModels();
+            }}
+          >
+            {translate("Enable all")}
+          </Button>
+        </div>
+
+        {/* Model search — filters the rows by id or display name. */}
+        <div className="relative mb-3 w-full">
+          <span className="material-symbols-outlined pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-[16px] text-text-muted">search</span>
+          <input
+            value={modelSearch}
+            onChange={(e) => setModelSearch(e.target.value)}
+            placeholder={translate("Search models...")}
+            className="w-full rounded-lg border border-border bg-surface-2 py-2 pl-8 pr-3 text-xs text-text-main placeholder:text-text-muted focus:border-primary focus:outline-none"
+          />
+        </div>
+
 
         {/* Import Qoder models button — only show for qoder/qoder-cn provider */}
         {(providerId === "qoder" || providerId === "qoder-cn") && connections.some((conn) => conn.isActive !== false) && (
@@ -1545,20 +1610,8 @@ export default function ProviderDetailPage() {
             {importingClineModels ? translate("Fetching...") : translate("Import from /models")}
           </button>
         )}
-        {/* Generic catalog loader — every provider with an active connection */}
-        {connections.some((conn) => conn.isActive !== false) && (
-          <button
-            onClick={handleLoadModels}
-            disabled={importingLiveModels}
-            className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-dashed border-emerald-500/40 px-3 py-2 text-xs text-emerald-600 dark:text-emerald-400 transition-colors hover:border-emerald-500 hover:bg-emerald-500/5 sm:w-auto disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            <span className="material-symbols-outlined text-sm" style={importingLiveModels ? { animation: "spin 1s linear infinite" } : undefined}>
-              {importingLiveModels ? "progress_activity" : "cloud_download"}
-            </span>
-            {importingLiveModels ? translate("Fetching...") : translate("Load models from provider")}
-          </button>
-        )}
-
+        {/* Generic catalog loader and the bulk enable/disable now live in the
+            action row above. */}
         {/* Loaded models — everything the provider's own catalog returned, as
             real rows with a per-model switch. The switch writes the connection's
             enabledModels ALLOWLIST, so /v1/models publishes exactly the models
@@ -1566,55 +1619,30 @@ export default function ProviderDetailPage() {
             denylist, which the Disabled-models section below owns — sharing it
             would also hide these models from every picker. */}
         {loadedDisplayModels.length > 0 && (
-          <div className="w-full mt-2">
-            <div className="mb-2 flex flex-wrap items-center gap-2">
-              <p className="text-xs text-text-muted">
-                {translate("Loaded models")} ({loadedDisplayModels.filter((m) => m.enabled).length}/{loadedDisplayModels.length})
-              </p>
-              {/* Bulk controls: picking "which of these do we use" one switch at
-                  a time is the slow path, and this list is the same selection
-                  /v1/models publishes. */}
-              <button
-                type="button"
-                disabled={savingSelection}
-                onClick={() => persistModelSelection(loadedDisplayModels.map((m) => m.id))}
-                className="rounded border border-border px-2 py-0.5 text-[11px] text-text-muted transition-colors hover:border-primary/40 hover:text-primary disabled:opacity-50"
-              >
-                {translate("Select all")}
-              </button>
-              <button
-                type="button"
-                disabled={savingSelection}
-                onClick={() => persistModelSelection([])}
-                className="rounded border border-border px-2 py-0.5 text-[11px] text-text-muted transition-colors hover:border-red-500/40 hover:text-red-500 disabled:opacity-50"
-              >
-                {translate("Clear")}
-              </button>
-            </div>
-            <div className="flex flex-wrap gap-3">
-              {loadedDisplayModels.map((m) => {
-                const id = m.id;
-                return (
-                  <ModelRow
-                    key={`live-${id}`}
-                    enabled={m.enabled}
-                    model={{ id, name: m.name || id }}
-                    fullModel={`${providerDisplayAlias}/${id}`}
-                    alias={modelAliases[`${providerStorageAlias}/${id}`]}
-                    copied={copied}
-                    onCopy={copy}
-                    onSetAlias={() => {}}
-                    onDisable={() => handleToggleActiveModel(id)}
-                    testStatus={modelTestResults[id]}
-                    onTest={connections.length > 0 || isFreeNoAuth ? () => handleTestModel(id) : undefined}
-                    isTesting={testingModelIds.has(id)}
-                    onTestImage={connections.length > 0 || isFreeNoAuth ? () => handleTestImage(id) : undefined}
-                    imageStatus={modelTestResults[`${id}:image`]}
-                    isTestingImage={testingModelIds.has(`${id}:image`)}
+          <div className="flex flex-wrap gap-3">
+            {loadedDisplayModels.filter(matchSearch).map((m) => {
+              const id = m.id;
+              return (
+                <ModelRow
+                  key={`live-${id}`}
+                  enabled={m.enabled}
+                  isCustom
+                  onDeleteAlias={() => handleDisableModel(id)}
+                  model={{ id, name: m.name || id }}
+                  fullModel={`${providerDisplayAlias}/${id}`}
+                  alias={modelAliases[`${providerStorageAlias}/${id}`]}
+                  copied={copied}
+                  onCopy={copy}
+                  onSetAlias={() => {}}
+                  testStatus={modelTestResults[id]}
+                  onTest={connections.length > 0 || isFreeNoAuth ? () => handleTestModel(id) : undefined}
+                  isTesting={testingModelIds.has(id)}
+                  onTestImage={connections.length > 0 || isFreeNoAuth ? () => handleTestImage(id) : undefined}
+                  imageStatus={modelTestResults[`${id}:image`]}
+                  isTestingImage={testingModelIds.has(`${id}:image`)}
                     onTestThinking={connections.length > 0 || isFreeNoAuth ? () => handleTestThinking(id) : undefined}
                     thinkingStatus={modelTestResults[`${id}:thinking`]}
                     isTestingThinking={testingModelIds.has(`${id}:thinking`)}
-                    isCustom={false}
                     isFree={false}
                     onEditCaps={() => setEditCapsTarget({ id, caps: getCaps(`${providerId}/${id}`) || {} })}
                     caps={getCaps(`${providerId}/${id}`)}
@@ -1622,7 +1650,6 @@ export default function ProviderDetailPage() {
                   />
                 );
               })}
-            </div>
           </div>
         )}
 
@@ -1631,17 +1658,34 @@ export default function ProviderDetailPage() {
           <div className="w-full mt-2">
             <p className="text-xs text-text-muted mb-2">Disabled models ({disabledDisplayModels.length}):</p>
             <div className="flex flex-wrap gap-2">
-              {disabledDisplayModels.map((m) => (
-                <button
-                  key={m.id}
-                  onClick={() => handleEnableModel(m.id)}
-                  className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-dashed border-black/10 dark:border-white/10 text-xs text-text-muted hover:text-primary hover:border-primary/40 hover:bg-primary/5 transition-colors"
-                  title="Restore model"
-                >
-                  <span className="material-symbols-outlined text-[13px]">add</span>
-                  {m.id}
-                </button>
-              ))}
+              {disabledDisplayModels.map((m) => {
+                const isCustomRow = (customModels || []).some(
+                  (c) => c.id === m.id && (!c.type || c.type === "llm") && c.providerAlias === providerStorageAlias,
+                );
+                return (
+                  <span key={m.id} className="flex items-center overflow-hidden rounded-lg border border-dashed border-black/10 dark:border-white/10">
+                    <button
+                      onClick={() => handleEnableModel(m.id)}
+                      className="flex items-center gap-1 px-2.5 py-1.5 text-xs text-text-muted transition-colors hover:text-primary hover:bg-primary/5"
+                      title="Restore model"
+                    >
+                      <span className="material-symbols-outlined text-[13px]">add</span>
+                      {m.id}
+                    </button>
+                    {/* X only on a DISABLED model, and only when there is a row to
+                        delete: active models are switched off first, deleted second. */}
+                    {isCustomRow && (
+                      <button
+                        onClick={() => handleDeleteCustomModel(m.id, "llm", providerStorageAlias)}
+                        className="px-1.5 py-1.5 text-text-muted transition-colors hover:bg-red-500/10 hover:text-red-500"
+                        title="Delete this custom model"
+                      >
+                        <span className="material-symbols-outlined text-[13px]">close</span>
+                      </button>
+                    )}
+                  </span>
+                );
+              })}
             </div>
           </div>
         )}
@@ -2082,20 +2126,11 @@ export default function ProviderDetailPage() {
               ...kiloFreeModels.filter((fm) => !models.some((m) => m.id === fm.id)),
             ].filter((m) => { const k = getModelKind(m); return !k || k === "llm"; }).map((m) => m.id);
             const activeIds = allIds.filter((id) => !disabledModelIds.includes(id));
-            return (
-              <div className="flex gap-2">
-                {disabledModelIds.length > 0 && (
-                  <Button size="sm" variant="secondary" icon="restart_alt" onClick={handleEnableAll}>
-                    Active All
-                  </Button>
-                )}
-                {activeIds.length > 0 && (
-                  <Button size="sm" variant="secondary" icon="block" onClick={() => handleDisableAll(activeIds)}>
-                    Disable All
-                  </Button>
-                )}
-              </div>
-            );
+            void allIds; void activeIds;
+            // Bulk enable/disable live under the model list (next to "Load models
+            // from provider"). The header copy asked for confirmation and, once
+            // every model was disabled, the list below had nothing to act on.
+            return null;
           })()}
         </div>
         {!!modelsTestError && (

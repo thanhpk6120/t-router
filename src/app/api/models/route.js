@@ -26,13 +26,17 @@ onInvalidateModelsListCache(() => {
 });
 
 // GET /api/models - Get models with aliases
-export async function GET() {
+export async function GET(request) {
   try {
-    if (modelsCache.payload && Date.now() - modelsCache.at < MODELS_CACHE_TTL_MS) {
+    // ?includeDisabled=1 → the full catalog. "Load models from provider" uses it
+    // so a provider whose models are all switched off can still be re-listed
+    // (the dashboard keeps its own disabled list and shows them as restorable).
+    const includeDisabled = new URL(request.url).searchParams.get("includeDisabled") === "1";
+    if (modelsCache.payload && Date.now() - modelsCache.at < MODELS_CACHE_TTL_MS && !includeDisabled) {
       return NextResponse.json(modelsCache.payload);
     }
     const modelAliases = await getModelAliases();
-    const disabled = await getDisabledModels();
+    const disabled = includeDisabled ? {} : await getDisabledModels();
 
     const models = AI_MODELS
       .filter((m) => {
