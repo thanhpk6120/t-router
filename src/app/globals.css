@@ -571,6 +571,17 @@ input, textarea {
 .traffic-light.yellow { background: #FFBD2E; }
 .traffic-light.green { background: #27C93F; }
 
+/* Material Symbols — subset font, see scripts/build-icon-subset.py.
+   The upstream package ships all 4004 icons as one 3.9 MB woff2; only the
+   icon names used in src/ are kept here (~51 KB). */
+@font-face {
+  font-family: 'Material Symbols Outlined';
+  font-style: normal;
+  font-weight: 100 700;
+  font-display: block;
+  src: url("./fonts/material-symbols-outlined-subset.woff2") format("woff2");
+}
+
 /* Material Symbols */
 .material-symbols-outlined {
   font-family: 'Material Symbols Outlined', sans-serif;

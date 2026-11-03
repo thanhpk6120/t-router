@@ -5,6 +5,12 @@ Upstream changelogs (`CHANGELOG.md` and `CHANGELOG-PRO.md`) are kept intact for 
 
 ---
 
+## v0.5.112-pro.16-t.8 (2026-11-03)
+
+- **UI load time**: the dashboard paid for the full Material Symbols font (all 4004 icons, 3.9 MB) on every page — including `/login` — because `material-symbols/outlined.css` pulled the whole file into the global stylesheet. It is now a generated subset (`src/app/fonts/material-symbols-outlined-subset.woff2`, 51 KB, 222 icons) referenced by a local `@font-face`; `scripts/build-icon-subset.py` regenerates it and pins the unused variation axes. Icon ligatures still resolve, since the generator keeps the letter glyphs the ligatures are built from (`layout_closure` off, or the subsetter would re-add every icon).
+- **Font preloads**: the 21 display-name faces (header personal-name styles) are now `preload: false` — only Inter, which paints the UI, is preloaded. Every page previously issued ~21 extra font requests before settling.
+- **Measured** (production build, dashboard, 25 Mbps / 30 ms RTT): 4629 KB → 447 KB transferred, 82 → 21 requests, `load` 1919 ms → 401 ms, icon font 3870 KB/1693 ms → 52 KB/165 ms. All 22 dashboard routes audited: 0 icons fall back to their literal name.
+
 ## v0.5.112-pro.16-t.7 (2026-11-03)
 
 - **Request-hang hardening**: SSE→JSON body reads now share the client's total-request budget; flaky-body inspection is bounded and clears its timer on every read; proxy candidates share one sliced connect budget instead of one full window each; the provider connect timeout reaches the proxy phase; evicted proxy dispatchers are closed; token-refresh fetches are capped at 30s; the client abort signal is forwarded through the account loop; streaming clients get an SSE keepalive while combos/retries run.

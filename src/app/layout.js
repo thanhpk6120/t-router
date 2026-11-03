@@ -1,6 +1,5 @@
 import { Inter, Space_Grotesk, Playfair_Display, Pacifico, Poppins, Montserrat, Bebas_Neue, Anton, Orbitron, Lobster, Bangers, Zilla_Slab, Great_Vibes, Caveat, JetBrains_Mono, Special_Elite, Press_Start_2P, Audiowide, Monoton, Rubik_Glitch, Michroma, VT323 } from "next/font/google";
 import { GoogleAnalytics } from "@next/third-parties/google";
-import "material-symbols/outlined.css";
 import "./globals.css";
 import { ThemeProvider } from "@/shared/components/ThemeProvider";
 import "@/lib/network/initOutboundProxy"; // Auto-initialize outbound proxy env
@@ -18,40 +17,47 @@ const inter = Inter({
 
 // T Router: extra display fonts used ONLY by the header display name
 // (see shared/constants/nameStyles.js). Self-hosted by next/font.
+// `preload: false` everywhere below: these faces render at most one short
+// string in the header, so preloading all 21 of them made every page wait on
+// ~21 extra font requests before the first icon/font could settle. Preloading
+// is kept only for Inter, which paints the whole UI.
 const spaceGrotesk = Space_Grotesk({
   subsets: ["latin"],
   weight: ["600", "700"],
   variable: "--font-grotesk",
+  preload: false,
 });
 const playfair = Playfair_Display({
   subsets: ["latin"],
   weight: ["600", "700"],
   variable: "--font-playfair",
+  preload: false,
 });
 const pacifico = Pacifico({
   subsets: ["latin"],
   weight: ["400"],
   variable: "--font-pacifico",
+  preload: false,
 });
 // The full display-name font set (see shared/constants/nameStyles.js).
-const poppins = Poppins({ subsets: ["latin"], weight: ["600"], variable: "--font-poppins" });
-const montserrat = Montserrat({ subsets: ["latin"], weight: ["700"], variable: "--font-montserrat" });
-const bebas = Bebas_Neue({ subsets: ["latin"], weight: ["400"], variable: "--font-bebas" });
-const anton = Anton({ subsets: ["latin"], weight: ["400"], variable: "--font-anton" });
-const orbitron = Orbitron({ subsets: ["latin"], weight: ["600"], variable: "--font-orbitron" });
-const lobster = Lobster({ subsets: ["latin"], weight: ["400"], variable: "--font-lobster" });
-const bangers = Bangers({ subsets: ["latin"], weight: ["400"], variable: "--font-bangers" });
-const zilla = Zilla_Slab({ subsets: ["latin"], weight: ["600"], variable: "--font-zilla" });
-const vibes = Great_Vibes({ subsets: ["latin"], weight: ["400"], variable: "--font-vibes" });
-const caveat = Caveat({ subsets: ["latin"], weight: ["600"], variable: "--font-caveat" });
-const jetbrains = JetBrains_Mono({ subsets: ["latin"], weight: ["600"], variable: "--font-jetbrains" });
-const special = Special_Elite({ subsets: ["latin"], weight: ["400"], variable: "--font-special" });
-const pixel = Press_Start_2P({ subsets: ["latin"], weight: ["400"], variable: "--font-pixel" });
-const audiowide = Audiowide({ subsets: ["latin"], weight: ["400"], variable: "--font-audiowide" });
-const monoton = Monoton({ subsets: ["latin"], weight: ["400"], variable: "--font-monoton" });
-const glitch = Rubik_Glitch({ subsets: ["latin"], weight: ["400"], variable: "--font-glitch" });
-const michroma = Michroma({ subsets: ["latin"], weight: ["400"], variable: "--font-michroma" });
-const vt323 = VT323({ subsets: ["latin"], weight: ["400"], variable: "--font-vt323" });
+const poppins = Poppins({ subsets: ["latin"], weight: ["600"], variable: "--font-poppins", preload: false });
+const montserrat = Montserrat({ subsets: ["latin"], weight: ["700"], variable: "--font-montserrat", preload: false });
+const bebas = Bebas_Neue({ subsets: ["latin"], weight: ["400"], variable: "--font-bebas", preload: false });
+const anton = Anton({ subsets: ["latin"], weight: ["400"], variable: "--font-anton", preload: false });
+const orbitron = Orbitron({ subsets: ["latin"], weight: ["600"], variable: "--font-orbitron", preload: false });
+const lobster = Lobster({ subsets: ["latin"], weight: ["400"], variable: "--font-lobster", preload: false });
+const bangers = Bangers({ subsets: ["latin"], weight: ["400"], variable: "--font-bangers", preload: false });
+const zilla = Zilla_Slab({ subsets: ["latin"], weight: ["600"], variable: "--font-zilla", preload: false });
+const vibes = Great_Vibes({ subsets: ["latin"], weight: ["400"], variable: "--font-vibes", preload: false });
+const caveat = Caveat({ subsets: ["latin"], weight: ["600"], variable: "--font-caveat", preload: false });
+const jetbrains = JetBrains_Mono({ subsets: ["latin"], weight: ["600"], variable: "--font-jetbrains", preload: false });
+const special = Special_Elite({ subsets: ["latin"], weight: ["400"], variable: "--font-special", preload: false });
+const pixel = Press_Start_2P({ subsets: ["latin"], weight: ["400"], variable: "--font-pixel", preload: false });
+const audiowide = Audiowide({ subsets: ["latin"], weight: ["400"], variable: "--font-audiowide", preload: false });
+const monoton = Monoton({ subsets: ["latin"], weight: ["400"], variable: "--font-monoton", preload: false });
+const glitch = Rubik_Glitch({ subsets: ["latin"], weight: ["400"], variable: "--font-glitch", preload: false });
+const michroma = Michroma({ subsets: ["latin"], weight: ["400"], variable: "--font-michroma", preload: false });
+const vt323 = VT323({ subsets: ["latin"], weight: ["400"], variable: "--font-vt323", preload: false });
 
 export const metadata = {
   title: "T Router - AI Infrastructure Management",
