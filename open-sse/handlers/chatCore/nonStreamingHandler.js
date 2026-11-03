@@ -95,7 +95,16 @@ function openAICompletionToResponses(responseBody, customToolNames = null) {
  * Translate non-streaming response body from provider format → OpenAI format.
  */
 export function translateNonStreamingResponse(responseBody, targetFormat, sourceFormat, customToolNames = null) {
-  if (targetFormat === sourceFormat) return responseBody;
+  if (targetFormat === sourceFormat) {
+    // DeepSeek-family lanes answer a tool-calling turn with finish_reason
+    // "stop". OpenAI clients gate tool execution on "tool_calls", so the
+    // turn reads as a finished answer and the calls never run.
+    const choice = responseBody?.choices?.[0];
+    if (choice?.finish_reason === "stop" && choice.message?.tool_calls?.length) {
+      choice.finish_reason = "tool_calls";
+    }
+    return responseBody;
+  }
   // Provider responded in OpenAI Chat Completions shape but the client speaks
   // Responses API — convert so tool_calls/text surface as Responses `output`.
   if (targetFormat === FORMATS.OPENAI && sourceFormat === FORMATS.OPENAI_RESPONSES) {

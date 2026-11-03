@@ -2,7 +2,29 @@ import { Readable } from "stream";
 import { MEMORY_CONFIG } from "../config/runtimeConfig.js";
 import { dbg } from "./debugLog.js";
 
-const originalFetch = globalThis.fetch;
+// Only a *patched instance of this module* is unsafe to call back into: the
+// chain patchedFetch -> proxyAwareFetch -> fetchWithTlsFallback -> patchedFetch
+// recurses until the stack overflows, and after a dev hot-reload the global
+// holds a different instance's patchedFetch, so an identity check against the
+// local function is not enough. Every patchedFetch carries this tag instead.
+// Any other function on globalThis.fetch (a test mock, an undici install,
+// another library's wrapper) is real I/O and is used as-is.
+function isOwnPatchedFetch(fn) {
+  return typeof fn === "function" && fn.__trouterProxyPatched === true;
+}
+
+// Resolved at call time, not module load: tests replace globalThis.fetch
+// after import, and a cached reference would bypass the mock.
+function resolveBaseFetch() {
+  const g = globalThis.fetch;
+  if (!isOwnPatchedFetch(g)) {
+    if (typeof g === "function") globalThis.__trouterOriginalFetch = g;
+    return g;
+  }
+  return globalThis.__trouterOriginalFetch || g;
+}
+
+resolveBaseFetch();
 const proxyDispatchers = new Map();
 
 // ─── TLS fingerprinting via got-scraping (browser-like JA3) ───────────────
@@ -282,8 +304,10 @@ async function fetchWithTlsFallback(url, options, proxyUrl) {
       return await options.directFetch(url, { ...options, _proxyUrl: proxyUrl });
     }
     const dispatcher = proxyUrl ? await getDispatcher(proxyUrl) : undefined;
-    const fetchFn = (globalThis.fetch && globalThis.fetch !== patchedFetch) ? globalThis.fetch : originalFetch;
-    return await fetchFn(url, dispatcher ? { ...options, dispatcher, _proxyUrl: proxyUrl } : options);
+    // Resolve at call time: a test may have replaced globalThis.fetch with a
+    // mock after this module loaded, and only our own patched instances must
+    // be skipped (see isOwnPatchedFetch).
+    return await resolveBaseFetch()(url, dispatcher ? { ...options, dispatcher, _proxyUrl: proxyUrl } : options);
   } catch (err) {
     const isStrictSsl = options.strictTls === true || process.env.STRICT_SSL === "true" || process.env.STRICT_SSL === "1";
     if (!isStrictSsl && isTlsCertError(err)) {
@@ -293,8 +317,7 @@ async function fetchWithTlsFallback(url, options, proxyUrl) {
       // ponytail: in-memory insecure agent fallback for self-signed MITM corporate/antivirus certs
       console.warn(`[ProxyFetch] TLS cert verification failed (${err.cause?.code || err.code}), retrying with insecure TLS: ${url}`);
       const insecureDispatcher = await getDispatcher(proxyUrl, true);
-      const fetchFn = (globalThis.fetch && globalThis.fetch !== patchedFetch) ? globalThis.fetch : originalFetch;
-      return await fetchFn(url, { ...options, dispatcher: insecureDispatcher, _proxyUrl: proxyUrl });
+      return await resolveBaseFetch()(url, { ...options, dispatcher: insecureDispatcher, _proxyUrl: proxyUrl });
     }
     throw err;
   }
@@ -388,7 +411,7 @@ export async function proxyAwareFetch(url, options = {}, proxyOptions = null) {
       "x-relay-target": `${parsed.protocol}//${parsed.host}`,
       "x-relay-path": `${parsed.pathname}${parsed.search}`,
     };
-    return originalFetch(vercelRelayUrl, { ...options, headers: relayHeaders });
+    return resolveBaseFetch()(vercelRelayUrl, { ...options, headers: relayHeaders });
   }
 
   const connectionProxyUrl = resolveConnectionProxyUrl(targetUrl, proxyOptions);
@@ -481,7 +504,7 @@ export async function proxyAwareFetch(url, options = {}, proxyOptions = null) {
             "x-relay-target": `${parsed.protocol}//${parsed.host}`,
             "x-relay-path": `${parsed.pathname}${parsed.search}`,
           };
-          res = await originalFetch(candidate.vercelRelayUrl, { ...options, headers: relayHeaders });
+          res = await resolveBaseFetch()(candidate.vercelRelayUrl, { ...options, headers: relayHeaders });
         } else {
           res = await fetchWithTlsFallback(url, options, curProxyUrl);
         }
@@ -554,9 +577,18 @@ export async function proxyAwareFetch(url, options = {}, proxyOptions = null) {
 async function patchedFetch(url, options = {}) {
   return proxyAwareFetch(url, options, null);
 }
+// Tagged so a re-evaluated module, and any test that swaps globalThis.fetch,
+// can tell our wrapper apart from real I/O. Untagged, resolveBaseFetch would
+// treat this as the base fetch and recurse into proxyAwareFetch forever.
+patchedFetch.__trouterProxyPatched = true;
 
-// Idempotency guard — only patch once to avoid wrapping multiple times
-if (globalThis.fetch !== patchedFetch) {
+
+// Idempotency guard — patch exactly once per process. The identity check
+// below is insufficient under hot reload: the fresh module's patchedFetch
+// differs from the previous instance's, so the guard passes again and the
+// global is wrapped once more. A global flag survives re-evaluation.
+if (!globalThis.__trouterProxyFetchPatched) {
+  globalThis.__trouterProxyFetchPatched = true;
   globalThis.fetch = patchedFetch;
 }
 

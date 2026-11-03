@@ -3,6 +3,7 @@ import { FORMATS } from "../formats.js";
 import { ROLE, CLAUDE_BLOCK, MODEL_FALLBACK } from "../schema/index.js";
 import { fromOpenAIFinish } from "../concerns/finishReason.js";
 import { extractReasoningText } from "../concerns/reasoning.js";
+import { fallbackToolCallId } from "../concerns/toolCall.js";
 
 // Legacy "proxy_" prefix used by older request translators. Response strips it
 // defensively so tool names from such turns resolve back (e.g. proxy_Read → Read
@@ -22,6 +23,36 @@ function sanitizeToolArgs(toolName, argsJson) {
   } catch {
     return argsJson;
   }
+}
+
+// DeepSeek and other non-Anthropic models occasionally stream truncated or
+// trailing-comma JSON. Claude Code hard-fails on malformed partial_json, so
+// repair (or fall back to {}) rather than emitting the raw text.
+function repairToolArgsJson(raw) {
+  if (typeof raw !== "string" || !raw.trim()) return "{}";
+  try { JSON.parse(raw); return raw; } catch {}
+
+  const noTrailingCommas = raw.replace(/,\s*([}\]])/g, "$1");
+  try { JSON.parse(noTrailingCommas); return noTrailingCommas; } catch {}
+
+  let inStr = false;
+  let esc = false;
+  const stack = [];
+  for (const ch of noTrailingCommas) {
+    if (esc) { esc = false; continue; }
+    if (ch === "\\") { esc = true; continue; }
+    if (ch === '"') { inStr = !inStr; continue; }
+    if (inStr) continue;
+    if (ch === "{") stack.push("}");
+    else if (ch === "[") stack.push("]");
+    else if (ch === "}" || ch === "]") stack.pop();
+  }
+  let closed = noTrailingCommas;
+  if (inStr) closed += '"';
+  while (stack.length) closed += stack.pop();
+  try { JSON.parse(closed); return closed; } catch {}
+
+  return "{}";
 }
 
 function sanitizeReadArgs(args) {
@@ -181,42 +212,105 @@ export function openaiToClaudeResponse(chunk, state) {
 
   // Tool calls
   if (delta?.tool_calls) {
-    for (const tc of delta.tool_calls) {
-      const idx = tc.index ?? 0;
+    if (!state.toolCalls) state.toolCalls = new Map();
+    if (!state.toolArgBuffers) state.toolArgBuffers = new Map();
+    // Synthetic slots for parallel calls that reuse an index (DeepSeek does
+    // this). Negative so they never collide with provider-supplied indices.
+    if (state.nextToolIdx === undefined) state.nextToolIdx = -1;
 
-      // GLM/fireworks repeats id+null-name on every arg chunk; open block once per idx
-      if (tc.id && !state.toolCalls.has(idx)) {
+    for (const tc of delta.tool_calls) {
+      const incomingId = tc.id || "";
+      const incomingName = tc.function?.name || "";
+      const incomingArgs = tc.function?.arguments || "";
+
+      let idx;
+      let entry;
+
+      // 1) Provider index, unless a different id on the same index signals
+      //    parallel-call index reuse.
+      if (tc.index !== undefined && tc.index !== null) {
+        idx = tc.index;
+        entry = state.toolCalls.get(idx);
+        if (entry && incomingId && entry.id && entry.id !== incomingId) {
+          idx = state.nextToolIdx--;
+          entry = undefined;
+        }
+      }
+
+      // 2) No index: match by id across open blocks.
+      if (idx === undefined && incomingId) {
+        for (const [k, v] of state.toolCalls) {
+          if (v.id === incomingId) { idx = k; entry = v; break; }
+        }
+      }
+
+      // 3) Still unresolved: adopt a pending anonymous slot (args streamed
+      //    before identity) or start a fresh one.
+      if (idx === undefined) {
+        const last = state.lastToolIdx;
+        const lastEntry = last !== undefined ? state.toolCalls.get(last) : undefined;
+        if (incomingId || incomingName) {
+          if (last !== undefined && !lastEntry && state.toolArgBuffers.has(last)) {
+            idx = last;
+          } else if (lastEntry && incomingId && lastEntry.id === incomingId) {
+            idx = last;
+            entry = lastEntry;
+          } else {
+            idx = state.nextToolIdx--;
+          }
+        } else {
+          idx = state.lastToolIdx ?? 0;
+          entry = state.toolCalls.get(idx);
+        }
+      }
+
+      state.lastToolIdx = idx;
+      if (!entry) entry = state.toolCalls.get(idx);
+
+      // Open the block as soon as identity is known. Deferring until id
+      // arrives used to drop every argument chunk that streamed ahead of it,
+      // and emitting an empty name is rejected by Claude.
+      if (!entry && (incomingId || incomingName)) {
         stopThinkingBlock(state, results);
         stopTextBlock(state, results);
 
         const toolBlockIndex = state.nextBlockIndex++;
-        state.toolCalls.set(idx, { id: tc.id, name: tc.function?.name || "", blockIndex: toolBlockIndex });
-
-        // Strip prefix from tool name for response
-        let toolName = tc.function?.name || "";
+        let toolName = incomingName;
         if (toolName.startsWith(CLAUDE_OAUTH_TOOL_PREFIX)) {
           toolName = toolName.slice(CLAUDE_OAUTH_TOOL_PREFIX.length);
         }
+
+        entry = {
+          id: incomingId || fallbackToolCallId(toolBlockIndex),
+          name: toolName,
+          blockIndex: toolBlockIndex,
+        };
+        state.toolCalls.set(idx, entry);
 
         results.push({
           type: "content_block_start",
           index: toolBlockIndex,
           content_block: {
             type: CLAUDE_BLOCK.TOOL_USE,
-            id: tc.id,
+            id: entry.id,
             name: toolName,
-            input: {}
-          }
+            input: {},
+          },
         });
+      } else if (entry && incomingName && !entry.name) {
+        // Backfill a name that arrived after the block opened.
+        let toolName = incomingName;
+        if (toolName.startsWith(CLAUDE_OAUTH_TOOL_PREFIX)) {
+          toolName = toolName.slice(CLAUDE_OAUTH_TOOL_PREFIX.length);
+        }
+        entry.name = toolName;
       }
 
-      if (tc.function?.arguments) {
-        const toolInfo = state.toolCalls.get(idx);
-        if (toolInfo) {
-          // Buffer args instead of streaming — sanitize at finish to fix bad params
-          if (!state.toolArgBuffers) state.toolArgBuffers = new Map();
-          state.toolArgBuffers.set(idx, (state.toolArgBuffers.get(idx) || "") + tc.function.arguments);
-        }
+      if (incomingArgs) {
+        state.toolArgBuffers.set(
+          idx,
+          (state.toolArgBuffers.get(idx) || "") + incomingArgs
+        );
       }
     }
   }
@@ -227,16 +321,16 @@ export function openaiToClaudeResponse(chunk, state) {
     stopTextBlock(state, results);
 
     for (const [idx, toolInfo] of state.toolCalls) {
-      // Emit buffered + sanitized args as single delta before stop
-      const buffered = state.toolArgBuffers?.get(idx);
-      if (buffered) {
-        const sanitized = sanitizeToolArgs(toolInfo.name, buffered);
-        results.push({
-          type: "content_block_delta",
-          index: toolInfo.blockIndex,
-          delta: { type: "input_json_delta", partial_json: sanitized }
-        });
-      }
+      const buffered = state.toolArgBuffers?.get(idx) || "";
+      // sanitizeToolArgs returns the raw string on parse failure; repair before
+      // emitting so Claude Code never receives malformed partial_json.
+      const argsJson = repairToolArgsJson(sanitizeToolArgs(toolInfo.name, buffered || "{}"));
+
+      results.push({
+        type: "content_block_delta",
+        index: toolInfo.blockIndex,
+        delta: { type: "input_json_delta", partial_json: argsJson }
+      });
       results.push({
         type: "content_block_stop",
         index: toolInfo.blockIndex

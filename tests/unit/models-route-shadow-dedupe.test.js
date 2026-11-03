@@ -10,7 +10,8 @@
 //
 // Two behaviors pinned here (drive the route handler with mocked repos):
 // 1. a custom row whose providerAlias/id collides with a listed routedModel is
-//    dropped (read-time filter; the kv row itself is untouched);
+//    a caps OVERRIDE, not a shadow: it merges onto the registry entry in place
+//    (no duplicate row; the kv row itself is untouched);
 // 2. surviving custom rows resolve caps through the provider id, not the alias.
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
@@ -47,7 +48,7 @@ beforeEach(() => {
 });
 
 describe("/api/models — custom-model shadow dedupe", () => {
-  it("drops the ocg/claude-haiku-5-5 shadow and keeps the 1M registry entry", async () => {
+  it("merges the ocg/claude-haiku-5-5 caps onto the 1M registry entry", async () => {
     vi.mocked(getCustomModels).mockResolvedValueOnce([
       { providerAlias: "ocg", id: "claude-haiku-5-5", type: "llm", name: "claude-haiku-5-5", caps: { vision: true, reasoning: true } },
     ]);
@@ -55,10 +56,15 @@ describe("/api/models — custom-model shadow dedupe", () => {
     const models = await fetchModels();
     const routed = models.filter((m) => m.routedModel === "ocg/claude-haiku-5-5" || m.fullModel === "opencode-go/claude-haiku-5-5");
 
+    // One entry only: the override merges, it does not append a shadow.
     expect(routed).toHaveLength(1);
     expect(routed[0].fullModel).toBe("opencode-go/claude-haiku-5-5");
+    // Registry caps survive where the override is silent.
     expect(routed[0].caps.contextWindow).toBe(1000000);
     expect(routed[0].caps.maxOutput).toBe(128000);
+    // Override caps win where the custom row speaks.
+    expect(routed[0].caps.vision).toBe(true);
+    expect(routed[0].caps.reasoning).toBe(true);
   });
 
   it("keeps non-colliding custom rows and resolves their caps by provider id", async () => {

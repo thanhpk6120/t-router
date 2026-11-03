@@ -8,7 +8,11 @@ let cache = { at: 0, data: null };
 export const STATS_TTL_MS = 30_000;
 
 export function getStatsCache() {
-  return cache;
+  // Return the cached map, or null when absent/expired. Callers test this
+  // value directly (`if (!data) recompute`), so returning the {at,data}
+  // wrapper made the truthiness check always pass and stats stayed null.
+  if (cache.data && Date.now() - cache.at < STATS_TTL_MS) return cache.data;
+  return null;
 }
 
 export function setStatsCache(data) {

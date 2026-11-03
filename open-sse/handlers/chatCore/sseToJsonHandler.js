@@ -171,6 +171,12 @@ export function parseSSEToOpenAIResponse(rawSSE, fallbackModel) {
     message.tool_calls = [...toolCallMap.entries()].sort((a, b) => a[0] - b[0]).map(([, tc]) => tc);
   }
 
+  // DeepSeek-family lanes end a turn that DID emit tool calls with
+  // finish_reason "stop". OpenAI clients gate tool execution on "tool_calls",
+  // so they read the turn as a finished answer and never run the calls.
+  // Mirror the streaming passthrough fix in open-sse/utils/stream.js.
+  if (finishReason === "stop" && toolCallMap.size > 0) finishReason = "tool_calls";
+
   const result = {
     id: first.id || `chatcmpl-${Date.now()}`,
     object: "chat.completion",

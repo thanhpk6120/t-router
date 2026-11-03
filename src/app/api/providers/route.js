@@ -17,7 +17,7 @@ import { normalizeProviderId, normalizeProviderSpecificData } from "@/lib/provid
 import { getProviderBreakerSnapshot } from "@/sse/services/providerBreaker.js";
 import { getProviderHealthSummary } from "@/lib/providerHealthSummary.js";
 import { toProviderConnectionResponse } from "@/lib/providerConnectionResponse";
-import { getStatsCache, setStatsCache, invalidateStatsCache, STATS_TTL_MS } from "@/lib/providerStatsCache";
+import { getStatsCache, setStatsCache, invalidateStatsCache } from "@/lib/providerStatsCache";
 
 export const dynamic = "force-dynamic";
 

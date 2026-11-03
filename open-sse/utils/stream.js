@@ -280,6 +280,16 @@ export function createSSEStream(options = {}) {
               if (isFinishChunk) {
                 openAIFinishReasonSeen = true;
               }
+              // DeepSeek-family lanes end a turn that DID emit tool calls with
+              // finish_reason "stop". OpenAI clients gate tool execution on
+              // "tool_calls", so they read the turn as a finished answer and
+              // never run the calls. Mirror the non-streaming handlers.
+              if (isFinishChunk === "stop" && seenToolCallIds.size > 0) {
+                for (const choice of parsed.choices) {
+                  if (choice.finish_reason === "stop") choice.finish_reason = "tool_calls";
+                }
+                fieldsInjected = true;
+              }
               if (isFinishChunk && !hasValidUsage(parsed.usage)) {
                 const estimated = estimateUsage(body, totalContentLength, FORMATS.OPENAI);
                 parsed.usage = filterUsageForFormat(estimated, FORMATS.OPENAI);

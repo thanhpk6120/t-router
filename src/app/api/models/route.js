@@ -4,6 +4,7 @@ import { getDisabledModels } from "@/lib/disabledModelsDb";
 import { AI_MODELS } from "@/shared/constants/config";
 import { getProviderAlias, ALIAS_TO_ID } from "@/shared/constants/providers";
 import { getCapabilitiesForModel } from "open-sse/providers/capabilities.js";
+import { onInvalidateModelsListCache } from "@/sse/services/modelsListCache.js";
 
 // T Router: the catalog is near-static (constants + aliases + disabled +
 // custom rows) but ~320KB to build and ship — cache the payload for 30s so
@@ -17,6 +18,12 @@ let modelsCache = { at: 0, payload: null };
 export function __resetModelsCache() {
   modelsCache = { at: 0, payload: null };
 }
+
+// Repo writes (custom model / alias / disabled) clear the shared cache; this
+// payload must drop with it or a caps edit stays invisible for up to 30s.
+onInvalidateModelsListCache(() => {
+  modelsCache = { at: 0, payload: null };
+});
 
 // GET /api/models - Get models with aliases
 export async function GET() {

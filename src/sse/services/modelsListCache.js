@@ -29,6 +29,19 @@ export function setModelsListCache(key, data) {
   entries.set(key, { at: Date.now(), data });
 }
 
+// Additional caches elsewhere (e.g. the 30s catalog payload in
+// /api/models) register here so a single repo-level write invalidates every
+// model list, not just this module's key-scoped cache.
+const listeners = new Set();
+
+export function onInvalidateModelsListCache(fn) {
+  if (typeof fn === "function") listeners.add(fn);
+  return () => listeners.delete(fn);
+}
+
 export function invalidateModelsListCache() {
   entries.clear();
+  for (const fn of listeners) {
+    try { fn(); } catch { /* a broken listener must not block the write path */ }
+  }
 }

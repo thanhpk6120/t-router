@@ -130,3 +130,9 @@ export function hasMalformedDeepSeekToolIntent(text, requestedTools) {
     !!emittedName && !!resolveRequestedToolName(emittedName, getRequestedToolNames(requestedTools))
   );
 }
+
+/** True when the reply carried tool markup but the parser yielded no usable calls. */
+export function hasDroppedToolCalls(rawText, parsed) {
+  if (parsed?.toolCalls?.length) return false;
+  return hasMalformedDeepSeekToolMarkup(rawText);
+}
