@@ -237,13 +237,26 @@ export async function bulkSetConnectionsActive(provider, authTypes, isActive) {
       // Re-enable is a deliberate operator action: give a quarantined account a
       // fresh chance instead of letting one failure re-quarantine it, matching
       // what updateProviderConnection already does on a single-row enable.
+      // Those counters live INSIDE the `data` JSON column, not in columns of
+      // their own — an UPDATE naming them threw "no such column", the whole
+      // transaction rolled back and every attempt to re-enable a provider
+      // answered 500. Rewrite the JSON for the rows that actually carry them.
       const scope = wanted.length
         ? `provider = ? AND authType IN (${wanted.map(() => "?").join(", ")})`
         : `provider = ?`;
-      db.run(
-        `UPDATE providerConnections SET consecutiveAuthFailures = 0, quarantineReason = NULL, quarantinedAt = NULL WHERE ${scope}`,
-        [provider, ...wanted],
-      );
+      const rows = db.all(`SELECT * FROM providerConnections WHERE ${scope}`, [provider, ...wanted]);
+      for (const row of rows) {
+        const conn = rowToConn(row);
+        if (
+          conn.consecutiveAuthFailures == null &&
+          conn.quarantineReason == null &&
+          conn.quarantinedAt == null
+        ) continue;
+        delete conn.consecutiveAuthFailures;
+        delete conn.quarantineReason;
+        delete conn.quarantinedAt;
+        upsert(db, conn);
+      }
     }
   });
   if ((info?.changes ?? 0) > 0) invalidateModelsListCache();

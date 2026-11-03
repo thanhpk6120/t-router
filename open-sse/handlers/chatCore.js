@@ -185,7 +185,11 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
   if (credentials) credentials.rawHeaders = clientRawRequest?.headers || {};
 
   // Auto-strip media blocks the model can't read (vision/audio/pdf) before translation.
-  if (!passthrough) {
+  // A dashboard capability probe skips this: the point of "test image" is to see
+  // whether THIS model can read the image, and stripping it answers the capability
+  // table instead of the model.
+  const isCapabilityProbe = String(clientRawRequest?.headers?.["x-9r-capability-probe"] || "") === "1";
+  if (!passthrough && !isCapabilityProbe) {
     const caps = getCapabilitiesForModel(provider, model);
     if (stripUnsupportedModalities(body, sourceFormat, caps)) {
       log?.debug?.("MODALITY", `stripped unsupported media for ${provider}/${model}`);

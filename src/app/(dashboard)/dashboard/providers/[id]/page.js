@@ -1567,9 +1567,30 @@ export default function ProviderDetailPage() {
             would also hide these models from every picker. */}
         {loadedDisplayModels.length > 0 && (
           <div className="w-full mt-2">
-            <p className="text-xs text-text-muted mb-2">
-              {translate("Loaded models")} ({loadedDisplayModels.filter((m) => m.enabled).length}/{loadedDisplayModels.length})
-            </p>
+            <div className="mb-2 flex flex-wrap items-center gap-2">
+              <p className="text-xs text-text-muted">
+                {translate("Loaded models")} ({loadedDisplayModels.filter((m) => m.enabled).length}/{loadedDisplayModels.length})
+              </p>
+              {/* Bulk controls: picking "which of these do we use" one switch at
+                  a time is the slow path, and this list is the same selection
+                  /v1/models publishes. */}
+              <button
+                type="button"
+                disabled={savingSelection}
+                onClick={() => persistModelSelection(loadedDisplayModels.map((m) => m.id))}
+                className="rounded border border-border px-2 py-0.5 text-[11px] text-text-muted transition-colors hover:border-primary/40 hover:text-primary disabled:opacity-50"
+              >
+                {translate("Select all")}
+              </button>
+              <button
+                type="button"
+                disabled={savingSelection}
+                onClick={() => persistModelSelection([])}
+                className="rounded border border-border px-2 py-0.5 text-[11px] text-text-muted transition-colors hover:border-red-500/40 hover:text-red-500 disabled:opacity-50"
+              >
+                {translate("Clear")}
+              </button>
+            </div>
             <div className="flex flex-wrap gap-3">
               {loadedDisplayModels.map((m) => {
                 const id = m.id;

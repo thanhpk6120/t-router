@@ -5,6 +5,16 @@ Upstream changelogs (`CHANGELOG.md` and `CHANGELOG-PRO.md`) are kept intact for 
 
 ---
 
+## v0.5.112-pro.16-t.9 (2026-11-04)
+
+- **Provider switch (critical)**: re-enabling a provider from `/dashboard/providers` returned 500 — the "fresh chance" UPDATE named `consecutiveAuthFailures` / `quarantineReason` / `quarantinedAt`, which are fields inside the connection's `data` JSON, not columns. The transaction rolled back, so a provider could be switched off and never back on. The reset now rewrites the JSON of the rows that carry those fields.
+- **Test image**: the probe is sent as a capability probe, so the router skips the capacity adapter (it used to answer with the vision pool model and report "image OK" for a model that never saw the image) and the modality strip (it removed the image and reported the capability table instead of the model). Both probe buttons are now offered for every model, not only for the ones the capability table pre-labels.
+- **Test thinking**: the probe now streams and reads `delta.reasoning_content`. The non-stream handler deletes `reasoning_content` whenever the answer also has content, so a genuinely reasoning model read as "does not expose thinking" unless its provider reported `reasoning_tokens`.
+- **Load models**: the loader (and the per-model switches that write `enabledModels`) was unreachable because it only rendered for active connections — which the switch bug kept inactive. Added Select all / Clear for the loaded list; `/v1/models` publishes exactly the left-on models.
+- **Model picker**: applies each connection's `enabledModels` allowlist, so combos/injections offer the same models the provider publishes. Compatible providers no longer show a `model-id` placeholder while their real loaded models are missing.
+- **Prompt Rule**: verified multi-select (picker stays open, second pick adds, save stores every chosen model).
+- Regression guards added to `tests/unit/dashboard-fixes.test.js`.
+
 ## v0.5.112-pro.16-t.8 (2026-11-03)
 
 - **UI load time**: the dashboard paid for the full Material Symbols font (all 4004 icons, 3.9 MB) on every page — including `/login` — because `material-symbols/outlined.css` pulled the whole file into the global stylesheet. It is now a generated subset (`src/app/fonts/material-symbols-outlined-subset.woff2`, 51 KB, 222 icons) referenced by a local `@font-face`; `scripts/build-icon-subset.py` regenerates it and pins the unused variation axes. Icon ligatures still resolve, since the generator keeps the letter glyphs the ligatures are built from (`layout_closure` off, or the subsetter would re-add every icon).

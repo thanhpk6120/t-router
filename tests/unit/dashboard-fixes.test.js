@@ -54,8 +54,12 @@ describe("bulk provider toggle", () => {
   });
 
   it("clears quarantine state when re-enabling", () => {
+    // Those counters live in the `data` JSON blob. An UPDATE naming them threw
+    // "no such column", so re-enabling a provider answered 500 — the provider
+    // could be switched off but never back on.
     const fn = repo.slice(repo.indexOf("export async function bulkSetConnectionsActive"));
-    expect(fn).toContain("quarantineReason = NULL");
+    expect(fn).toContain("delete conn.quarantineReason");
+    expect(fn).not.toContain("quarantineReason = NULL");
   });
 });
 
@@ -122,6 +126,9 @@ describe("active-model allowlist", () => {
 describe("capability probes", () => {
   const ping = read("src/app/api/models/test/ping.js");
   const route = read("src/app/api/models/test/route.js");
+  const chat = read("src/sse/handlers/chat.js");
+  const chatCore = read("open-sse/handlers/chatCore.js");
+  const modal = read("src/shared/components/ModelSelectModal.js");
 
   it("accepts an image and a thinking probe", () => {
     expect(route).toContain("probe");
@@ -138,9 +145,48 @@ describe("capability probes", () => {
     expect(ping).toContain("crimson");
   });
 
-  it("requires real reasoning output for the thinking probe", () => {
-    expect(ping).toContain("reasoning_tokens");
-    expect(ping).toContain("No reasoning output");
+  it("measures one model: the probe bypasses the capacity adapter and modality strip", () => {
+    // Both filters belong to normal traffic. Without this the dashboard reported
+    // the pool model's vision (green "image OK") for a model that never saw the
+    // image, and the strip answered from the capability table instead.
+    expect(ping).toContain("x-9r-capability-probe");
+    expect(chat).toContain('clientRawRequest?.headers?.["x-9r-capability-probe"] === "1"');
+    expect(chat).toContain("if (soloAugmented.length > 1 && !isCapabilityProbe)");
+    expect(chatCore).toContain('clientRawRequest?.headers?.["x-9r-capability-probe"]');
+    expect(chatCore).toContain("if (!passthrough && !isCapabilityProbe)");
+  });
+
+  it("reads thinking from the stream, where the router keeps reasoning", () => {
+    // The non-stream handler deletes message.reasoning_content when the answer
+    // also has content, so a reasoning model read as "no thinking" unless its
+    // provider reported reasoning_tokens.
+    expect(ping).toContain("runThinkingProbeStream");
+    expect(ping).toContain("stream: true");
+    expect(ping).toContain("delta.reasoning_content");
+  });
+
+  it("offers both probes for every model", () => {
+    const row = read("src/app/(dashboard)/dashboard/providers/[id]/ModelRow.js");
+    expect(row).not.toContain("caps?.vision && !caps?.imageOutput");
+    expect(row).not.toContain("onTestThinking && caps?.reasoning");
+  });
+
+  it("offers only the models the provider publishes in its picker", () => {
+    expect(modal).toContain("allowByProvider");
+    expect(modal).toContain("allow.ids.has(m.id)");
+    expect(modal).not.toContain("deliberately NOT applied");
+  });
+});
+
+describe("enabling a provider", () => {
+  const repo = read("src/lib/db/repos/connectionsRepo.js");
+
+  it("does not UPDATE quarantine counters as if they were columns", () => {
+    // They live inside the `data` JSON blob. Naming them in an UPDATE threw
+    // "no such column", rolled the transaction back and answered 500, so a
+    // provider could be disabled but never enabled again.
+    expect(repo).not.toMatch(/SET consecutiveAuthFailures = 0/);
+    expect(repo).toContain("delete conn.consecutiveAuthFailures");
   });
 });
 

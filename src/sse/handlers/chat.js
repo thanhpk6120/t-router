@@ -313,7 +313,12 @@ async function handleChatImpl(request, clientRawRequest = null, requestId = null
   const { memberInjectName: soloInjectName, variantBacking: soloVariantBacking } =
     createVariantHelpers(await getInjectVariants().catch(() => ({})), modelStr);
   const soloAugmented = await filterAdapterModels(keyAccess, augmentModelsWithCapacityAdapter([modelStr], requiredCapabilities, settings, soloVariantBacking), [modelStr]);
-  if (soloAugmented.length > 1) {
+  // A capability probe from the dashboard measures ONE model. The capacity
+  // adapter would prepend a pool model and the probe would report the pool's
+  // vision instead of the tested model's — the dashboard then shows a green
+  // "image OK" for a model that never saw the image.
+  const isCapabilityProbe = clientRawRequest?.headers?.["x-9r-capability-probe"] === "1";
+  if (soloAugmented.length > 1 && !isCapabilityProbe) {
     const adapterAdded = soloAugmented.filter((m) => m !== modelStr);
     log.info("CHAT", `Capacity adapter for [${[...requiredCapabilities].join(",")}] on "${modelStr}" → trying ${soloAugmented.join(", ")}`);
     return handleComboChat({

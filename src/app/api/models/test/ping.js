@@ -52,6 +52,11 @@ async function getInternalHeaders() {
   const headers = { "Content-Type": "application/json" };
   if (apiKey) headers["Authorization"] = `Bearer ${apiKey}`;
   headers["x-9r-cli-token"] = await getConsistentMachineId(CLI_TOKEN_SALT);
+  // Tells the router this call measures ONE model: skip the capacity-adapter
+  // fallback (it would answer with a pool model) and skip the modality strip
+  // (it would remove the image and report the capability table instead of the
+  // model). Without this the probe's verdict can describe a different model.
+  headers["x-9r-capability-probe"] = "1";
   return headers;
 }
 
@@ -97,6 +102,89 @@ function buildProbeBody(model, probe) {
     stream: false,
     messages: [{ role: "user", content: "hi" }],
   };
+}
+
+// Thinking probe: stream, because a stream is the only place the router keeps
+// the reasoning. The non-streaming handler deletes `message.reasoning_content`
+// whenever the answer also carries content (clients must not see the chain of
+// thought), so a genuinely reasoning model read as "no thinking" unless its
+// provider happened to report reasoning_tokens — a false negative the operator
+// saw as "this model has no thinking". Reading deltas is also exactly what a
+// real client receives.
+async function runThinkingProbeStream({ baseUrl, headers, model, budgetMs }) {
+  const res = await fetch(`${baseUrl}/api/v1/chat/completions`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({
+      ...buildProbeBody(model, "thinking"),
+      stream: true,
+      stream_options: { include_usage: true },
+    }),
+    signal: AbortSignal.timeout(budgetMs),
+  });
+
+  if (!res.ok) {
+    const raw = await res.text().catch(() => "");
+    let parsed = null;
+    try { parsed = raw ? JSON.parse(raw) : null; } catch {}
+    const detail = parsed?.error?.message || parsed?.error || raw;
+    return { ok: false, status: res.status, error: `HTTP ${res.status}${detail ? `: ${String(detail).slice(0, 400)}` : ""}` };
+  }
+
+  const noThinking = "No reasoning output: this model does not expose thinking (or it is disabled for the provider)";
+
+  // A provider (or the router's JSON path) may ignore stream=true.
+  if (!(res.headers.get("content-type") || "").includes("text/event-stream")) {
+    const raw = await res.text().catch(() => "");
+    let parsed = null;
+    try { parsed = raw ? JSON.parse(raw) : null; } catch {}
+    const message = parsed?.choices?.[0]?.message || {};
+    const reasoning = message.reasoning_content || message.reasoning || message.thinking || message.thinking_content;
+    const tokens = Number(parsed?.usage?.completion_tokens_details?.reasoning_tokens || parsed?.usage?.reasoning_tokens || 0);
+    if (reasoning || tokens > 0) return { ok: true, status: res.status };
+    return { ok: false, status: res.status, error: noThinking };
+  }
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let reasoning = "";
+  let reasoningTokens = 0;
+  let streamError = null;
+
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      let boundary;
+      while ((boundary = buffer.indexOf("\n\n")) >= 0) {
+        const event = buffer.slice(0, boundary);
+        buffer = buffer.slice(boundary + 2);
+        for (const line of event.split("\n")) {
+          if (!line.startsWith("data:")) continue;
+          const payload = line.slice(5).trim();
+          if (!payload || payload === "[DONE]") continue;
+          let parsed;
+          try { parsed = JSON.parse(payload); } catch { continue; }
+          if (parsed?.error) { streamError = parsed.error?.message || parsed.error; continue; }
+          const delta = parsed?.choices?.[0]?.delta || {};
+          const piece = delta.reasoning_content || delta.reasoning || delta.thinking_content;
+          if (piece) reasoning += piece;
+          const tokens = Number(parsed?.usage?.completion_tokens_details?.reasoning_tokens || parsed?.usage?.reasoning_tokens || 0);
+          if (tokens > 0) reasoningTokens = tokens;
+        }
+      }
+      // Enough evidence either way — stop paying for the rest of the stream.
+      if (reasoning.trim() || reasoningTokens > 0) break;
+    }
+  } finally {
+    try { await reader.cancel(); } catch {}
+  }
+
+  if (reasoning.trim() || reasoningTokens > 0) return { ok: true, status: res.status };
+  if (streamError) return { ok: false, status: res.status, error: String(streamError).slice(0, 240) };
+  return { ok: false, status: res.status, error: noThinking };
 }
 
 export async function pingModelByKind(model, kind, baseUrl = `http://127.0.0.1:${process.env.PORT || UPDATER_CONFIG.appPort}`, probe = "text") {
@@ -209,6 +297,16 @@ export async function pingModelByKind(model, kind, baseUrl = `http://127.0.0.1:$
     return { ok: true, latencyMs, error: null, status: res.status };
   }
 
+  if (probe === "thinking") {
+    const thinking = await runThinkingProbeStream({ baseUrl, headers, model, budgetMs: 90000 });
+    return {
+      ok: thinking.ok,
+      latencyMs: Date.now() - start,
+      error: thinking.ok ? null : thinking.error,
+      status: thinking.status,
+    };
+  }
+
   const res = await fetch(`${baseUrl}/api/v1/chat/completions`, {
     method: "POST",
     headers,
@@ -304,23 +402,6 @@ export async function pingModelByKind(model, kind, baseUrl = `http://127.0.0.1:$
         error: answerText
           ? `Answered "${answerText.slice(0, 120)}" — the model may not process images`
           : "Empty answer: the image was not processed",
-      };
-    }
-    return { ok: true, latencyMs, error: null, status: res.status };
-  }
-
-  if (probe === "thinking") {
-    const reasoningTokens = Number(
-      parsed?.usage?.completion_tokens_details?.reasoning_tokens
-      || parsed?.usage?.reasoning_tokens
-      || 0,
-    );
-    if (!hasReasoning && !(reasoningTokens > 0)) {
-      return {
-        ok: false,
-        latencyMs,
-        status: res.status,
-        error: "No reasoning output: this model does not expose thinking (or it is disabled for the provider)",
       };
     }
     return { ok: true, latencyMs, error: null, status: res.status };

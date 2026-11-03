@@ -333,6 +333,27 @@ export default function ModelSelectModal({
       ...compatibleNodeIds,    // Compatible nodes with user-added models
     ].filter((id) => !deactivatedProviderIds.has(id)));
 
+    // What each provider actually serves = the connection's `enabledModels`
+    // allowlist (the list the provider page loads and the operator curates).
+    // /v1/models publishes exactly that; ignoring it here made the picker offer
+    // models the provider does not serve ("thừa") and, for compatible nodes,
+    // show only a `model-id` placeholder while the loaded models were missing
+    // ("thiếu").
+    const allowByProvider = new Map();
+    for (const c of [...filteredActiveProviders, ...effectiveConnections]) {
+      if (!c?.provider) continue;
+      const psd = c.providerSpecificData || {};
+      const ids = Array.isArray(psd.enabledModels)
+        ? psd.enabledModels.filter((m) => typeof m === "string" && m)
+        : [];
+      // Empty list without the explicit flag is "never chosen" → publish-all.
+      const explicit = psd.enabledModelsExplicit === true || ids.length > 0;
+      if (!explicit) continue;
+      const entry = allowByProvider.get(c.provider) || { ids: new Set() };
+      for (const id of ids) entry.ids.add(id);
+      allowByProvider.set(c.provider, entry);
+    }
+
     // Sort by PROVIDER_ORDER
     const sortedProviderIds = [...providerIdsToShow].sort((a, b) => {
       const indexA = PROVIDER_ORDER.indexOf(a);
@@ -453,17 +474,28 @@ export default function ModelSelectModal({
             value: `${nodePrefix}/${m.id}`,
             isCustom: true,
           }));
-        const seen = new Set(nodeModels.map((m) => m.value));
-        const mergedModels = [...nodeModels, ...registeredCustom.filter((m) => !seen.has(m.value))];
+        // The loaded/selected catalog is authoritative for a compatible node:
+        // without it the picker only knew aliases and showed a placeholder while
+        // the provider page listed real models.
+        const allowEntry = allowByProvider.get(providerId);
+        const allowModels = allowEntry
+          ? [...allowEntry.ids].map((id) => ({ id, name: id, value: `${nodePrefix}/${id}` }))
+          : [];
+        const seen = new Set();
+        const mergedModels = [...allowModels, ...nodeModels, ...registeredCustom].filter((m) => {
+          if (seen.has(m.value)) return false;
+          seen.add(m.value);
+          return !allowEntry || allowEntry.ids.has(m.id);
+        });
 
         // Always show compatible providers that are connected, even with no aliases.
         // When no aliases exist, show a placeholder so users know it's available.
-        const modelsToShow = mergedModels.length > 0 ? mergedModels : [{
+        const modelsToShow = mergedModels.length > 0 ? mergedModels : (allowEntry ? [] : [{
           id: `__placeholder__${providerId}`,
           name: `${nodePrefix}/model-id`,
           value: `${nodePrefix}/model-id`,
           isPlaceholder: true,
-        }];
+        }]);
 
         groups[providerId] = {
           name: displayName,
@@ -545,10 +577,17 @@ export default function ModelSelectModal({
       if (group.models.length === 0) delete groups[providerId];
     });
 
-    // The connection allowlist (enabledModels) is deliberately NOT applied
-    // here. It governs what /v1/models PUBLISHES; this picker chooses what to
-    // USE. Filtering by it deleted whole providers from the picker the moment
-    // any allowlist existed — including the models a user needs to re-select.
+    // Apply the published allowlist. An explicitly emptied selection hides the
+    // provider (it serves nothing); a partial one keeps only the chosen models,
+    // so the picker always matches "Loaded models" on the provider page.
+    Object.entries(groups).forEach(([providerId, group]) => {
+      const allow = allowByProvider.get(providerId);
+      if (!allow) return;
+      const kept = group.models.filter((m) => allow.ids.has(m.id));
+      if (kept.length === 0) delete groups[providerId];
+      else group.models = kept;
+    });
+
     return groups;
   }, [filteredActiveProviders, modelAliases, allProviders, providerNodes, customModels, disabledModels, kindFilter, effectiveConnections, deactivatedProviderIds, liveCatalogs]);
 

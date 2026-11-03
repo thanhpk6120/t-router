@@ -54,10 +54,11 @@ export default function ModelRow({ model, fullModel, alias, copied, onCopy, test
               </span>
             </div>
           )}
-          {/* Image probe: only for models the capability table marks as
-              vision-capable. A non-vision model would answer as if no image
-              was attached, which reads as a pass — so the button is hidden. */}
-          {onTestImage && caps?.vision && !caps?.imageOutput && (
+          {/* Image probe: offered for every model. The probe measures the model
+              itself (it bypasses the router's modality strip), so hiding the
+              button for models the capability table calls "no vision" only hid
+              the way to verify that label. */}
+          {onTestImage && (
             <div className="relative shrink-0 group/btn">
               <button
                 onClick={onTestImage}
@@ -73,8 +74,10 @@ export default function ModelRow({ model, fullModel, alias, copied, onCopy, test
               </span>
             </div>
           )}
-          {/* Thinking probe: only for models that declare reasoning. */}
-          {onTestThinking && caps?.reasoning && (
+          {/* Thinking probe: offered for every model too — a model can reason
+              even when the capability table did not say so, and the probe is
+              the only way to find out. */}
+          {onTestThinking && (
             <div className="relative shrink-0 group/btn">
               <button
                 onClick={onTestThinking}
