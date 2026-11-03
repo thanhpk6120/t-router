@@ -5,6 +5,10 @@ Upstream changelogs (`CHANGELOG.md` and `CHANGELOG-PRO.md`) are kept intact for 
 
 ---
 
+## v0.5.112-pro.16-t.10 (2026-11-04)
+
+- Re-release of t.9 (identical code): npm accepted `0.5.112-pro.16-t.9` into its staging queue and never promoted it, so `npm i -g t-router-proxy@latest` still resolved to t.8. Bumping the patch keeps the fixes publishable; t.9 stays staged and can be ignored/deprecated.
+
 ## v0.5.112-pro.16-t.9 (2026-11-04)
 
 - **Provider switch (critical)**: re-enabling a provider from `/dashboard/providers` returned 500 — the "fresh chance" UPDATE named `consecutiveAuthFailures` / `quarantineReason` / `quarantinedAt`, which are fields inside the connection's `data` JSON, not columns. The transaction rolled back, so a provider could be switched off and never back on. The reset now rewrites the JSON of the rows that carry those fields.
