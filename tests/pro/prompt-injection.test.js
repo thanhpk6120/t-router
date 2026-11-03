@@ -356,3 +356,35 @@ describe("selectPromptInjections", () => {
     assert.ok(rule.id.startsWith("rule-"));
   });
 });
+
+describe("rules with an explicitly empty target list", () => {
+  it("cleanRule keeps [] instead of widening it to the wildcard", () => {
+    const rule = cleanRule({ name: "Applies nowhere", mode: "single", content: "X", models: [], apiKeys: [] });
+    assert.deepEqual(rule.models, []);
+    assert.deepEqual(rule.apiKeys, []);
+  });
+
+  it("an empty list matches nothing, while a missing list stays legacy match-all", () => {
+    const none = [{
+      id: "r_none", name: "none", enabled: true, mode: "single",
+      content: "NONE", models: [], apiKeys: [],
+    }];
+    assert.deepEqual(
+      selectPromptInjections(
+        { rules: none, templates: [] },
+        { apiKeyId: "key_1", resolvedModel: "m1", requestedModel: "m1" }
+      ),
+      []
+    );
+
+    const legacy = [{
+      id: "r_legacy", name: "legacy", enabled: true, mode: "single", content: "ALL",
+    }];
+    const out = selectPromptInjections(
+      { rules: legacy, templates: [] },
+      { apiKeyId: "key_1", resolvedModel: "m1", requestedModel: "m1" }
+    );
+    assert.equal(out.length, 1);
+    assert.equal(out[0].text, "ALL");
+  });
+});

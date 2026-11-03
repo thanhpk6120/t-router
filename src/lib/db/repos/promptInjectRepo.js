@@ -645,7 +645,10 @@ export function cleanRule(raw, nodes = []) {
       if (!cleanModels.includes(routed)) cleanModels.push(routed);
     }
   }
-  const models = cleanModels.length ? cleanModels : ["*"];
+  // An explicitly empty list means "applies to nothing". Only a missing
+  // `models` field (undefined) falls back to the wildcard above; forcing [] to
+  // ["*"] here turned a rule the user just cleared into a global rule.
+  const models = cleanModels;
 
   // Clean apiKeys: array of strings.
   const rawKeys = Array.isArray(raw.apiKeys) ? raw.apiKeys : ["*"];
@@ -660,7 +663,8 @@ export function cleanRule(raw, nodes = []) {
       if (!cleanKeys.includes(trimmed)) cleanKeys.push(trimmed);
     }
   }
-  const apiKeys = cleanKeys.length ? cleanKeys : ["*"];
+  // Same contract as models: [] is a deliberate "matches no key", not "all".
+  const apiKeys = cleanKeys;
 
   const mode = raw.mode === "chat" ? "chat" : "single";
   const content = typeof raw.content === "string" ? raw.content : "";
@@ -782,20 +786,19 @@ export function selectPromptInjectionsDetailed({ global, byKey, byModel, byKeyMo
     for (const rule of rules) {
       if (!rule || rule.enabled === false) continue;
 
-      // API Key match: wildcard "*" or matching apiKeyId
-      const keyMatch =
-        !rule.apiKeys ||
-        !rule.apiKeys.length ||
-        rule.apiKeys.includes("*") ||
-        (ctx.apiKeyId && rule.apiKeys.includes(ctx.apiKeyId));
+      // API Key match: missing list = legacy "all keys"; an explicitly empty
+      // list matches nothing; otherwise wildcard or the calling key id.
+      const keyMatch = !Array.isArray(rule.apiKeys)
+        ? true
+        : rule.apiKeys.includes("*")
+          || Boolean(ctx.apiKeyId && rule.apiKeys.includes(ctx.apiKeyId));
       if (!keyMatch) continue;
 
-      // Model match: wildcard "*" or matching any candidateModel or bare model name
-      const modelMatch =
-        !rule.models ||
-        !rule.models.length ||
-        rule.models.includes("*") ||
-        rule.models.some((m) => {
+      // Model match: same contract as apiKeys, plus any candidate (full or bare).
+      const modelMatch = !Array.isArray(rule.models)
+        ? true
+        : rule.models.includes("*")
+          || rule.models.some((m) => {
           if (!m || typeof m !== "string") return false;
           const trimmed = m.trim();
           if (trimmed === "*") return true;
@@ -919,6 +922,13 @@ async function getInjectSnapshot() {
         getPromptTemplates(),
       ]);
       snapshot = { at: Date.now(), global, byKey, byModel, byKeyModel, byVariant, rules, templates };
+      // The coalesced builder is what every concurrent caller awaits, so it
+      // must resolve to the snapshot itself. Assigning only to the module
+      // variable made the first caller after each cache miss (TTL expiry or
+      // any write) receive `undefined`, which selectPromptInjections read as
+      // "no injections" and resolvePromptInjectionMeta threw on (snap.global)
+      // — every caller coalesced onto that build silently lost its prompt.
+      return snapshot;
     })().finally(() => { snapshotInflight = null; });
   }
   return snapshotInflight;

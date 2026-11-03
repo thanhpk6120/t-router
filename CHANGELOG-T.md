@@ -5,6 +5,16 @@ Upstream changelogs (`CHANGELOG.md` and `CHANGELOG-PRO.md`) are kept intact for 
 
 ---
 
+## v0.5.112-pro.16-t.7 (2026-11-03)
+
+- **Request-hang hardening**: SSE→JSON body reads now share the client's total-request budget; flaky-body inspection is bounded and clears its timer on every read; proxy candidates share one sliced connect budget instead of one full window each; the provider connect timeout reaches the proxy phase; evicted proxy dispatchers are closed; token-refresh fetches are capped at 30s; the client abort signal is forwarded through the account loop; streaming clients get an SSE keepalive while combos/retries run.
+- **Provider controls**: no-auth providers honour the dashboard on/off switch (settings gate in `auth`, `/v1/models`, and the no-auth fetch/search/tts/image/video handlers); the list switch no longer filters the bulk UPDATE by registry auth types (which matched zero stored rows); re-enabling clears quarantine state and invalidates the models-list cache.
+- **Model catalog**: every provider's picker reads its live catalog (stable effect signature, no fetch loop); providers without a live resolver fall back to their built-in catalog instead of a 400; the active-model allowlist is enforced after the live override and on merged rows, with `enabledModelsExplicit` keeping an empty selection authoritative; the provider page lists every loaded model with a per-model switch.
+- **Capability probes**: image probe (16×16 PNG, colour synonyms, rejects a silently stripped image) and thinking probe (requires real reasoning output, longer budget), with per-probe results kept independent.
+- **Prompt injection**: the rule picker stays open for multi-select/deselect; an explicitly emptied model/key target list now persists as `[]` and matches nothing instead of widening to `*` (cleanRule + matching + tests).
+- **Prompt variants**: variant saves route directly and no longer create shadow combos; the variant tests were updated to that contract.
+- **Fixes**: the solo chat call passed the abort signal into the attempt-cap slot; flaky-guard timers leaked one armed timer per chunk; proxy rotation dropped the client abort chain once headers arrived.
+
 ## v0.5.112-pro.16-t.1 (2026-11-02)
 
 - Automated sync and release via Telegram Bot.

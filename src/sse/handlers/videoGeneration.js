@@ -5,7 +5,7 @@ import {
   extractApiKey,
   isValidApiKey,
 } from "../services/auth.js";
-import { resolveComboMemberAttemptCap, createAttemptLimiter, accountExhaustedResponse } from "../services/memberFailover.js";
+import { resolveComboMemberAttemptCap, createAttemptLimiter, accountExhaustedResponse, isProviderDisabled } from "../services/memberFailover.js";
 import { getSettings, getProviderConnectionById } from "@/lib/localDb";
 import { getModelInfo } from "../services/model.js";
 import { getKeyAccessContext, enforceKeyAccessResolved } from "../services/keyAccess.js";
@@ -163,6 +163,10 @@ async function handleVideoCreateImpl(request, action, requestId = null) {
 
   // noAuth providers — executor-driven generation, no credential needed
   if (NO_AUTH_VIDEO_PROVIDERS.has(provider)) {
+    // This helper takes no settings; read them here.
+    if (isProviderDisabled(await getSettings(), provider)) {
+      return errorResponse(HTTP_STATUS.SERVICE_UNAVAILABLE, `Provider ${provider} is disabled`);
+    }
     const result = await handleVideoProxyCore({
       provider,
       action,

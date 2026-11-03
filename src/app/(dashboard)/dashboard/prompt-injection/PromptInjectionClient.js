@@ -564,8 +564,11 @@ function RuleModal({ rule, templates, keys, keyName, onClose, onSave, saving }) 
 
   const handleSave = () => {
     const trimmedName = name.trim() || "Untitled Rule";
-    const models = allModels || selectedModels.length === 0 ? ["*"] : selectedModels;
-    const apiKeys = allKeys || selectedKeys.length === 0 ? ["*"] : selectedKeys;
+    // "All models" is its own checkbox. An explicitly emptied tag list now means
+    // "applies to nothing" — collapsing it to ["*"] turned a rule the user just
+    // cleared into a global all-models rule.
+    const models = allModels ? ["*"] : selectedModels;
+    const apiKeys = allKeys ? ["*"] : selectedKeys;
 
     if (sourceType === "template") {
       if (!templateId) {
@@ -933,14 +936,25 @@ function RuleModal({ rule, templates, keys, keyName, onClose, onSave, saving }) 
         </div>
       </div>
 
+      {/* A rule targets many models, so the picker stays open across picks:
+          clicking an already-added model removes it. The backend already
+          stores models as an array (cleanRule) and matches any of them. */}
       <ModelSelectModal
         isOpen={pickerOpen}
         onClose={() => setPickerOpen(false)}
-        onSelect={(m) => {
-          handleAddModel(m);
-          setPickerOpen(false);
+        onSelect={handleAddModel}
+        onDeselect={(m) => handleRemoveModel(modelPickValue(m))}
+        onSelectBatch={(list) => {
+          const vals = list.map(modelPickValue).filter(Boolean);
+          setSelectedModels((prev) => Array.from(new Set([...prev, ...vals])));
         }}
-        title="Add target model"
+        onDeselectBatch={(list) => {
+          const drop = new Set(list.map(modelPickValue));
+          setSelectedModels((prev) => prev.filter((m) => !drop.has(m)));
+        }}
+        addedModelValues={selectedModels}
+        closeOnSelect={false}
+        title="Add target models"
         hideCombos
         hideInjections
       />

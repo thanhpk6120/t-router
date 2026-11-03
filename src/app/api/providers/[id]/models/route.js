@@ -651,10 +651,27 @@ export async function GET(request, { params }) {
 
     const config = PROVIDER_MODELS_CONFIG[connection.provider];
     if (!config) {
-      return NextResponse.json(
-        { error: `Provider ${connection.provider} does not support models listing` },
-        { status: 400 }
-      );
+      // Providers with no live resolver used to 400 here, so the provider page
+      // showed an empty list and the picker fell back to its static catalog —
+      // the two disagreed. Answer with that same static catalog plus a warning
+      // so both sides read one list; `source: "static"` lets the UI say so.
+      // Reuse the existing helper: it normalizes every entry to { ...model, id,
+      // name }, and some registry rows carry no `name` — the picker and the
+      // provider page both render `id || name`, so raw rows showed blanks.
+      const staticModels = getStaticProviderModels(connection.provider) || [];
+      if (staticModels.length === 0) {
+        return NextResponse.json(
+          { error: `Provider ${connection.provider} does not support models listing` },
+          { status: 400 }
+        );
+      }
+      return NextResponse.json({
+        provider: connection.provider,
+        connectionId: connection.id,
+        models: staticModels,
+        source: "static",
+        warning: `No live model endpoint for ${connection.provider}; showing the built-in catalog.`,
+      });
     }
 
     // Config-driven custom resolver path (OAuth refresh, non-OpenAI shape, etc.)

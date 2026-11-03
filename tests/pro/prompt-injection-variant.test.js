@@ -31,16 +31,16 @@ afterAll(() => {
 });
 
 describe("prompt injection variants", () => {
-  it("saves a variant and creates its single-member combo", async () => {
+  it("saves a variant that routes directly, without creating a combo", async () => {
     const saved = await repo.setInjectVariant("dahlunce", {
       model: MODEL_A, mode: "single", content: "hello",
     });
     assert.ok(saved);
     assert.equal(saved.model, MODEL_A);
-    assert.ok(saved.comboId);
-    const combo = await combosRepo.getComboById(saved.comboId);
-    assert.equal(combo.name, "dahlunce");
-    assert.deepEqual(combo.models, [MODEL_A]);
+    // A variant name routes directly (dispatch checks the variants map), so no
+    // combo object is created — the Kombinasi page only shows user-made combos.
+    assert.equal(saved.comboId, null);
+    assert.equal(await combosRepo.getComboByName("dahlunce"), null);
     const map = await repo.getInjectVariants();
     assert.equal(map.dahlunce.model, MODEL_A);
   });
@@ -51,12 +51,13 @@ describe("prompt injection variants", () => {
     assert.equal(await repo.setInjectVariant("noname", { model: "bare-model", mode: "single", content: "x" }), null);
   });
 
-  it("caps a variant name at 80 chars", async () => {
-    const saved = await repo.setInjectVariant("v".repeat(200), { model: MODEL_A, mode: "single", content: "x" });
-    assert.ok(saved);
-    const map = await repo.getInjectVariants();
-    assert.ok(Object.keys(map).some((k) => k.length === 80));
-    await repo.deleteInjectVariant("v".repeat(80));
+  it("rejects a variant name longer than 80 chars", async () => {
+    const before = await repo.getInjectVariants();
+    assert.equal(
+      await repo.setInjectVariant("v".repeat(200), { model: MODEL_A, mode: "single", content: "x" }),
+      null,
+    );
+    assert.deepEqual(await repo.getInjectVariants(), before);
   });
 
   it("refuses a variant name already owned by another combo", async () => {
@@ -65,26 +66,26 @@ describe("prompt injection variants", () => {
     await combosRepo.deleteCombo((await combosRepo.getComboByName("taken")).id);
   });
 
-  it("changing the backing updates the same combo", async () => {
+  it("changing the backing updates the same variant, still without a combo", async () => {
     const before = await repo.setInjectVariant("dahlunce", {
       model: MODEL_B, mode: "single", content: "hello",
     });
-    const combo = await combosRepo.getComboById(before.comboId);
-    assert.deepEqual(combo.models, [MODEL_B]);
+    assert.equal(before.model, MODEL_B);
+    assert.equal(before.comboId, null);
+    assert.equal(await combosRepo.getComboByName("dahlunce"), null);
   });
 
-  it("deleting a variant deletes its combo, but never a combo the user renamed", async () => {
+  it("deleting a variant never deletes a user combo", async () => {
     await repo.setInjectVariant("todelete", { model: MODEL_A, mode: "single", content: "x" });
-    const comboId = (await repo.getInjectVariants()).todelete.comboId;
     assert.equal(await repo.deleteInjectVariant("todelete"), true);
-    assert.equal(await combosRepo.getComboById(comboId), null);
+    assert.equal((await repo.getInjectVariants()).todelete, undefined);
 
-    await repo.setInjectVariant("renamed", { model: MODEL_A, mode: "single", content: "x" });
-    const comboId2 = (await repo.getInjectVariants()).renamed.comboId;
-    await combosRepo.updateCombo(comboId2, { name: "user-renamed" });
-    assert.equal(await repo.deleteInjectVariant("renamed"), true);
-    assert.ok(await combosRepo.getComboById(comboId2));
-    await combosRepo.deleteCombo(comboId2);
+    await combosRepo.createCombo({ name: "user-renamed", models: [MODEL_A] });
+    await repo.setInjectVariant("keepme", { model: MODEL_A, mode: "single", content: "x" });
+    assert.equal(await repo.deleteInjectVariant("keepme"), true);
+    // A combo the user owns is untouched by variant deletion.
+    assert.ok(await combosRepo.getComboByName("user-renamed"));
+    await combosRepo.deleteCombo((await combosRepo.getComboByName("user-renamed")).id);
   });
 
   it("a variant pick injects, a raw pick does not, and a variant suppresses the model entry", async () => {
@@ -133,11 +134,10 @@ describe("prompt injection variants", () => {
     const variants = await repo.getInjectVariants();
     assert.equal(variants["dahl depsek"].model, MODEL_A);
     assert.equal(variants["dahl depsek"].content, "migrated-a");
-    assert.ok(variants["dahl depsek"].comboId);
+    assert.equal(variants["dahl depsek"].comboId, null);
     assert.equal(variants["dahl-glm-5-3-flash"].model, MODEL_B);
     assert.equal(variants["dahl-glm-5-3-flash"].content, "migrated-b");
-    const combo = await combosRepo.getComboByName("dahl-glm-5-3-flash");
-    assert.deepEqual(combo.models, [MODEL_B]);
+    assert.equal(await combosRepo.getComboByName("dahl-glm-5-3-flash"), null);
     assert.deepEqual(await repo.getInjectModelPrompts(), {});
     // Idempotent: a second run migrates nothing.
     assert.equal(await repo.migrateModelPromptsToVariants(), 0);

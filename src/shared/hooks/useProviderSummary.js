@@ -11,11 +11,14 @@ import { useState, useEffect, useCallback } from "react";
  * Also carries live provider-breaker states (P3-27), which bypass the
  * server's stats cache.
  *
- * @returns {{ statsMap: object, setStatsMap: function, breakers: object, loading: boolean, error: string|null, refresh: () => Promise<void> }}
+ * @returns {{ statsMap: object, setStatsMap: function, breakers: object, providerStrategies: object, setProviderStrategies: function, loading: boolean, error: string|null, refresh: () => Promise<void> }}
  */
 export function useProviderSummary() {
   const [statsMap, setStatsMap] = useState({});
   const [breakers, setBreakers] = useState({});
+  // Per-provider overrides. No-auth free providers own no connection rows, so
+  // this is the only place their enabled/disabled state is visible.
+  const [providerStrategies, setProviderStrategies] = useState({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
@@ -27,6 +30,7 @@ export function useProviderSummary() {
       if (res.ok) {
         setStatsMap(data.stats || {});
         setBreakers(data.breakers || {});
+        setProviderStrategies(data.providerStrategies || {});
         setError(null);
       } else {
         setError(data.error || `HTTP ${res.status}`);
@@ -42,5 +46,5 @@ export function useProviderSummary() {
     refresh();
   }, [refresh]);
 
-  return { statsMap, setStatsMap, breakers, loading, error, refresh };
+  return { statsMap, setStatsMap, breakers, providerStrategies, setProviderStrategies, loading, error, refresh };
 }

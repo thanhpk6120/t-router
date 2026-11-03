@@ -18,6 +18,7 @@ import { getProviderBreakerSnapshot } from "@/sse/services/providerBreaker.js";
 import { getProviderHealthSummary } from "@/lib/providerHealthSummary.js";
 import { toProviderConnectionResponse } from "@/lib/providerConnectionResponse";
 import { getStatsCache, setStatsCache, invalidateStatsCache } from "@/lib/providerStatsCache";
+import { invalidateModelsListCache } from "@/sse/services/modelsListCache.js";
 
 export const dynamic = "force-dynamic";
 
@@ -118,7 +119,14 @@ export async function GET(request) {
         };
       }
       const health = await getProviderHealthSummary();
-      return NextResponse.json({ stats: data, breakers, health });
+      // No-auth free providers have no connection rows, so their on/off state
+      // lives here. The page needs it to render their switch truthfully.
+      let providerStrategies = {};
+      try {
+        const { getSettings } = await import("@/lib/localDb");
+        providerStrategies = (await getSettings())?.providerStrategies || {};
+      } catch { /* fail-open */ }
+      return NextResponse.json({ stats: data, breakers, health, providerStrategies });
     }
     const providerFilter = params.get("provider") || undefined;
     const lite = params.get("lite") === "1";
@@ -171,10 +179,13 @@ export async function GET(request) {
 // provider (the list page's provider switch) in a single UPDATE.
 export async function PATCH(request) {
   try {
-    const { provider, authTypes, isActive } = await request.json();
-    if (!provider || !Array.isArray(authTypes) || !authTypes.length) {
-      return NextResponse.json({ error: "provider and authTypes are required" }, { status: 400 });
+    const { provider, authTypes: rawAuthTypes, isActive } = await request.json();
+    if (!provider) {
+      return NextResponse.json({ error: "provider is required" }, { status: 400 });
     }
+    // An empty/absent list means "every connection of this provider" — that is
+    // what the dashboard switch means. A non-empty list narrows it.
+    const authTypes = Array.isArray(rawAuthTypes) ? rawAuthTypes.filter(Boolean) : [];
 
     const isFreeOrNoAuth = !!(FREE_PROVIDERS[provider]?.noAuth || FREE_TIER_PROVIDERS[provider]?.noAuth || provider === "opencode" || AI_PROVIDERS[provider]?.noAuth);
     if (isFreeOrNoAuth) {
@@ -186,6 +197,10 @@ export async function PATCH(request) {
       override.disabled = !isActive;
       await updateSettings({ providerStrategies: { ...current, [provider]: override } });
       invalidateStatsCache();
+      // The settings row feeds /v1/models for no-auth providers; without this
+      // the disabled provider keeps publishing its cached model list for up to
+      // a minute (modelsListCache TTL).
+      invalidateModelsListCache();
       return NextResponse.json({ updated: 1 });
     }
 

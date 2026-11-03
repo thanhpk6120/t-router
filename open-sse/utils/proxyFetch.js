@@ -1,5 +1,5 @@
 import { Readable } from "stream";
-import { MEMORY_CONFIG } from "../config/runtimeConfig.js";
+import { MEMORY_CONFIG, FETCH_CONNECT_TIMEOUT_MS } from "../config/runtimeConfig.js";
 import { dbg } from "./debugLog.js";
 
 // Only a *patched instance of this module* is unsafe to call back into: the
@@ -260,7 +260,16 @@ async function getDispatcher(proxyUrl, insecure = false) {
   if (!proxyDispatchers.has(key)) {
     // Evict oldest entry if max size reached
     if (proxyDispatchers.size >= MEMORY_CONFIG.proxyDispatchersMaxSize) {
-      proxyDispatchers.delete(proxyDispatchers.keys().next().value);
+      const [oldKey, oldDispatcher] = proxyDispatchers.entries().next().value || [];
+      if (oldKey) {
+        // Close before dropping: deleting alone leaks the undici pool and its
+        // keep-alive sockets for the life of the process.
+        try {
+          if (typeof oldDispatcher.close === "function") oldDispatcher.close();
+          else if (typeof oldDispatcher.destroy === "function") oldDispatcher.destroy();
+        } catch {}
+        proxyDispatchers.delete(oldKey);
+      }
     }
     const { Agent, ProxyAgent } = await import("undici");
     const connect = insecure ? { rejectUnauthorized: false } : undefined;
@@ -335,16 +344,34 @@ async function createBypassRequest(parsedUrl, realIP, options) {
 
   return new Promise((resolve, reject) => {
     const socket = new net.Socket();
+    // Every exit path clears the timer and detaches the abort listener so a
+    // completed request never fires a late abort into a closed socket.
+    let settled = false;
+    let timer = null;
+    const onAbort = () => finish(new Error("fetch connect timeout"));
+    const finish = (err) => {
+      if (settled) return;
+      settled = true;
+      if (timer) { clearTimeout(timer); timer = null; }
+      try { options.signal?.removeEventListener?.("abort", onAbort); } catch {}
+      try { socket.destroy(); } catch {}
+      if (err) reject(err);
+    };
+
+    // This path bypasses undici entirely, so nothing else bounds it: without
+    // these three timers a socket that connects but never answers holds the
+    // request forever.
+    const timeoutMs = options.connectTimeoutMs || 60000;
+    timer = setTimeout(() => finish(new Error("fetch connect timeout")), timeoutMs);
+    if (options.signal) {
+      if (options.signal.aborted) return finish(new Error("aborted"));
+      try { options.signal.addEventListener("abort", onAbort, { once: true }); } catch {}
+    }
+    socket.setTimeout(timeoutMs, () => finish(new Error("fetch connect timeout")));
 
     socket.connect(HTTPS_PORT, realIP, () => {
       const reqOptions = {
         socket,
-        // SNI + cert hostname are validated against the hostname the caller
-        // asked for, not the IP we connected to. This keeps the DNS-bypass
-        // (avoiding /etc/hosts MITM) while still rejecting on-path attackers
-        // that present a different cert. The MITM_BYPASS_HOSTS targets are
-        // all public-CA-issued (Google / GitHub / AWS / Cursor) so default
-        // verification works without any extra trust store.
         servername: parsedUrl.hostname,
         path: parsedUrl.pathname + parsedUrl.search,
         method: options.method || "POST",
@@ -355,6 +382,10 @@ async function createBypassRequest(parsedUrl, realIP, options) {
       };
 
       const req = https.request(reqOptions, (res) => {
+        if (settled) { try { res.destroy(); } catch {} return; }
+        settled = true;
+        if (timer) { clearTimeout(timer); timer = null; }
+        try { options.signal?.removeEventListener?.("abort", onAbort); } catch {}
         const response = {
           ok: res.statusCode >= HTTP_SUCCESS_MIN && res.statusCode < HTTP_SUCCESS_MAX,
           status: res.statusCode,
@@ -371,14 +402,15 @@ async function createBypassRequest(parsedUrl, realIP, options) {
         resolve(response);
       });
 
-      req.on("error", reject);
+      req.setTimeout(timeoutMs, () => { try { req.destroy(new Error("fetch connect timeout")); } catch {} });
+      req.on("error", (err) => finish(err));
       if (options.body) {
         req.write(typeof options.body === "string" ? options.body : JSON.stringify(options.body));
       }
       req.end();
     });
 
-    socket.on("error", reject);
+    socket.on("error", (err) => finish(err));
   });
 }
 
@@ -482,6 +514,20 @@ export async function proxyAwareFetch(url, options = {}, proxyOptions = null) {
     let lastError = null;
     let lastResponse = null;
 
+    // One budget for the whole proxy phase, sliced per candidate. Sharing the
+    // caller's single connect signal made every candidate after the first
+    // abort instantly (the pool never actually rotated); a fresh full 60s per
+    // candidate would instead cost N×60s for one attempt. Split the same
+    // budget so live candidates get a real chance and the phase as a whole
+    // still ends inside the caller's connect timeout.
+    // base.js passes the provider's own connect timeout in options; keep the
+    // proxyOptions spelling for callers that set it there.
+    const declaredConnectMs = Number.isFinite(options?.connectTimeoutMs)
+      ? options.connectTimeoutMs
+      : proxyOptions?.connectTimeoutMs;
+    const phaseBudgetMs = Number.isFinite(declaredConnectMs) ? declaredConnectMs : FETCH_CONNECT_TIMEOUT_MS;
+    const phaseDeadline = Date.now() + phaseBudgetMs;
+
     for (let i = 0; i < candidateList.length; i++) {
       const candidate = candidateList[i];
       const curProxyUrl = candidate.proxyUrl;
@@ -492,6 +538,37 @@ export async function proxyAwareFetch(url, options = {}, proxyOptions = null) {
         continue;
       }
 
+      // Per-candidate controller: one abort cannot poison the rest of the
+      // pool, yet it stays chained to the caller's signal so a client abort
+      // or the outer connect timeout still cancels the whole phase.
+      const candidateCtrl = new AbortController();
+      const onOuterAbort = () => { try { candidateCtrl.abort(new Error("aborted")); } catch { /* already */ } };
+      if (options.signal) {
+        if (options.signal.aborted) { try { candidateCtrl.abort(new Error("aborted")); } catch { /* already */ } }
+        else { try { options.signal.addEventListener("abort", onOuterAbort, { once: true }); } catch { /* noop */ } }
+      }
+      // Slice what is left across the candidates that remain: handing the
+      // first one the whole budget starves the rest and makes rotation a
+      // no-op again, which is the bug this phase budget exists to avoid.
+      const remaining = phaseDeadline - Date.now();
+      const leftCandidates = Math.max(1, candidateList.length - i);
+      const sliceMs = Math.max(5000, Math.floor(remaining / leftCandidates));
+      const candidateBudgetMs = Math.min(remaining, sliceMs);
+      const candidateTimer = setTimeout(() => {
+        try { candidateCtrl.abort(new Error("fetch connect timeout")); } catch { /* already */ }
+      }, Math.max(0, candidateBudgetMs));
+      const candidateOptions = { ...options, signal: candidateCtrl.signal };
+      // keepAbort=true keeps the outer-signal listener alive for a response we
+      // are about to hand back: a client abort while the body is still
+      // streaming must still cancel the upstream request (undici aborts the
+      // body through this controller). Every other exit removes it so an
+      // abandoned candidate cannot leak a listener for the whole request.
+      const releaseCandidate = (keepAbort = false) => {
+        clearTimeout(candidateTimer);
+        if (!keepAbort) {
+          try { options.signal?.removeEventListener?.("abort", onOuterAbort); } catch { /* noop */ }
+        }
+      };
       try {
         let res;
         if (candidate.vercelRelayUrl) {
@@ -504,10 +581,11 @@ export async function proxyAwareFetch(url, options = {}, proxyOptions = null) {
             "x-relay-target": `${parsed.protocol}//${parsed.host}`,
             "x-relay-path": `${parsed.pathname}${parsed.search}`,
           };
-          res = await resolveBaseFetch()(candidate.vercelRelayUrl, { ...options, headers: relayHeaders });
+          res = await resolveBaseFetch()(candidate.vercelRelayUrl, { ...candidateOptions, headers: relayHeaders });
         } else {
-          res = await fetchWithTlsFallback(url, options, curProxyUrl);
+          res = await fetchWithTlsFallback(url, candidateOptions, curProxyUrl);
         }
+        releaseCandidate(true);
 
         // If upstream or proxy rejected with 429/403/502/503 and has rotateLink
         if (res && (res.status === 429 || res.status === 403 || res.status === 502 || res.status === 503)) {
@@ -518,19 +596,24 @@ export async function proxyAwareFetch(url, options = {}, proxyOptions = null) {
           if (i + 1 < candidateList.length) {
             console.warn(`[ProxyFetch] Proxy HTTP ${res.status} on ${curProxyUrl}, falling back to next candidate proxy (${i + 2}/${candidateList.length})`);
             lastResponse = res;
+            // This response is abandoned, not returned: cancel its body and
+            // detach the outer abort chain before moving to the next proxy.
+            try { candidateCtrl.abort(); } catch { /* already */ }
+            releaseCandidate();
             continue;
           }
         }
 
         return res;
       } catch (proxyError) {
+        releaseCandidate();
         lastError = proxyError;
         if (curRotateLink) {
           triggerBackgroundRotate(curRotateLink, curProxyUrl, candidate.proxyPool || candidate);
         }
 
         // Fallback to next candidate proxy if available
-        if (i + 1 < candidateList.length) {
+        if (i + 1 < candidateList.length && Date.now() < phaseDeadline) {
           const nextCandidate = candidateList[i + 1];
           const nextProxyUrl = nextCandidate.proxyUrl || nextCandidate.vercelRelayUrl;
           console.warn(`[ProxyFetch] Proxy failed (${proxyError.message}) on ${curProxyUrl}, falling back to next active proxy ${nextProxyUrl} (${i + 2}/${candidateList.length})`);

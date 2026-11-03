@@ -42,39 +42,37 @@ describe("deepseek-v4-1-flash capabilities (#4293)", () => {
   });
 });
 
-// ── #4244 LIVE_CATALOG_PROVIDERS includes zed ────────────────────────────
+// ── #4244 live catalogs: every provider, not a hardcoded four ────────────
+// The original fix added "zed" to a hardcoded LIVE_CATALOG_PROVIDERS list, which
+// still left every other provider on the static registry while the provider page
+// used the live catalog. The list is gone: the picker now asks each provider's
+// own /models endpoint for its first active connection, so a provider can never
+// be "missing from the list" again. These assertions pin that invariant.
 // ModelSelectModal.js is JSX so we cannot import it in Vitest without a
-// JSX transform.  Read the source text and verify the constant definition
-// directly — this is reliable and does not require a full React setup.
+// JSX transform; read the source text instead.
 
 import fs from "fs";
-import path from "path";
 
-describe("ModelSelectModal LIVE_CATALOG_PROVIDERS includes zed (#4244)", () => {
+describe("ModelSelectModal uses a live catalog for every provider (#4244)", () => {
   let src;
   beforeAll(() => {
     const fileUrl = new URL("../../src/shared/components/ModelSelectModal.js", import.meta.url);
     src = fs.readFileSync(fileUrl, "utf-8");
   });
 
-  it("includes zed in LIVE_CATALOG_PROVIDERS", () => {
-    // Match the const definition line and verify zed is present
-    const match = src.match(/const LIVE_CATALOG_PROVIDERS\s*=\s*\[([^\]]+)\]/);
-    expect(match).toBeTruthy();
-    const list = match[1];
-    expect(list).toContain('"zed"');
+  it("no longer gates live catalogs behind a provider allowlist", () => {
+    expect(src).not.toMatch(/LIVE_CATALOG_PROVIDERS/);
   });
 
-  it("still includes cursor, cline, clinepass", () => {
-    const match = src.match(/const LIVE_CATALOG_PROVIDERS\s*=\s*\[([^\]]+)\]/);
-    const list = match[1];
-    expect(list).toContain('"cursor"');
-    expect(list).toContain('"cline"');
-    expect(list).toContain('"clinepass"');
+  it("fetches each provider's own /models endpoint", () => {
+    expect(src).toContain("/api/providers/${connectionId}/models");
   });
 
-  it("zedModels hook call is present in the file", () => {
-    expect(src).toContain("zedModels");
-    expect(src).toContain("zedConnectionIds");
+  it("reads the live catalog for every provider in the picker", () => {
+    expect(src).toMatch(/const liveModels = liveCatalogs\[providerId\] \|\| \[\]/);
+  });
+
+  it("picks the first active connection, matching the provider page", () => {
+    expect(src).toContain("firstConnectionByProvider");
   });
 });

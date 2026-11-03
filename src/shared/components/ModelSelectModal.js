@@ -24,54 +24,89 @@ const PROVIDER_ORDER = [
 // Providers that need no auth — always show in model selector
 const NO_AUTH_PROVIDER_IDS = Object.keys(FREE_PROVIDERS).filter(id => FREE_PROVIDERS[id].noAuth);
 
-// Providers with per-account live catalogs via /api/providers/[id]/models.
-// Static registry stays as fallback when live fetch fails or is empty.
-// zed added in #4244: its backend customResolver already returns live models
-// but the frontend omitted it, hiding Zed entirely from the Combo picker.
-const LIVE_CATALOG_PROVIDERS = ["cursor", "cline", "clinepass", "zed"];
+// Every provider's real catalog is the one its own /models endpoint returns
+// (the same call the provider detail page uses). The static registry is only a
+// fallback: it drifts from what the account can actually use, which showed up
+// as models missing from — and extra models in — every picker.
+//
+// The catalog is per active connection and per provider in one map. Results
+// are cached briefly at module scope so the 30+ call sites do not fan out a
+// burst of identical requests each time a picker opens.
+const CATALOG_TTL_MS = 60_000;
+const catalogCache = new Map(); // `${connectionId}` -> { at, models }
 
-// Fetch a provider's account-scoped catalog for every active connection and merge
-// the results. Entries collapse by model id on purpose: two connections of the
-// same provider produce the same picker value (`alias/id`), so keeping the first
-// avoids duplicate rows. There is no per-connection metadata to preserve beyond
-// {id,name}. Empty array means "nothing live" so callers keep the static fallback.
-function useLiveProviderModels(isOpen, connectionIds, label) {
-  const [models, setModels] = useState([]);
-  const idsKey = (connectionIds ?? []).join("|");
+async function fetchConnectionCatalog(connectionId) {
+  const cached = catalogCache.get(connectionId);
+  if (cached && Date.now() - cached.at < CATALOG_TTL_MS) return cached.models;
+  try {
+    const response = await fetch(`/api/providers/${connectionId}/models`, { cache: "no-store" });
+    if (!response.ok) return [];
+    const data = await response.json();
+    const models = Array.isArray(data.models) ? data.models : [];
+    catalogCache.set(connectionId, { at: Date.now(), models });
+    return models;
+  } catch {
+    return [];
+  }
+}
+
+// Fetch the account-scoped catalog for the FIRST active connection of every
+// provider — the same connection the provider page reads, so the picker and
+// that page cannot disagree about which models exist.
+function useLiveCatalogs(isOpen, activeProviders) {
+  const [catalogs, setCatalogs] = useState({});
+  // Parents rebuild the providers array every render, so the effect must not
+  // depend on the array itself: it did, and each parent render re-ran the
+  // fetch + setState, which re-rendered the parent again — a fetch loop against
+  // real upstreams. The signature is the identity that actually matters.
+  const signature = useMemo(
+    () => (activeProviders || [])
+      .map((p) => `${p.provider}:${p.id}`)
+      .sort()
+      .join("|"),
+    [activeProviders],
+  );
+  // Provider → first active connection. Built from the signature so the effect
+  // stays independent of array identity.
+  const firstConnectionByProvider = useMemo(() => {
+    const map = new Map();
+    for (const part of signature ? signature.split("|") : []) {
+      const idx = part.indexOf(":");
+      if (idx <= 0) continue;
+      const providerId = part.slice(0, idx);
+      const connectionId = part.slice(idx + 1);
+      if (!map.has(providerId)) map.set(providerId, connectionId);
+    }
+    return map;
+  }, [signature]);
 
   useEffect(() => {
-    const ids = idsKey ? idsKey.split("|") : [];
-    if (!isOpen || ids.length === 0) {
-      setModels([]);
-      return undefined;
-    }
-
+    // A closed picker keeps its last catalogs: reopening refreshes them from
+    // the 60s cache. Clearing state synchronously here tripped the
+    // react-hooks/set-state-in-effect rule without adding correctness.
+    if (!isOpen) return undefined;
+    if (!signature) return undefined;
     let cancelled = false;
-    Promise.all(ids.map(async (connectionId) => {
-      const response = await fetch(`/api/providers/${connectionId}/models`, { cache: "no-store" });
-      if (!response.ok) return [];
-      const data = await response.json();
-      return Array.isArray(data.models) ? data.models : [];
-    }))
-      .then((modelLists) => {
-        if (cancelled) return;
-        const seen = new Set();
-        setModels(modelLists.flat().filter((model) => {
-          if (!model?.id || seen.has(model.id)) return false;
-          seen.add(model.id);
-          return true;
-        }));
+    Promise.all(
+      [...firstConnectionByProvider.entries()].map(async ([providerId, connectionId]) => {
+        const models = await fetchConnectionCatalog(connectionId);
+        return [providerId, models];
       })
-      .catch((error) => {
-        // Do not hide the static fallback when the account catalog is unavailable.
-        console.warn(`Unable to load ${label} models for selector:`, error);
-        if (!cancelled) setModels([]);
-      });
+    )
+      .then((entries) => {
+        if (cancelled) return;
+        const next = {};
+        for (const [providerId, models] of entries) {
+          if (Array.isArray(models) && models.length) next[providerId] = models;
+        }
+        setCatalogs(next);
+      })
+      .catch(() => { if (!cancelled) setCatalogs({}); });
 
     return () => { cancelled = true; };
-  }, [isOpen, idsKey, label]);
+  }, [isOpen, signature, firstConnectionByProvider]);
 
-  return models;
+  return catalogs;
 }
 
 export default function ModelSelectModal({
@@ -144,27 +179,9 @@ export default function ModelSelectModal({
   const [providerNodes, setProviderNodes] = useState([]);
   const [customModels, setCustomModels] = useState([]);
   const [disabledModels, setDisabledModels] = useState({});
-  // Cursor and Cline expose the usable catalog per account, so the static catalog is
-  // kept only as a fallback: it goes stale quickly and entitlements differ per account.
-  // Single map driven by LIVE_CATALOG_PROVIDERS so the constant cannot drift
-  // from the memos below; per-provider arrays stay referentially stable unless
-  // activeProviders itself changes.
-  const liveConnectionIdsByProvider = useMemo(() => {
-    const map = Object.fromEntries(LIVE_CATALOG_PROVIDERS.map((id) => [id, []]));
-    for (const p of filteredActiveProviders) {
-      if (p?.id && Object.prototype.hasOwnProperty.call(map, p.provider)) map[p.provider].push(p.id);
-    }
-    return map;
-  }, [filteredActiveProviders]);
-  const cursorConnectionIds = liveConnectionIdsByProvider.cursor;
-  const clineConnectionIds = liveConnectionIdsByProvider.cline;
-  const clinepassConnectionIds = liveConnectionIdsByProvider.clinepass;
-  const zedConnectionIds = liveConnectionIdsByProvider.zed;
-
-  const cursorModels = useLiveProviderModels(isOpen, cursorConnectionIds, "Cursor");
-  const clineModels = useLiveProviderModels(isOpen, clineConnectionIds, "Cline");
-  const clinepassModels = useLiveProviderModels(isOpen, clinepassConnectionIds, "ClinePass");
-  const zedModels = useLiveProviderModels(isOpen, zedConnectionIds, "Zed");
+  // Every provider exposes its usable catalog per account, so the static
+  // catalog is only a fallback — it goes stale and entitlements differ.
+  const liveCatalogs = useLiveCatalogs(isOpen, filteredActiveProviders);
 
   const fetchCombos = async () => {
     try {
@@ -374,15 +391,26 @@ export default function ModelSelectModal({
             if (supports) combined = [{ id: providerId, name: providerInfo.name, value: alias }];
           }
         } else {
-          // LLM/null kind: merge hardcoded models (e.g. mimo-free → mimo-auto) with user-added models
+          // LLM/null kind: merge the provider's real catalog with user-added
+          // models. This branch used to read the static registry only, so a
+          // passthrough provider (openrouter, opencode, …) showed aliases +
+          // registry while the provider page showed the live catalog — the
+          // exact mismatch reported. `liveCatalogs` is the same source the page
+          // reads; the registry stays as the fallback when it is empty.
           const registeredLlms = customRegisteredModels.filter((m) => !getModelKind(m) || getModelKind(m) === "llm");
           const seen = new Set([...aliasModels, ...registeredLlms].map((m) => m.value));
-          const hardcoded = getModelsByProviderId(providerId)
+          const liveForProvider = liveCatalogs[providerId] || [];
+          const hardcoded = (liveForProvider.length > 0 ? liveForProvider : getModelsByProviderId(providerId))
             .filter((m) => !getModelKind(m) || getModelKind(m) === "llm")
             .map((m) => ({ id: m.id, name: m.name, value: `${alias}/${m.id}`, kind: getModelKind(m) }))
             .filter((m) => !seen.has(m.value));
           combined = [...registeredLlms, ...aliasModels.filter((m) => !registeredLlms.some((registered) => registered.value === m.value)), ...hardcoded];
         }
+
+        // Same kind gate the sibling branch applies: live catalog rows carry no
+        // `kind`, so without this a typed picker (media kinds) would show every
+        // LLM row of a passthrough provider.
+        combined = filterByKind(combined);
 
         if (combined.length > 0) {
           // Check for custom name from providerNodes (for compatible providers)
@@ -446,7 +474,7 @@ export default function ModelSelectModal({
           hasModels: mergedModels.length > 0,
         };
       } else {
-        const liveModels = providerId === "cursor" ? cursorModels : providerId === "cline" ? clineModels : providerId === "clinepass" ? clinepassModels : providerId === "zed" ? zedModels : [];
+        const liveModels = liveCatalogs[providerId] || [];
         const hardcodedModels = liveModels.length > 0
           ? liveModels
           : getModelsByProviderId(providerId);
@@ -517,30 +545,12 @@ export default function ModelSelectModal({
       if (group.models.length === 0) delete groups[providerId];
     });
 
-    // Filter by enabledModels if explicitly configured on any active connection for this provider
-    Object.entries(groups).forEach(([providerId, group]) => {
-      const providerConns = filteredActiveProviders.filter((p) => p.provider === providerId);
-      const explicitEnabled = [];
-      for (const conn of providerConns) {
-        if (Array.isArray(conn.providerSpecificData?.enabledModels) && conn.providerSpecificData.enabledModels.length > 0) {
-          explicitEnabled.push(...conn.providerSpecificData.enabledModels);
-        }
-      }
-      if (explicitEnabled.length > 0) {
-        const enabledSet = new Set(explicitEnabled);
-        const alias = group.alias || getProviderAlias(providerId) || providerId;
-        group.models = group.models.filter((m) =>
-          enabledSet.has(m.id) ||
-          enabledSet.has(m.value) ||
-          enabledSet.has(`${alias}/${m.id}`) ||
-          (m.value && enabledSet.has(m.value.replace(`${alias}/`, "")))
-        );
-        if (group.models.length === 0) delete groups[providerId];
-      }
-    });
-
+    // The connection allowlist (enabledModels) is deliberately NOT applied
+    // here. It governs what /v1/models PUBLISHES; this picker chooses what to
+    // USE. Filtering by it deleted whole providers from the picker the moment
+    // any allowlist existed — including the models a user needs to re-select.
     return groups;
-  }, [filteredActiveProviders, modelAliases, allProviders, providerNodes, customModels, disabledModels, kindFilter, effectiveConnections, deactivatedProviderIds, cursorModels, clineModels, clinepassModels, zedModels]);
+  }, [filteredActiveProviders, modelAliases, allProviders, providerNodes, customModels, disabledModels, kindFilter, effectiveConnections, deactivatedProviderIds, liveCatalogs]);
 
   // Parse search query into structured query (regex, positive tokens, negative tokens)
   const parsedQuery = useMemo(() => parseSearchQuery(searchQuery), [searchQuery]);

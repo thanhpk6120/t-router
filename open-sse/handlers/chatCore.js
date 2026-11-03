@@ -63,7 +63,11 @@ export function stripContinuityFields(body) {
 
 export async function handleChatCore({ body, modelInfo, credentials, log, onCredentialsRefreshed, onRequestSuccess, onDisconnect, clientRawRequest, connectionId, userAgent, apiKey, ccFilterNaming, rtkEnabled, headroomEnabled, headroomUrl, headroomCompressUserMessages, headroomTimeoutMs, cavemanEnabled, cavemanLevel, ponytailEnabled, ponytailLevel, promptInjects, briefLevel, onRtkStats, pxpipeEnabled, pxpipeMinChars, pxpipeTimeoutMs, pxpipeTransform, onPxpipeEvent, sourceFormatOverride, providerThinking, providerOverrides, externalSignal, requestId = null }) {
   const { provider, model } = modelInfo;
-  const requestStartTime = Date.now();
+  // One budget for the whole client request: the caller stamps
+  // clientRawRequest.requestStartedAt once, so a combo of N members and
+  // their account attempts share that origin instead of each member
+  // restarting a fresh 30-minute window inside chatCore.
+  const requestStartTime = clientRawRequest?.requestStartedAt || Date.now();
   // Stable per-session color so all lines of one CLI conversation share a tag
   const sessionSeed = (() => {
     try {

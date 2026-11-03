@@ -55,7 +55,51 @@ async function getInternalHeaders() {
   return headers;
 }
 
-export async function pingModelByKind(model, kind, baseUrl = `http://127.0.0.1:${process.env.PORT || UPDATER_CONFIG.appPort}`) {
+// A 16x16 solid-red PNG. Big enough that providers do not reject it as
+// malformed (1x1 is refused by several), small enough to stay in a prompt.
+const PROBE_IMAGE_DATA_URI = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAIAAACQkWg2AAAAFklEQVR4nGO4I2JDEmIY1TCqYfhqAAAeBCwQ8YdREQAAAABJRU5ErkJggg==";
+
+// Probe payloads. Every probe is sent straight to one model id (never through a
+// combo) so the answer describes THAT model: the combo layer would route an
+// image to a different vision model and the result would be a lie.
+function buildProbeBody(model, probe) {
+  if (probe === "image") {
+    return {
+      model,
+      max_tokens: 256,
+      stream: false,
+      messages: [{
+        role: "user",
+        content: [
+          { type: "text", text: "What colour fills this image? Answer with one word." },
+          { type: "image_url", image_url: { url: PROBE_IMAGE_DATA_URI } },
+        ],
+      }],
+    };
+  }
+  if (probe === "thinking") {
+    return {
+      model,
+      // Reasoning models spend budget before answering; a small cap starves it.
+      max_tokens: 4096,
+      stream: false,
+      reasoning_effort: "high",
+      messages: [{ role: "user", content: "9.11 and 9.9 - which is larger? Think it through, then answer." }],
+    };
+  }
+  return {
+    model,
+    // 1024 tokens: reasoning models (ClinePass/kimi-k3, deepseek-v4-pro, etc.) spend
+    // their budget on chain-of-thought before emitting an answer. A tiny probe like
+    // max_tokens:16 starves the answer and yields a false "no choices" failure.
+    // See issue #3010.
+    max_tokens: 1024,
+    stream: false,
+    messages: [{ role: "user", content: "hi" }],
+  };
+}
+
+export async function pingModelByKind(model, kind, baseUrl = `http://127.0.0.1:${process.env.PORT || UPDATER_CONFIG.appPort}`, probe = "text") {
   const headers = await getInternalHeaders();
   const start = Date.now();
 
@@ -168,17 +212,9 @@ export async function pingModelByKind(model, kind, baseUrl = `http://127.0.0.1:$
   const res = await fetch(`${baseUrl}/api/v1/chat/completions`, {
     method: "POST",
     headers,
-    body: JSON.stringify({
-      model,
-      // 1024 tokens: reasoning models (ClinePass/kimi-k3, deepseek-v4-pro, etc.) spend
-      // their budget on chain-of-thought before emitting an answer. A tiny probe like
-      // max_tokens:16 starves the answer and yields a false "no choices" failure.
-      // See issue #3010.
-      max_tokens: 1024,
-      stream: false,
-      messages: [{ role: "user", content: "hi" }],
-    }),
-    signal: AbortSignal.timeout(15000),
+    body: JSON.stringify(buildProbeBody(model, probe)),
+    // A reasoning probe legitimately takes longer than a bare "hi".
+    signal: AbortSignal.timeout(probe === "thinking" ? 90000 : 30000),
   });
   const latencyMs = Date.now() - start;
 
@@ -244,6 +280,50 @@ export async function pingModelByKind(model, kind, baseUrl = `http://127.0.0.1:$
       status: res.status,
       error: "Provider returned no completion choices for this model",
     };
+  }
+
+  // Probe-specific assertions. A 200 with choices is NOT enough for either
+  // probe: the router strips unsupported image blocks and unsupported thinking
+  // parameters before the upstream call, so a model without vision answers as
+  // if no image was attached, and a model without reasoning answers normally.
+  // Both would read as "ok" and tell the user the opposite of the truth.
+  const answerText = String(firstChoice.message?.content || "").trim();
+  if (probe === "image") {
+    if (/\[image omitted/i.test(answerText)) {
+      return { ok: false, latencyMs, status: res.status, error: "Router removed the image: this model is not marked as vision-capable" };
+    }
+    // Accept any word for the colour: a correct vision model may answer
+    // "crimson", "scarlet", or in another language. Requiring the literal
+    // "red" rejected working models.
+    const COLOUR_PATTERN = /\b(red|crimson|scarlet|vermilion|rouge|rojo|rot|\u0111\u1ecf)\b/i;
+    if (!COLOUR_PATTERN.test(answerText)) {
+      return {
+        ok: false,
+        latencyMs,
+        status: res.status,
+        error: answerText
+          ? `Answered "${answerText.slice(0, 120)}" — the model may not process images`
+          : "Empty answer: the image was not processed",
+      };
+    }
+    return { ok: true, latencyMs, error: null, status: res.status };
+  }
+
+  if (probe === "thinking") {
+    const reasoningTokens = Number(
+      parsed?.usage?.completion_tokens_details?.reasoning_tokens
+      || parsed?.usage?.reasoning_tokens
+      || 0,
+    );
+    if (!hasReasoning && !(reasoningTokens > 0)) {
+      return {
+        ok: false,
+        latencyMs,
+        status: res.status,
+        error: "No reasoning output: this model does not expose thinking (or it is disabled for the provider)",
+      };
+    }
+    return { ok: true, latencyMs, error: null, status: res.status };
   }
 
   return { ok: true, latencyMs, error: null, status: res.status };

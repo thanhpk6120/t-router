@@ -90,3 +90,15 @@ export function createAttemptLimiter(cap) {
     get exceeded() { return cap !== null && cap !== undefined && failures >= cap; },
   };
 }
+
+// A provider can be switched off from the dashboard. Providers with credentials
+// carry that flag on each connection (isActive); no-auth providers have no rows,
+// so their switch lives in settings.providerStrategies[id]. Every no-credential
+// handler must ask this before calling the provider, otherwise "disabled" is
+// stored but nothing reads it.
+export function isProviderDisabled(settings, providerId) {
+  if (!settings || !providerId) return false;
+  const override = (settings.providerStrategies || {})[providerId];
+  if (!override) return false;
+  return override.disabled === true || override.isActive === false;
+}

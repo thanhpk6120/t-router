@@ -2,7 +2,7 @@ import {
   extractApiKey, isValidApiKey,
   getProviderCredentials, markAccountUnavailable,
 } from "../services/auth.js";
-import { resolveComboMemberAttemptCap, createAttemptLimiter, accountExhaustedResponse } from "../services/memberFailover.js";
+import { resolveComboMemberAttemptCap, createAttemptLimiter, accountExhaustedResponse, isProviderDisabled } from "../services/memberFailover.js";
 import { getSettings } from "@/lib/localDb";
 import { getModelInfo, getComboModels } from "../services/model.js";
 import { getKeyAccessContext, enforceKeyAccess } from "../services/keyAccess.js";
@@ -92,8 +92,14 @@ async function handleSingleModelTts(body, modelStr, responseFormat, language, st
   const { provider, model } = modelInfo;
   log.info("ROUTING", `Provider: ${provider}, Voice: ${model}`);
 
-  // noAuth providers — no credential needed
+  // noAuth providers — no credential needed. Their on/off switch lives in
+  // settings (they own no connection rows), so it must be read here.
   if (!CREDENTIALED_PROVIDERS.has(provider)) {
+    // `settings` is not in scope in this helper yet (it is read further down),
+    // so read it here rather than depending on declaration order.
+    if (isProviderDisabled(await getSettings(), provider)) {
+      return errorResponse(HTTP_STATUS.SERVICE_UNAVAILABLE, `Provider ${provider} is disabled`);
+    }
     const result = await handleTtsCore({ provider, model, input: body.input, responseFormat, language, style });
     if (result.success) {
       recordModalityUsage({

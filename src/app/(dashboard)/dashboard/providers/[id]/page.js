@@ -92,6 +92,24 @@ export default function ProviderDetailPage() {
   const [liveModelsError, setLiveModelsError] = useState(null);
   const [kiloFreeModels, setKiloFreeModels] = useState([]);
   const [disabledModelIds, setDisabledModelIds] = useState([]);
+  // Per-connection allowlist (providerSpecificData.enabledModels). The provider
+  // detail switch writes this, and /v1/models publishes exactly this set.
+  const [selectedModelIds, setSelectedModelIds] = useState([]);
+  // Local mirror of the explicit flag, so an optimistic save is visible in the
+  // same render instead of waiting for the connections refetch.
+  const [selectionExplicit, setSelectionExplicit] = useState(false);
+  const [savingSelection, setSavingSelection] = useState(false);
+
+  // Mirror the stored allowlist into local state whenever the connection list
+  // is (re)loaded. Done inside fetchConnections rather than in a useEffect:
+  // an effect re-ran on every `connections` identity change and could race the
+  // optimistic selection the user just made.
+  const applySelectionFromConnections = useCallback((list) => {
+    const conn = (list || []).find((item) => item.isActive !== false);
+    const psd = conn?.providerSpecificData || {};
+    setSelectedModelIds(Array.isArray(psd.enabledModels) ? psd.enabledModels : []);
+    setSelectionExplicit(psd.enabledModelsExplicit === true);
+  }, []);
   const [confirmState, setConfirmState] = useState(null);
   const [showAgRiskModal, setShowAgRiskModal] = useState(false);
   const [oneByOneRunning, setOneByOneRunning] = useState(false);
@@ -234,6 +252,67 @@ export default function ProviderDetailPage() {
     }
   }, [providerStorageAlias]);
 
+  // The connection the page reads its catalog from — the same one Load models
+  // writes to, so the selection lands where /v1/models will look for it.
+  const selectionConnection = connections.find((conn) => conn.isActive !== false) || null;
+  // An explicit selection is signalled by the flag, not by length: switching the
+  // last model off leaves an empty array, and treating that as "no selection"
+  // re-published the whole catalog while the switches showed everything off.
+  const hasModelSelection = Boolean(
+    selectionConnection
+    && (selectionExplicit
+      || (Array.isArray(selectionConnection.providerSpecificData?.enabledModels)
+        && selectionConnection.providerSpecificData.enabledModels.length > 0)),
+  );
+
+  const persistModelSelection = async (nextIds) => {
+    if (!selectionConnection?.id) return;
+    setSavingSelection(true);
+    const previous = selectedModelIds;
+    const previousExplicit = selectionExplicit;
+    setSelectedModelIds(nextIds);
+    setSelectionExplicit(true);
+    try {
+      const res = await fetch(`/api/providers/${selectionConnection.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          providerSpecificData: {
+            ...(selectionConnection.providerSpecificData || {}),
+            // The flag is what makes an EMPTY list meaningful: without it,
+            // [] is indistinguishable from "never chosen" and republishes
+            // everything.
+            enabledModels: nextIds,
+            enabledModelsExplicit: true,
+          },
+        }),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      await fetchConnections();
+    } catch (error) {
+      console.log("Error saving model selection:", error);
+      setSelectedModelIds(previous);
+      setSelectionExplicit(previousExplicit);
+      notify?.error?.(translate("Failed to save model selection"));
+    } finally {
+      setSavingSelection(false);
+    }
+  };
+
+  // Switching a loaded model off removes it from the allowlist; switching it
+  // back on re-adds it. An absent allowlist starts from the full catalog so the
+  // first click only excludes that one model.
+  const handleToggleActiveModel = async (modelId) => {
+    if (savingSelection) return;
+    const baseline = hasModelSelection
+      ? selectedModelIds
+      : models.map((m) => m.id || m.name).filter(Boolean);
+    const next = baseline.includes(modelId)
+      ? baseline.filter((id) => id !== modelId)
+      : [...baseline, modelId];
+    await persistModelSelection(next);
+  };
+
   const handleDisableModel = async (modelId) => {
     try {
       const res = await fetch("/api/models/disabled", {
@@ -333,8 +412,10 @@ export default function ProviderDetailPage() {
       const proxyPoolsData = await proxyPoolsRes.json();
       const settingsData = settingsRes.ok ? await settingsRes.json() : {};
       if (connectionsRes.ok) {
-        setConnections(connectionsData.connections || []);
-        setConnTotal(connectionsData.total ?? (connectionsData.connections || []).length);
+        const nextConnections = connectionsData.connections || [];
+        setConnections(nextConnections);
+        applySelectionFromConnections(nextConnections);
+        setConnTotal(connectionsData.total ?? nextConnections.length);
         setConnPage(1);
       }
       if (proxyPoolsRes.ok) {
@@ -373,7 +454,7 @@ export default function ProviderDetailPage() {
     } finally {
       setLoading(false);
     }
-  }, [providerId, isCompatible]);
+  }, [providerId, isCompatible, applySelectionFromConnections]);
 
   // T Router: append the next page of connections (server-side pagination).
   const loadMoreConnections = async () => {
@@ -758,28 +839,20 @@ export default function ProviderDetailPage() {
         notify.error(data.error || translate("Failed to fetch models"));
         return;
       }
-      const models = data.models || [];
-      if (models.length === 0) {
+      const fetched = data.models || [];
+      if (fetched.length === 0) {
         notify.warning(translate("No models returned"));
         return;
       }
-      let importedCount = 0;
-      for (const model of models) {
-        const modelId = model.id || model.name;
-        if (!modelId) continue;
-        const cleanId = modelId.includes("/") ? modelId.slice(modelId.indexOf("/") + 1) : modelId;
-        const alreadyExists = customModels.some(
-          (entry) => entry.providerAlias === providerStorageAlias && entry.id === cleanId && (entry.kind || entry.type || "llm") === "llm"
-        ) || Object.values(modelAliases).includes(`${providerStorageAlias}/${cleanId}`);
-        if (alreadyExists) continue;
-        await handleAddCustomModel(cleanId, "llm", providerStorageAlias);
-        importedCount += 1;
-      }
-      if (importedCount === 0) {
-        notify.warning(translate("All models already exist, no new models added"));
-      } else {
-        notify.success(translate("Successfully added") + ` ${importedCount} ` + translate("models"));
-      }
+      // Loading a catalog SELECTS every model it returned: the list below then
+      // shows them all with a per-model switch, and /v1/models publishes exactly
+      // the ones left on. It no longer creates custom rows — persisting each id
+      // as a custom model duplicated the catalog and left those rows with no
+      // switch, so the selection could not be undone.
+      const ids = fetched.map((m) => m.id || m.name).filter(Boolean);
+      setLiveModels(fetched);
+      await persistModelSelection(Array.from(new Set(ids)));
+      notify.success(translate("Loaded") + ` ${ids.length} ` + translate("models — switch off the ones you do not want"));
     } catch (error) {
       console.log("Error loading models:", error);
       notify.error(translate("Error fetching models") + ": " + error.message);
@@ -1334,25 +1407,31 @@ export default function ProviderDetailPage() {
     </Modal>
   );
 
-  const handleTestModel = async (modelId) => {
-    if (testingModelIds.has(modelId)) return;
-    setTestingModelIds((prev) => new Set(prev).add(modelId));
+  // probe: "text" (default) | "image" | "thinking". The key carries the probe
+  // so the three buttons on one model keep independent results.
+  const handleTestModel = async (modelId, probe = "text") => {
+    const resultKey = probe === "text" ? modelId : `${modelId}:${probe}`;
+    if (testingModelIds.has(resultKey)) return;
+    setTestingModelIds((prev) => new Set(prev).add(resultKey));
     try {
       const res = await fetch("/api/models/test", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ model: `${providerStorageAlias}/${modelId}` }),
+        body: JSON.stringify({ model: `${providerStorageAlias}/${modelId}`, probe }),
       });
       const data = await res.json();
-      setModelTestResults((prev) => ({ ...prev, [modelId]: data.ok ? "ok" : "error" }));
+      setModelTestResults((prev) => ({ ...prev, [resultKey]: data.ok ? "ok" : "error" }));
       setModelsTestError(data.ok ? "" : (data.error || "Model not reachable"));
     } catch {
-      setModelTestResults((prev) => ({ ...prev, [modelId]: "error" }));
+      setModelTestResults((prev) => ({ ...prev, [resultKey]: "error" }));
       setModelsTestError("Network error");
     } finally {
-      setTestingModelIds((prev) => { const n = new Set(prev); n.delete(modelId); return n; });
+      setTestingModelIds((prev) => { const n = new Set(prev); n.delete(resultKey); return n; });
     }
   };
+
+  const handleTestImage = (modelId) => handleTestModel(modelId, "image");
+  const handleTestThinking = (modelId) => handleTestModel(modelId, "thinking");
 
   const renderModelsSection = () => {
     // Every provider renders the same detection-driven chip grid: custom rows
@@ -1374,6 +1453,25 @@ export default function ProviderDetailPage() {
       builtInModels: [],
       type: "llm",
     });
+    const customRowIds = new Set(customModelRows.map((row) => row.id));
+    // EVERY loaded model is listed, with its switch state. Filtering the list
+    // to the selected ones made the first click irreversible: the row vanished
+    // and there was no control left to bring it back.
+    // `enabledModels` on the connection is the allowlist /v1/models honours;
+    // empty means "no explicit selection", which keeps the historical
+    // publish-everything behaviour.
+    const loadedDisplayModels = allModels
+      .filter((m) => {
+        const id = m.id || m.name;
+        return id && !customRowIds.has(id);
+      })
+      .map((m) => {
+        const id = m.id || m.name;
+        const enabled = hasModelSelection
+          ? selectedModelIds.includes(id)
+          : !disabledSet.has(id);
+        return { ...m, id, enabled };
+      });
 
     return (
       <div className="flex flex-wrap gap-3">
@@ -1397,6 +1495,12 @@ export default function ProviderDetailPage() {
             testStatus={modelTestResults[model.id]}
             onTest={connections.length > 0 || isFreeNoAuth ? () => handleTestModel(model.id) : undefined}
             isTesting={testingModelIds.has(model.id)}
+            onTestImage={connections.length > 0 || isFreeNoAuth ? () => handleTestImage(model.id) : undefined}
+            imageStatus={modelTestResults[`${model.id}:image`]}
+            isTestingImage={testingModelIds.has(`${model.id}:image`)}
+            onTestThinking={connections.length > 0 || isFreeNoAuth ? () => handleTestThinking(model.id) : undefined}
+            thinkingStatus={modelTestResults[`${model.id}:thinking`]}
+            isTestingThinking={testingModelIds.has(`${model.id}:thinking`)}
             isCustom
             isFree={false}
             onEditCaps={() => setEditCapsTarget({ id: model.id, caps: getCaps(`${providerId}/${model.id}`) || {} })}
@@ -1455,47 +1559,51 @@ export default function ProviderDetailPage() {
           </button>
         )}
 
-        {/* Detected models — live from the provider's own /models endpoint.
-            Only models not yet persisted as custom rows are offered here; a
-            provider whose detection returns nothing falls back to Add Model. */}
-        {liveModels.length > 0 && (() => {
-          const addedIds = new Set(
-            customModelRows.map((model) => model.id).concat(
-              customModels
-                .filter((cm) => cm.providerAlias === providerStorageAlias &&
-                  ((cm.kind || cm.type || "llm") === "llm"))
-                .map((cm) => cm.id),
-            ),
-          );
-          const detected = liveModels.filter((m) => {
-            const id = m.id || m.name;
-            return id && !addedIds.has(id);
-          });
-          if (detected.length === 0) return null;
-          return (
-            <div className="w-full mt-2">
-              <p className="text-xs text-text-muted mb-2">Detected models ({detected.length}):</p>
-              <div className="flex flex-wrap gap-2">
-                {detected.map((m) => {
-                  const id = m.id || m.name;
-                  return (
-                    <button
-                      key={id}
-                      onClick={async () => {
-                        await handleAddCustomModel(id, "llm", providerStorageAlias);
-                      }}
-                      className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-black/10 dark:border-white/10 text-xs text-text-muted hover:text-primary hover:border-primary/40 hover:bg-primary/5 transition-colors"
-                      title={m.name || id}
-                    >
-                      <span className="material-symbols-outlined text-[13px]">add</span>
-                      {id}
-                    </button>
-                  );
-                })}
-              </div>
+        {/* Loaded models — everything the provider's own catalog returned, as
+            real rows with a per-model switch. The switch writes the connection's
+            enabledModels ALLOWLIST, so /v1/models publishes exactly the models
+            left on. It deliberately does not touch the global disabledModels
+            denylist, which the Disabled-models section below owns — sharing it
+            would also hide these models from every picker. */}
+        {loadedDisplayModels.length > 0 && (
+          <div className="w-full mt-2">
+            <p className="text-xs text-text-muted mb-2">
+              {translate("Loaded models")} ({loadedDisplayModels.filter((m) => m.enabled).length}/{loadedDisplayModels.length})
+            </p>
+            <div className="flex flex-wrap gap-3">
+              {loadedDisplayModels.map((m) => {
+                const id = m.id;
+                return (
+                  <ModelRow
+                    key={`live-${id}`}
+                    enabled={m.enabled}
+                    model={{ id, name: m.name || id }}
+                    fullModel={`${providerDisplayAlias}/${id}`}
+                    alias={modelAliases[`${providerStorageAlias}/${id}`]}
+                    copied={copied}
+                    onCopy={copy}
+                    onSetAlias={() => {}}
+                    onDisable={() => handleToggleActiveModel(id)}
+                    testStatus={modelTestResults[id]}
+                    onTest={connections.length > 0 || isFreeNoAuth ? () => handleTestModel(id) : undefined}
+                    isTesting={testingModelIds.has(id)}
+                    onTestImage={connections.length > 0 || isFreeNoAuth ? () => handleTestImage(id) : undefined}
+                    imageStatus={modelTestResults[`${id}:image`]}
+                    isTestingImage={testingModelIds.has(`${id}:image`)}
+                    onTestThinking={connections.length > 0 || isFreeNoAuth ? () => handleTestThinking(id) : undefined}
+                    thinkingStatus={modelTestResults[`${id}:thinking`]}
+                    isTestingThinking={testingModelIds.has(`${id}:thinking`)}
+                    isCustom={false}
+                    isFree={false}
+                    onEditCaps={() => setEditCapsTarget({ id, caps: getCaps(`${providerId}/${id}`) || {} })}
+                    caps={getCaps(`${providerId}/${id}`)}
+                    thinkingSuffix={resolveThinkingSuffix(id)}
+                  />
+                );
+              })}
             </div>
-          );
-        })()}
+          </div>
+        )}
 
         {/* Disabled models — restorable */}
         {disabledDisplayModels.length > 0 && (

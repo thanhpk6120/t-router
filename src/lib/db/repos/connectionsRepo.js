@@ -215,13 +215,37 @@ export async function getProviderConnectionsPage({ provider, page = 1, pageSize 
 // 9Router Pro: one UPDATE for a whole provider instead of one PUT per
 // connection when toggling a provider on/off from the list page.
 export async function bulkSetConnectionsActive(provider, authTypes, isActive) {
-  if (!provider || !Array.isArray(authTypes) || !authTypes.length) return 0;
+  if (!provider) return 0;
   const db = await getAdapter();
-  const placeholders = authTypes.map(() => "?").join(", ");
-  const info = db.run(
-    `UPDATE providerConnections SET isActive = ?, updatedAt = ? WHERE provider = ? AND authType IN (${placeholders})`,
-    [isActive ? 1 : 0, new Date().toISOString(), provider, ...authTypes],
-  );
+  const wanted = Array.isArray(authTypes) ? authTypes.filter(Boolean) : [];
+  // The switch on the providers list is per PROVIDER, not per auth type. It
+  // used to be filtered by the registry's auth-type list, which does not match
+  // the values actually stored (`access_token` for codex, `mcode-lease` for
+  // minimax-code, `cookie` for iflow): the UPDATE matched zero rows, the route
+  // still answered 200, and the provider kept serving after "disabled".
+  // Filter by auth type only when a caller explicitly asks for one.
+  const sql = wanted.length
+    ? `UPDATE providerConnections SET isActive = ?, updatedAt = ? WHERE provider = ? AND authType IN (${wanted.map(() => "?").join(", ")})`
+    : `UPDATE providerConnections SET isActive = ?, updatedAt = ? WHERE provider = ?`;
+  const params = wanted.length
+    ? [isActive ? 1 : 0, new Date().toISOString(), provider, ...wanted]
+    : [isActive ? 1 : 0, new Date().toISOString(), provider];
+  let info;
+  db.transaction(() => {
+    info = db.run(sql, params);
+    if (isActive) {
+      // Re-enable is a deliberate operator action: give a quarantined account a
+      // fresh chance instead of letting one failure re-quarantine it, matching
+      // what updateProviderConnection already does on a single-row enable.
+      const scope = wanted.length
+        ? `provider = ? AND authType IN (${wanted.map(() => "?").join(", ")})`
+        : `provider = ?`;
+      db.run(
+        `UPDATE providerConnections SET consecutiveAuthFailures = 0, quarantineReason = NULL, quarantinedAt = NULL WHERE ${scope}`,
+        [provider, ...wanted],
+      );
+    }
+  });
   if ((info?.changes ?? 0) > 0) invalidateModelsListCache();
   return info?.changes ?? 0;
 }

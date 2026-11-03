@@ -34,6 +34,8 @@ import { stripModelContextMarker } from "open-sse/utils/modelMarkers.js";
 import { getKeyAccessContext, enforceKeyAccess, filterAdapterModels } from "../services/keyAccess.js";
 import { resolveAntiFlakyConfig, inspectChatResponse, inspectChatResponseFull } from "open-sse/rtk/flakyGuard.js";
 import { withKeyAdmission, recheckKeyQuotaAfterCompletion } from "../services/keyAdmission.js";
+import { buildStreamErrorBytes } from "open-sse/utils/streamHelpers.js";
+import { detectFormat } from "open-sse/services/provider.js";
 import { requestIdFromRequest, attachRequestId } from "../utils/requestId.js";
 
 export async function handleChat(request, clientRawRequest = null) {
@@ -43,8 +45,104 @@ export async function handleChat(request, clientRawRequest = null) {
   // on usage rows and request-detail records, and it comes back to the
   // client on every response — success, error, or stream — via header.
   const requestId = requestIdFromRequest(request);
-  const response = await withKeyAdmission(request, () => handleChatImpl(request, clientRawRequest, requestId), recheckKeyQuotaAfterCompletion);
-  return attachRequestId(response, requestId);
+  // One deadline for the whole client request. Stamped here and carried
+  // on clientRawRequest so every combo member, every nested combo and
+  // every account attempt shares it: chatCore used to stamp its own start
+  // per member, which handed each of N members a fresh 30-minute budget.
+  const requestStartedAt = Date.now();
+  // Peek BEFORE anything consumes the body: request.clone() throws on an
+  // already-disturbed body, and the silent catch would then disable the
+  // keepalive path for every request.
+  const shape = await peekClientShape(request);
+  const work = withKeyAdmission(request, () => handleChatImpl(request, clientRawRequest, requestId, requestStartedAt), recheckKeyQuotaAfterCompletion);
+  // A streaming client must not see dead air while combos/retries/account
+  // failover run — the first upstream byte can be many minutes away. Only
+  // wrap once the work is still pending after a short grace: a fast
+  // success or a fast 4xx must reach the client byte-identical, with its
+  // real status. The wrapper then emits an SSE comment every 15s until
+  // the real response exists.
+  if (shape.stream) {
+    const early = await raceGrace(work, 2000);
+    if (early) return attachRequestId(early, requestId);
+    return attachRequestId(await respondWithKeepalive(work, shape.body), requestId);
+  }
+  return attachRequestId(await work, requestId);
+}
+
+// Resolve with the settled response when it lands inside `ms`, else null.
+// A rejection is re-thrown so the caller's error path stays authoritative.
+function raceGrace(promise, ms) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => resolve(null), ms);
+    promise.then(
+      (res) => { clearTimeout(timer); resolve(res); },
+      (err) => { clearTimeout(timer); reject(err); },
+    );
+  });
+}
+
+// One parse for both decisions: does the client want SSE, and in which
+// wire format must a terminal error frame be written (OpenAI / Claude /
+// Responses each have their own shape — a hand-rolled frame is malformed
+// for two of the three).
+async function peekClientShape(request) {
+  try {
+    const body = await request.clone().json();
+    return { stream: body?.stream === true, body };
+  } catch { return { stream: false, body: null }; }
+}
+
+// Wrap a pending chat response in an SSE body that starts emitting
+// keep-alive comments immediately. When the real response lands, its
+// bytes are piped through unchanged. A non-SSE outcome (error, forced
+// non-stream body) is re-framed in the client's own wire format so a
+// Claude or Responses client is never handed an OpenAI-shaped frame.
+async function respondWithKeepalive(work, clientBody) {
+  const encoder = new TextEncoder();
+  const sourceFormat = detectFormat(clientBody || {});
+  let timer = null;
+  const stop = () => { if (timer) { clearInterval(timer); timer = null; } };
+  const terminal = (status, message) => buildStreamErrorBytes(status, message, sourceFormat);
+  const stream = new ReadableStream({
+    start(controller) {
+      const beat = () => { try { controller.enqueue(encoder.encode(": keepalive\n\n")); } catch { /* closed */ } };
+      beat();
+      timer = setInterval(beat, 15000);
+      work.then(async (res) => {
+        stop();
+        const ct = res.headers?.get?.("content-type") || "";
+        if (res.ok && ct.includes("text/event-stream") && res.body) {
+          const reader = res.body.getReader();
+          try {
+            while (true) {
+              const { done, value } = await reader.read();
+              if (done) break;
+              controller.enqueue(value);
+            }
+          } catch { /* upstream closed */ }
+          try { controller.close(); } catch { /* already closed */ }
+          return;
+        }
+        // Non-SSE outcome: one format-correct terminal frame.
+        try { controller.enqueue(terminal(res.status, "upstream returned non-stream response")); } catch { /* closed */ }
+        try { controller.close(); } catch { /* already closed */ }
+      }).catch((err) => {
+        stop();
+        try { controller.enqueue(terminal(502, String(err?.message || err))); } catch { /* closed */ }
+        try { controller.close(); } catch { /* already closed */ }
+      });
+    },
+    cancel() { stop(); }
+  });
+  return new Response(stream, {
+    status: 200,
+    headers: {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache",
+      "Connection": "keep-alive",
+      "Access-Control-Allow-Origin": "*",
+    },
+  });
 }
 
 // Per-combo member pins live in comboDispatch.js (memberPinFor) so the
@@ -71,7 +169,7 @@ async function getCapacityConnections() {
  * Supports: OpenAI, Claude, Gemini, OpenAI Responses API formats
  * Format detection and translation handled by translator
  */
-async function handleChatImpl(request, clientRawRequest = null, requestId = null) {
+async function handleChatImpl(request, clientRawRequest = null, requestId = null, requestStartedAt = null) {
   let body;
   try {
     body = await request.json();
@@ -94,6 +192,8 @@ async function handleChatImpl(request, clientRawRequest = null, requestId = null
   // top-level combo, nested combo, solo, fusion panels — without a new
   // positional parameter on every call site.
   if (requestId) clientRawRequest.requestId = requestId;
+  // Absolute origin of this client request, shared by every member attempt.
+  clientRawRequest.requestStartedAt = requestStartedAt || Date.now();
   // Claude Code marks a 1M-context request as `<model>[1m]`; the marker matches
   // no combo, alias or provider/model pair, so it must not reach resolution.
   // The capability travels in the anthropic-beta header, forwarded as-is.
@@ -221,7 +321,7 @@ async function handleChatImpl(request, clientRawRequest = null, requestId = null
       models: soloAugmented,
       handleSingleModel: withCapacityAdapterStripping(
         withBreakerSuccess(
-          (b, m) => handleSingleModelChat(b, m, clientRawRequest, request, apiKey, null, soloInjectName(m), resolveComboMemberAttemptCap(settings)),
+          (b, m) => handleSingleModelChat(b, m, clientRawRequest, request, apiKey, null, soloInjectName(m), resolveComboMemberAttemptCap(settings), request?.signal),
           (m) => soloVariantBacking(m) || m,
         ),
         adapterAdded,
@@ -233,7 +333,7 @@ async function handleChatImpl(request, clientRawRequest = null, requestId = null
     });
   }
 
-  const soloResult = await handleSingleModelChat(body, modelStr, clientRawRequest, request, apiKey, contextMarker ? `${modelStr.slice(modelStr.indexOf("/") + 1)}[${contextMarker}]` : null);
+  const soloResult = await handleSingleModelChat(body, modelStr, clientRawRequest, request, apiKey, contextMarker ? `${modelStr.slice(modelStr.indexOf("/") + 1)}[${contextMarker}]` : null, null, null, request?.signal);
   try {
     if (soloResult?.ok) {
       const target = soloVariantBacking(modelStr) || modelStr;
@@ -263,6 +363,11 @@ function withFlakyRetriesHeader(response, retries) {
  * Handle single model chat request
  */
 async function handleSingleModelChat(body, modelStr, clientRawRequest = null, request = null, apiKey = null, requestedModel = null, injectModelName = null, comboMemberAttemptCap = null, abortSignal = null, pinnedConnectionId = null) {
+  // One abort path for every branch. The solo and adapter branches pass the
+  // raw request's signal; comboDispatch passes nothing positional, so the
+  // request fallback covers it. Without this the account loop, the proxy
+  // rotation and the upstream fetch all keep running after the client left.
+  const signal = abortSignal || request?.signal || null;
   // Direct variant pick without a backing combo: a bare name that names a
   // variant routes straight to its backing model, with the variant name
   // carried so its prompt still fires. This covers both direct picks and
@@ -277,7 +382,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
       // whole pool (a dahl direct pick timed out at 150s). Resolve the
       // cap here when the caller passed none (top-level picks pass null).
       const directCap = comboMemberAttemptCap ?? resolveComboMemberAttemptCap(await getSettings().catch(() => ({})));
-      return handleSingleModelChat({ ...body, model: directVariant.model }, directVariant.model, clientRawRequest, request, apiKey, requestedModel, modelStr, directCap, abortSignal, pinnedConnectionId);
+      return handleSingleModelChat({ ...body, model: directVariant.model }, directVariant.model, clientRawRequest, request, apiKey, requestedModel, modelStr, directCap, signal, pinnedConnectionId);
     }
   }
   const modelInfo = await getModelInfo(modelStr);
@@ -358,6 +463,10 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
   let memberFallbackFailures = 0;
 
   while (true) {
+    if (signal?.aborted) {
+      log.warn("CHAT", `[${provider}/${model}] client aborted, stopping account loop`);
+      return errorResponse(HTTP_STATUS.SERVICE_UNAVAILABLE, "Request aborted by client");
+    }
     const credentials = await getProviderCredentials(provider, excludeConnectionIds, model, { requestedModel: requestedModel || model, preferredConnectionId: pinnedConnectionId || undefined });
 
     // All accounts unavailable
@@ -441,7 +550,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
       modelInfo: { provider, model },
       credentials: refreshedCredentials,
       log,
-      externalSignal: abortSignal,
+      externalSignal: signal,
       requestId: clientRawRequest?.requestId || null,
       clientRawRequest,
       connectionId: credentials.connectionId,

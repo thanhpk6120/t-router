@@ -295,7 +295,7 @@ function NotConnectedProviders({ entries, forceOpen }) {
 }
 
 export default function ProvidersPage() {
-  const { statsMap, setStatsMap, breakers, refresh, loading: summaryLoading } = useProviderSummary();
+  const { statsMap, setStatsMap, breakers, providerStrategies, setProviderStrategies, refresh, loading: summaryLoading } = useProviderSummary();
   const [providerNodes, setProviderNodes] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showAddCompatibleModal, setShowAddCompatibleModal] = useState(false);
@@ -455,7 +455,12 @@ export default function ProvidersPage() {
       errorCode,
       errorTime,
       lastTested,
-      allDisabled: anyEntry && total > 0 ? allDisabled : false,
+      // No-auth free providers have no connection rows, so their switch state
+      // comes from settings.providerStrategies instead of the connection stats.
+      allDisabled: anyEntry && total > 0
+        ? allDisabled
+        : (providerStrategies[providerId]?.disabled === true
+          || providerStrategies[providerId]?.isActive === false),
       // Provider breaker (P3-27) keyed by registry provider id. Compatible
       // nodes use synthetic ids, so they never match — their single
       // endpoint is covered by the connection-cooldown layer instead.
@@ -486,12 +491,23 @@ export default function ProvidersPage() {
       }
       return next;
     });
+    // No-auth providers have no stats entry to flip; their switch reads the
+    // settings override, so that is what the optimistic update must touch.
+    const prevOverride = providerStrategies[providerId] || {};
+    setProviderStrategies((prev) => ({
+      ...prev,
+      [providerId]: { ...(prev[providerId] || prevOverride), isActive: newActive, disabled: !newActive },
+    }));
     // One bulk UPDATE server-side (was: one PUT per connection).
     try {
       const res = await fetch("/api/providers", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ provider: providerId, authTypes, isActive: newActive }),
+        // Empty authTypes = "every connection of this provider". The registry
+        // list (oauth/apikey/api_key) does not match stored values such as
+        // access_token / mcode-lease / cookie, so sending it matched 0 rows and
+        // the switch silently did nothing.
+        body: JSON.stringify({ provider: providerId, authTypes: [], isActive: newActive }),
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
     } catch (error) {
@@ -502,6 +518,10 @@ export default function ProvidersPage() {
         }
         return next;
       });
+      setProviderStrategies((prev) => ({
+        ...prev,
+        [providerId]: { ...(prev[providerId] || {}), isActive: !newActive, disabled: newActive },
+      }));
       notify.error(`Failed to ${newActive ? "enable" : "disable"} ${displayName} — change was not saved.`);
     }
   };
@@ -509,8 +529,10 @@ export default function ProvidersPage() {
   const handleToggleProvider = async (providerId, authType, newActive, displayName) => {
     const authTypes = Array.isArray(authType) ? authType : [authType];
     const name = displayName || providerId;
-    if (!newActive) {
-      const count = authTypes.reduce((n, t) => n + (statsMap[`${providerId}|${t}`]?.total || 0), 0);
+    const count = authTypes.reduce((n, t) => n + (statsMap[`${providerId}|${t}`]?.total || 0), 0);
+    // No-auth providers own no connection rows (count 0), so the "0 connections
+    // at risk" dialog was both meaningless and friction — disable immediately.
+    if (!newActive && count > 0) {
       setToggleConfirm({
         title: `Disable ${name}?`,
         message: `This will disable ${count} connection${count === 1 ? "" : "s"} for ${name}. Traffic will stop using them until you re-enable the provider.`,
@@ -1411,19 +1433,19 @@ function ProviderCard({ providerId, provider, stats, authType, onToggle, fakeCon
             </div>
           </div>
           <div className="flex shrink-0 items-center gap-2">
-            {stats.total > 0 && (
+            {(stats.total > 0 || isNoAuth) && (
               <div
                 className="transition-opacity"
                 onClick={(e) => {
+                  // The card is a <Link>: stop the navigation, not the toggle.
                   e.preventDefault();
                   e.stopPropagation();
-                  onToggle(!allDisabled ? false : true);
                 }}
               >
                 <Toggle
                   size="sm"
                   checked={!allDisabled}
-                  onChange={() => {}}
+                  onChange={(next) => onToggle(next)}
                   title={allDisabled ? "Enable provider" : "Disable provider"}
                 />
               </div>
@@ -1466,6 +1488,9 @@ function ApiKeyProviderCard({
   onConnectedLongPress = null,
 }) {
   const { connected, error, errorCode, errorTime, lastTested, allDisabled, breaker } = stats;
+  // No-auth providers own no connection rows, so their switch must render even
+  // with total === 0 (same rule as ProviderCard).
+  const isNoAuth = !!provider.noAuth;
   const isCompatible = providerId.startsWith(OPENAI_COMPATIBLE_PREFIX);
   const isAnthropicCompatible = providerId.startsWith(
     ANTHROPIC_COMPATIBLE_PREFIX,
@@ -1578,19 +1603,19 @@ function ApiKeyProviderCard({
             </div>
           </div>
           <div className="flex shrink-0 items-center gap-2">
-            {stats.total > 0 && (
+            {(stats.total > 0 || isNoAuth) && (
               <div
                 className="transition-opacity"
                 onClick={(e) => {
+                  // The card is a <Link>: stop the navigation, not the toggle.
                   e.preventDefault();
                   e.stopPropagation();
-                  onToggle(!allDisabled ? false : true);
                 }}
               >
                 <Toggle
                   size="sm"
                   checked={!allDisabled}
-                  onChange={() => {}}
+                  onChange={(next) => onToggle(next)}
                   title={allDisabled ? "Enable provider" : "Disable provider"}
                 />
               </div>

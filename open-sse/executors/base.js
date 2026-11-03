@@ -148,6 +148,10 @@ export class BaseExecutor {
           headers,
           body: bodyStr,
           signal: mergedSignal,
+          // Carries this provider's connect timeout into the proxy rotation so
+          // the whole proxy phase is sized from the real per-attempt budget
+          // (e.g. qoder's 120s) instead of the 60s global default.
+          connectTimeoutMs: timeoutMs,
           // Protocol adapters that need their own transport (opencode's TLS
           // fingerprint) override the direct path; proxies still take priority.
           ...(directFetch ? { directFetch } : {}),

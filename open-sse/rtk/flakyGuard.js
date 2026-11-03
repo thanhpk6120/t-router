@@ -179,6 +179,10 @@ function sseEndedVerdict(text) {
 const PROBE_BUDGET_MS = 120;
 const PROBE_MAX_BYTES = 2_000_000;
 const FULL_MAX_BYTES = 8_000_000;
+// Budget for the whole-body inspection. It exists only to protect the client
+// from an upstream that never finishes; a genuinely long body still fits
+// inside the full-request budget.
+const FULL_INSPECT_BUDGET_MS = 120_000;
 
 function judgeFinishedText(text) {
   const trimmed = (text || "").trim();
@@ -214,8 +218,29 @@ export async function inspectChatResponseFull(response, maxBytes = FULL_MAX_BYTE
     const reader = response.clone().body.getReader();
     const decoder = new TextDecoder();
     let text = "";
+    // This read used to be unbounded: a non-stream client whose upstream
+    // stalled mid-body parked the whole request here forever. Cap it with
+    // the same full-request budget the non-stream handler already uses.
+    const deadline = Date.now() + FULL_INSPECT_BUDGET_MS;
     while (true) {
-      const { done, value } = await reader.read();
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) {
+        try { reader.cancel().catch(() => {}); } catch {}
+        return { flaky: false, reason: "budget" };
+      }
+      // One timer, cleared on both outcomes: the read usually wins long before
+      // the deadline, and an uncleared timer would stay armed for the whole
+      // budget on every chunk (a per-request timer leak).
+      let budgetTimer = null;
+      const raced = await Promise.race([
+        reader.read(),
+        new Promise((resolve) => { budgetTimer = setTimeout(() => resolve(null), remaining); }),
+      ]).finally(() => { if (budgetTimer) clearTimeout(budgetTimer); });
+      if (raced === null) {
+        try { reader.cancel().catch(() => {}); } catch {}
+        return { flaky: false, reason: "budget" };
+      }
+      const { done, value } = raced;
       if (done) break;
       text += decoder.decode(value, { stream: true });
       if (text.length > maxBytes) {
@@ -245,10 +270,14 @@ export async function inspectChatResponse(response) {
     const deadline = Date.now() + PROBE_BUDGET_MS;
     while (Date.now() < deadline) {
       const remaining = deadline - Date.now();
+      // One timer, cleared on both outcomes: the read usually wins long before
+      // the deadline, and an uncleared timer would stay armed for the whole
+      // budget on every chunk (a per-request timer leak).
+      let budgetTimer = null;
       const raced = await Promise.race([
         reader.read(),
-        new Promise((resolve) => setTimeout(() => resolve(null), remaining)),
-      ]);
+        new Promise((resolve) => { budgetTimer = setTimeout(() => resolve(null), remaining); }),
+      ]).finally(() => { if (budgetTimer) clearTimeout(budgetTimer); });
       if (raced === null) break;
       if (raced.done) { ended = true; break; }
       text += decoder.decode(raced.value, { stream: true });

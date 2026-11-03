@@ -143,9 +143,16 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
   }
 
   try {
-    // Inject a virtual connection for no-auth free providers (with optional proxy pool from settings)
+    // Inject a virtual connection for no-auth free providers (with optional proxy pool from settings).
+    // A no-auth provider has no rows in providerConnections, so its on/off
+    // switch lives on the settings override — and it must be honoured here:
+    // returning the virtual credential before this check made the switch inert.
     if (FREE_PROVIDERS[providerId]?.noAuth) {
       const override = providerOverride;
+      if (override.isActive === false || override.disabled === true) {
+        log.warn("AUTH", `${provider} disabled in settings — no credentials`);
+        return null;
+      }
       const strategy = override.rotateStrategy || "none";
       let pickedId = override.proxyPoolId || null;
       const proxyConfigured = (strategy !== "none" && strategy !== "fill-first") || Boolean(override.proxyPoolId && override.proxyPoolId !== "__none__");

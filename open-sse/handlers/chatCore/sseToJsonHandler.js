@@ -1,7 +1,7 @@
 import { convertResponsesStreamToJson } from "../../transformer/streamToJsonConverter.js";
 import { restoreToolNames } from "../../utils/opencodeFingerprint.js";
 import { createErrorResult } from "../../utils/error.js";
-import { HTTP_STATUS } from "../../config/runtimeConfig.js";
+import { HTTP_STATUS, TOTAL_REQUEST_TIMEOUT_MS } from "../../config/runtimeConfig.js";
 import { FORMATS } from "../../translator/formats.js";
 import { openAICompletionToClaudeMessage } from "../../translator/concerns/claudeMessage.js";
 import { PROVIDERS } from "../../config/providers.js";
@@ -188,6 +188,31 @@ export function parseSSEToOpenAIResponse(rawSSE, fallbackModel) {
   return result;
 }
 
+// Whole-body read budget for the SSE→JSON paths. Both readers below buffer an
+// entire upstream body, and neither used to be bounded: an upstream that sent
+// headers and then stalled parked the request forever. The budget is what is
+// LEFT of the client's total request window, not a fresh one: a member attempt
+// that already burned 20 minutes must not receive another full window.
+function remainingBudgetMs(requestStartTime) {
+  if (!Number.isFinite(requestStartTime)) return TOTAL_REQUEST_TIMEOUT_MS;
+  return Math.max(0, TOTAL_REQUEST_TIMEOUT_MS - (Date.now() - requestStartTime));
+}
+
+// Reject instead of hanging when `read` does not settle inside the budget.
+// One timer, cleared on both paths: a settled read must not leave the budget
+// rejection armed.
+async function withBudget(read, budgetMs) {
+  let timer = null;
+  const budget = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error("total request timeout")), budgetMs);
+  });
+  try {
+    return await Promise.race([read(), budget]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 /**
  * Handle case: provider forced streaming but client wants JSON.
  * Supports both Codex/Responses API SSE and standard Chat Completions SSE.
@@ -212,7 +237,7 @@ export async function handleForcedSSEToJson({ providerResponse, sourceFormat, ta
   const isCodexResponsesApi = isResponsesProvider(provider) || targetFormat === FORMATS.OPENAI_RESPONSES;
   if (isCodexResponsesApi) {
     try {
-      const jsonResponse = await convertResponsesStreamToJson(providerResponse.body);
+      const jsonResponse = await withBudget(() => convertResponsesStreamToJson(providerResponse.body), remainingBudgetMs(requestStartTime));
       if (onRequestSuccess) await onRequestSuccess();
 
       const usage = jsonResponse.usage || {};
@@ -307,7 +332,16 @@ export async function handleForcedSSEToJson({ providerResponse, sourceFormat, ta
 
   // Standard Chat Completions SSE path
   try {
-    const sseText = await providerResponse.text();
+    let sseText;
+    try {
+      sseText = await withBudget(() => providerResponse.text(), remainingBudgetMs(requestStartTime));
+    } catch (err) {
+      if (err?.message === "total request timeout") {
+        try { await providerResponse.body?.cancel?.(); } catch { /* already gone */ }
+        return createErrorResult(HTTP_STATUS.GATEWAY_TIMEOUT, "Total request timeout");
+      }
+      throw err;
+    }
     const parsed = parseSSEToOpenAIResponse(sseText, model);
     if (!parsed) return createErrorResult(HTTP_STATUS.BAD_GATEWAY, "Invalid SSE response for non-streaming request");
     if (parsed.error) {

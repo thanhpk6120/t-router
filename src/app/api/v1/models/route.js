@@ -374,15 +374,25 @@ export async function buildModelsList(kindFilter, options = {}) {
     }
   }
 
-  // Include no-auth free providers (e.g. opencode) so their models are exposed in /v1/models
+  // Include no-auth free providers (e.g. opencode) so their models are exposed
+  // in /v1/models — unless the provider was switched off. These providers own
+  // no connection rows, so their on/off state lives in settings.providerStrategies
+  // and must be read here; skipping it listed every free provider even when the
+  // dashboard switch said it was disabled.
+  let providerStrategies = {};
+  try {
+    const { getSettings } = await import("@/lib/localDb");
+    providerStrategies = (await getSettings())?.providerStrategies || {};
+  } catch { /* fail-open: an unreadable setting must not hide every free model */ }
   for (const [id, provider] of Object.entries(FREE_PROVIDERS || {})) {
-    if (provider?.noAuth && !activeConnectionByProvider.has(id)) {
-      activeConnectionByProvider.set(id, {
-        id: "noauth",
-        provider: id,
-        isActive: true,
-      });
-    }
+    if (!provider?.noAuth || activeConnectionByProvider.has(id)) continue;
+    const override = providerStrategies[id] || {};
+    if (override.isActive === false || override.disabled === true) continue;
+    activeConnectionByProvider.set(id, {
+      id: "noauth",
+      provider: id,
+      isActive: true,
+    });
   }
 
   const models = [];
@@ -514,8 +524,11 @@ export async function buildModelsList(kindFilter, options = {}) {
       ).trim();
       const providerModels = PROVIDER_MODELS[staticAlias] || [];
       const enabledModels = conn?.providerSpecificData?.enabledModels;
+      // Flag first: an explicitly emptied allowlist (every model switched off)
+      // must stay authoritative instead of falling back to "publish all".
       const hasExplicitEnabledModels =
-        Array.isArray(enabledModels) && enabledModels.length > 0;
+        conn?.providerSpecificData?.enabledModelsExplicit === true
+        || (Array.isArray(enabledModels) && enabledModels.length > 0);
       const isCompatibleProvider =
         isOpenAICompatibleProvider(providerId) || isAnthropicCompatibleProvider(providerId);
 
@@ -526,17 +539,22 @@ export async function buildModelsList(kindFilter, options = {}) {
       let liveModelKindById = new Map();
       let liveCapabilitiesById = new Map();
 
+      // Null-safe: the explicit flag can be set with no array (every model
+      // switched off), and `enabledModels.filter` would throw on undefined.
       let rawModelIds = hasExplicitEnabledModels
         ? Array.from(
             new Set(
-              enabledModels.filter(
+              (Array.isArray(enabledModels) ? enabledModels : []).filter(
                 (modelId) => typeof modelId === "string" && modelId.trim() !== "",
               ),
             ),
           )
         : providerModels.map((model) => model.id);
 
-      if (isCompatibleProvider && rawModelIds.length === 0 && !skipDynamicFetch) {
+      // An explicitly empty allowlist means "publish nothing" — do not spend a
+      // live fetch to repopulate a list the user deliberately emptied.
+      const explicitlyEmptySelection = hasExplicitEnabledModels && rawModelIds.length === 0;
+      if (isCompatibleProvider && rawModelIds.length === 0 && !skipDynamicFetch && !explicitlyEmptySelection) {
         rawModelIds = await fetchCompatibleModelIds(conn);
       }
 
@@ -544,7 +562,7 @@ export async function buildModelsList(kindFilter, options = {}) {
       // -thinking/-agentic variants per account), resolved concurrently
       // above. On failure or budget expiry, fall back to whatever
       // rawModelIds already holds.
-      const live = liveByProvider.get(providerId);
+      const live = explicitlyEmptySelection ? null : liveByProvider.get(providerId);
       if (live?.models?.length) {
         rawModelIds = live.models.map((m) => m.id);
         liveModelKindById = new Map(
@@ -557,6 +575,24 @@ export async function buildModelsList(kindFilter, options = {}) {
             .filter((m) => m?.id && m.capabilities)
             .map((m) => [m.id, m.capabilities])
         );
+      }
+
+      // Allowlist enforcement, applied AFTER the live catalog override above:
+      // that branch replaces rawModelIds wholesale, so seeding the list earlier
+      // was silently discarded. An explicit selection on the connection means
+      // "publish only these"; empty/absent keeps the old publish-everything
+      // behaviour so existing installs are unchanged.
+      if (hasExplicitEnabledModels) {
+        const allowed = new Set((Array.isArray(enabledModels) ? enabledModels : []).filter((m) => typeof m === "string" && m.trim()));
+        rawModelIds = rawModelIds.filter((modelId) => {
+          const bare = typeof modelId === "string" && modelId.includes("/")
+            ? modelId.slice(modelId.lastIndexOf("/") + 1)
+            : modelId;
+          return allowed.has(modelId) || allowed.has(bare)
+            || allowed.has(`${outputAlias}/${bare}`)
+            || allowed.has(`${staticAlias}/${bare}`)
+            || allowed.has(`${providerId}/${bare}`);
+        });
       }
 
       const modelIds = rawModelIds
@@ -626,6 +662,19 @@ export async function buildModelsList(kindFilter, options = {}) {
         const allowAsLlm = kind === "imageToText" && kindFilter.includes(LLM_KIND);
         if (!kindFilter.includes(kind) && !allowAsLlm) continue;
         if (isDisabled(outputAlias, modelId) || isDisabled(staticAlias, modelId) || isDisabled(providerId, modelId)) continue;
+        // The allowlist must gate the merged list too, not only rawModelIds:
+        // custom rows (what "Load models from provider" persists) and alias
+        // entries are merged back in below that point, so a selection could be
+        // bypassed for exactly the models the loader created.
+        if (hasExplicitEnabledModels) {
+          const allowed = new Set((Array.isArray(enabledModels) ? enabledModels : []).filter((m) => typeof m === "string" && m.trim()));
+          const bare = modelId.includes("/") ? modelId.slice(modelId.lastIndexOf("/") + 1) : modelId;
+          const permitted = allowed.has(modelId) || allowed.has(bare)
+            || allowed.has(`${outputAlias}/${bare}`)
+            || allowed.has(`${staticAlias}/${bare}`)
+            || allowed.has(`${providerId}/${bare}`);
+          if (!permitted) continue;
+        }
 
         const model = {
           id: `${outputAlias}/${modelId}`,
