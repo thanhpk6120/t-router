@@ -10,6 +10,7 @@ import { useVisibleCount } from "@/shared/hooks/useVisibleCount";
 import { getModelsByProviderId, getModelKind } from "@/shared/constants/models";
 import { OAUTH_PROVIDERS, APIKEY_PROVIDERS, FREE_PROVIDERS, FREE_TIER_PROVIDERS, AI_PROVIDERS, isOpenAICompatibleProvider, isAnthropicCompatibleProvider, getProviderAlias } from "@/shared/constants/providers";
 import { parseSearchQuery, matchesSearch } from "@/shared/utils/modelSearchFilter";
+import { normalizeModelRows } from "@/shared/utils/modelRows";
 import { nodePrefixById, displayBacking } from "@/shared/utils/friendlyBacking";
 import { getDeactivatedProviderIds } from "@/shared/utils/connectionStatus";
 
@@ -35,6 +36,11 @@ const NO_AUTH_PROVIDER_IDS = Object.keys(FREE_PROVIDERS).filter(id => FREE_PROVI
 const CATALOG_TTL_MS = 60_000;
 const catalogCache = new Map(); // `${connectionId}` -> { at, models }
 
+// Upstream catalogs are not uniform: OpenAI-shaped rows are
+// `{ id, object, owned_by }` and carry no display name, so a raw row became a
+// chip with an undefined `name` and `a.name.localeCompare(...)` threw
+// "Cannot read properties of undefined (reading 'localeCompare')", killing the
+// whole picker. normalizeModelRows gives every row `{ id, name }` on the way in.
 async function fetchConnectionCatalog(connectionId) {
   const cached = catalogCache.get(connectionId);
   if (cached && Date.now() - cached.at < CATALOG_TTL_MS) return cached.models;
@@ -42,7 +48,7 @@ async function fetchConnectionCatalog(connectionId) {
     const response = await fetch(`/api/providers/${connectionId}/models`, { cache: "no-store" });
     if (!response.ok) return [];
     const data = await response.json();
-    const models = Array.isArray(data.models) ? data.models : [];
+    const models = normalizeModelRows(data.models);
     catalogCache.set(connectionId, { at: Date.now(), models });
     return models;
   } catch {
@@ -403,7 +409,7 @@ export default function ModelSelectModal({
             ...registeredTyped,
             ...getModelsByProviderId(providerId)
             .filter((m) => getModelKind(m) === kindFilter)
-            .map((m) => ({ id: m.id, name: m.name, value: `${alias}/${m.id}`, kind: getModelKind(m) }))
+            .map((m) => ({ id: m.id, name: m.name || m.id, value: `${alias}/${m.id}`, kind: getModelKind(m) }))
             .filter((m) => !registeredTyped.some((registered) => registered.value === m.value)),
           ];
           // Fallback: provider-as-model when no hardcoded models match (tts/image/webFetch only)
@@ -423,7 +429,7 @@ export default function ModelSelectModal({
           const liveForProvider = liveCatalogs[providerId] || [];
           const hardcoded = (liveForProvider.length > 0 ? liveForProvider : getModelsByProviderId(providerId))
             .filter((m) => !getModelKind(m) || getModelKind(m) === "llm")
-            .map((m) => ({ id: m.id, name: m.name, value: `${alias}/${m.id}`, kind: getModelKind(m) }))
+            .map((m) => ({ id: m.id, name: m.name || m.id, value: `${alias}/${m.id}`, kind: getModelKind(m) }))
             .filter((m) => !seen.has(m.value));
           combined = [...registeredLlms, ...aliasModels.filter((m) => !registeredLlms.some((registered) => registered.value === m.value)), ...hardcoded];
         }
@@ -481,8 +487,17 @@ export default function ModelSelectModal({
         const allowModels = allowEntry
           ? [...allowEntry.ids].map((id) => ({ id, name: id, value: `${nodePrefix}/${id}` }))
           : [];
+        // The provider page reads the node's live /models catalog; the picker
+        // must offer the same rows. This used to be missing, so a compatible
+        // node with no alias/custom rows rendered only a `model-id` placeholder
+        // even though its provider page listed the whole catalog.
+        const liveNodeModels = (liveCatalogs[providerId] || []).map((m) => ({
+          id: m.id,
+          name: m.name || m.id,
+          value: `${nodePrefix}/${m.id}`,
+        }));
         const seen = new Set();
-        const mergedModels = [...allowModels, ...nodeModels, ...registeredCustom].filter((m) => {
+        const mergedModels = [...allowModels, ...liveNodeModels, ...nodeModels, ...registeredCustom].filter((m) => {
           if (seen.has(m.value)) return false;
           seen.add(m.value);
           return !allowEntry || allowEntry.ids.has(m.id);
@@ -533,7 +548,7 @@ export default function ModelSelectModal({
           .map((m) => ({ id: m.id, name: m.name || m.id, value: `${alias}/${m.id}`, isCustom: true }));
 
         const merged = [
-          ...hardcodedModels.map((m) => ({ id: m.id, name: m.name, value: `${alias}/${m.id}`, kind: getModelKind(m) })),
+          ...hardcodedModels.map((m) => ({ id: m.id, name: m.name || m.id, value: `${alias}/${m.id}`, kind: getModelKind(m) })),
           ...customAliasModels,
           ...customRegisteredModels,
         ];
@@ -631,10 +646,15 @@ export default function ModelSelectModal({
     );
   }, [injectedEntries, groupedModels, parsedQuery, kindFilter, capFilter, hideInjections, getCaps]);
 
-  // Sort models alphabetically, with added models floated to top
+  // Sort models alphabetically, with added models floated to top.
+  // The comparator never trusts `name`: a catalog row without a display name
+  // used to throw here and blank the whole picker, so it falls back to the
+  // value/id and finally to "".
   const sortModels = (models) => {
-    const added = models.filter(m => addedModelValues.includes(m.value)).sort((a, b) => a.name.localeCompare(b.name));
-    const rest = models.filter(m => !addedModelValues.includes(m.value)).sort((a, b) => a.name.localeCompare(b.name));
+    const label = (model) => String(model?.name || model?.value || model?.id || "");
+    const compare = (a, b) => label(a).localeCompare(label(b));
+    const added = models.filter(m => addedModelValues.includes(m.value)).sort(compare);
+    const rest = models.filter(m => !addedModelValues.includes(m.value)).sort(compare);
     return [...added, ...rest];
   };
 

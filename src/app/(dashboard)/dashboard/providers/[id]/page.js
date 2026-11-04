@@ -1489,39 +1489,27 @@ export default function ProviderDetailPage() {
       })
       .map((m) => ({ ...m, id: m.id || m.name, enabled: true }));
 
+    // ONE list for every provider: the user's own rows plus the provider's
+    // catalog, rendered together under the toolbar. Custom rows used to sit
+    // above the toolbar, which split one provider's models into two blocks
+    // (three chips on top, the rest below the search box).
+    const displayModels = [
+      ...customModelRows.map((row) => ({
+        key: `custom-${row.source}-${row.fullModel}`,
+        id: row.id,
+        name: row.name || row.id,
+        alias: row.alias,
+      })),
+      ...loadedDisplayModels.map((m) => ({
+        key: `live-${m.id}`,
+        id: m.id,
+        name: m.name || m.id,
+        alias: modelAliases[`${providerStorageAlias}/${m.id}`],
+      })),
+    ].filter((m) => matchSearch(m));
+
     return (
       <div className="flex flex-wrap gap-3">
-        {/* Custom models first */}
-        {/* Active model: X switches it OFF (it moves to "Disabled models" and can
-            be restored). Deleting a row is only possible from that disabled list. */}
-        {customModelRows.filter(matchSearch).map((model) => (
-          <ModelRow
-            key={`${model.source}-${model.fullModel}`}
-            model={{ id: model.id, name: model.name }}
-            fullModel={`${providerDisplayAlias}/${model.id}`}
-            alias={model.alias}
-            copied={copied}
-            onCopy={copy}
-            onSetAlias={() => {}}
-            onDisable={() => handleDisableModel(model.id)}
-            onDeleteAlias={() => handleDisableModel(model.id)}
-            testStatus={modelTestResults[model.id]}
-            onTest={connections.length > 0 || isFreeNoAuth ? () => handleTestModel(model.id) : undefined}
-            isTesting={testingModelIds.has(model.id)}
-            onTestImage={connections.length > 0 || isFreeNoAuth ? () => handleTestImage(model.id) : undefined}
-            imageStatus={modelTestResults[`${model.id}:image`]}
-            isTestingImage={testingModelIds.has(`${model.id}:image`)}
-            onTestThinking={connections.length > 0 || isFreeNoAuth ? () => handleTestThinking(model.id) : undefined}
-            thinkingStatus={modelTestResults[`${model.id}:thinking`]}
-            isTestingThinking={testingModelIds.has(`${model.id}:thinking`)}
-            isCustom
-            isFree={false}
-            onEditCaps={() => setEditCapsTarget({ id: model.id, caps: getCaps(`${providerId}/${model.id}`) || {} })}
-            caps={getCaps(`${providerId}/${model.id}`)}
-            thinkingSuffix={resolveThinkingSuffix(model.id)}
-          />
-        ))}
-
         {/* Actions for this provider's model list — same style as the old
             header "Active All" button (Button sm / secondary / icon). */}
         <div className="mb-3 flex w-full flex-wrap items-center justify-end gap-2">
@@ -1610,48 +1598,37 @@ export default function ProviderDetailPage() {
             {importingClineModels ? translate("Fetching...") : translate("Import from /models")}
           </button>
         )}
-        {/* Generic catalog loader and the bulk enable/disable now live in the
-            action row above. */}
-        {/* Loaded models — everything the provider's own catalog returned, as
-            real rows with a per-model switch. The switch writes the connection's
-            enabledModels ALLOWLIST, so /v1/models publishes exactly the models
-            left on. It deliberately does not touch the global disabledModels
-            denylist, which the Disabled-models section below owns — sharing it
-            would also hide these models from every picker. */}
-        {loadedDisplayModels.length > 0 && (
-          <div className="flex flex-wrap gap-3">
-            {loadedDisplayModels.filter(matchSearch).map((m) => {
-              const id = m.id;
-              return (
-                <ModelRow
-                  key={`live-${id}`}
-                  enabled={m.enabled}
-                  isCustom
-                  onDeleteAlias={() => handleDisableModel(id)}
-                  model={{ id, name: m.name || id }}
-                  fullModel={`${providerDisplayAlias}/${id}`}
-                  alias={modelAliases[`${providerStorageAlias}/${id}`]}
-                  copied={copied}
-                  onCopy={copy}
-                  onSetAlias={() => {}}
-                  testStatus={modelTestResults[id]}
-                  onTest={connections.length > 0 || isFreeNoAuth ? () => handleTestModel(id) : undefined}
-                  isTesting={testingModelIds.has(id)}
-                  onTestImage={connections.length > 0 || isFreeNoAuth ? () => handleTestImage(id) : undefined}
-                  imageStatus={modelTestResults[`${id}:image`]}
-                  isTestingImage={testingModelIds.has(`${id}:image`)}
-                    onTestThinking={connections.length > 0 || isFreeNoAuth ? () => handleTestThinking(id) : undefined}
-                    thinkingStatus={modelTestResults[`${id}:thinking`]}
-                    isTestingThinking={testingModelIds.has(`${id}:thinking`)}
-                    isFree={false}
-                    onEditCaps={() => setEditCapsTarget({ id, caps: getCaps(`${providerId}/${id}`) || {} })}
-                    caps={getCaps(`${providerId}/${id}`)}
-                    thinkingSuffix={resolveThinkingSuffix(id)}
-                  />
-                );
-              })}
-          </div>
-        )}
+        {/* The provider's whole model list — custom rows and every model its
+            catalog returned — under the toolbar, one block per provider.
+            X switches a model OFF (it moves to "Disabled models" and can be
+            restored); deleting a row is only possible from that list. */}
+        {displayModels.map((m) => (
+          <ModelRow
+            key={m.key}
+            enabled
+            isCustom
+            onDeleteAlias={() => handleDisableModel(m.id)}
+            model={{ id: m.id, name: m.name }}
+            fullModel={`${providerDisplayAlias}/${m.id}`}
+            alias={m.alias}
+            copied={copied}
+            onCopy={copy}
+            onSetAlias={() => {}}
+            testStatus={modelTestResults[m.id]}
+            onTest={connections.length > 0 || isFreeNoAuth ? () => handleTestModel(m.id) : undefined}
+            isTesting={testingModelIds.has(m.id)}
+            onTestImage={connections.length > 0 || isFreeNoAuth ? () => handleTestImage(m.id) : undefined}
+            imageStatus={modelTestResults[`${m.id}:image`]}
+            isTestingImage={testingModelIds.has(`${m.id}:image`)}
+            onTestThinking={connections.length > 0 || isFreeNoAuth ? () => handleTestThinking(m.id) : undefined}
+            thinkingStatus={modelTestResults[`${m.id}:thinking`]}
+            isTestingThinking={testingModelIds.has(`${m.id}:thinking`)}
+            isFree={false}
+            onEditCaps={() => setEditCapsTarget({ id: m.id, caps: getCaps(`${providerId}/${m.id}`) || {} })}
+            caps={getCaps(`${providerId}/${m.id}`)}
+            thinkingSuffix={resolveThinkingSuffix(m.id)}
+          />
+        ))}
 
         {/* Disabled models — restorable */}
         {disabledDisplayModels.length > 0 && (

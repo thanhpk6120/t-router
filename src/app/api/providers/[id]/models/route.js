@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getProviderConnectionById } from "@/models";
+import { normalizeModelRows } from "@/shared/utils/modelRows.js";
 import { isOpenAICompatibleProvider, isAnthropicCompatibleProvider } from "@/shared/constants/providers";
 import { GEMINI_CONFIG, ANTIGRAVITY_CONFIG, ZED_HOSTED_CONFIG } from "@/lib/oauth/constants/oauth";
 import { refreshGoogleToken, refreshCodexToken, updateProviderCredentials } from "@/sse/services/tokenRefresh";
@@ -95,6 +96,11 @@ const getStaticProviderModels = (providerId) =>
     id: model.id,
     name: model.name || model.id,
   }));
+
+// Every /models payload this route returns goes through normalizeModelRows
+// (see src/shared/utils/modelRows.js): upstreams are not uniform, and a raw
+// row without a display name crashed the model picker's alphabetical sort.
+const normalizeModels = normalizeModelRows;
 
 // Generic custom resolver for OAuth providers that need refresh-on-401 + token persist.
 // Receives a `fetchFn(token)` and returns parsed models or throws.
@@ -595,7 +601,7 @@ export async function GET(request, { params }) {
               .map((m) => ({ id: m?.id || m?.model, name: m?.name || m?.id || m?.model }))
               .filter((m) => m.id);
             if (models.length > 0) {
-              return NextResponse.json({ provider: id, connectionId: null, models, source: "live" });
+              return NextResponse.json({ provider: id, connectionId: null, models: normalizeModels(models), source: "live" });
             }
           }
         } catch {
@@ -638,7 +644,7 @@ export async function GET(request, { params }) {
       return NextResponse.json({
         provider: connection.provider,
         connectionId: connection.id,
-        models
+        models: normalizeModels(models)
       });
     }
 
@@ -679,7 +685,7 @@ export async function GET(request, { params }) {
       return NextResponse.json({
         provider: connection.provider,
         connectionId: connection.id,
-        models
+        models: normalizeModels(models)
       });
     }
 
@@ -717,7 +723,7 @@ export async function GET(request, { params }) {
       return NextResponse.json({
         provider: connection.provider,
         connectionId: connection.id,
-        models: result.models,
+        models: normalizeModels(result.models),
         ...(result.warning ? { warning: result.warning } : {})
       });
     }
@@ -762,7 +768,7 @@ export async function GET(request, { params }) {
     }
 
     const data = await response.json();
-    const models = config.parseResponse(data);
+    const models = normalizeModels(config.parseResponse(data));
 
     return NextResponse.json({
       provider: connection.provider,

@@ -104,7 +104,12 @@ describe("active-model allowlist", () => {
 
   it("lists every loaded model with a switch instead of hiding deselected ones", () => {
     expect(detail).toContain("const loadedDisplayModels = allModels");
-    expect(detail).toContain("enabled={m.enabled}");
+    // One list per provider: custom rows + loaded catalog, rendered together
+    // under the toolbar (no second block above the search box).
+    expect(detail).toContain("const displayModels = [");
+    expect(detail).toContain("{displayModels.map((m) => (");
+    // X on a row still switches the model off (restorable from "Disabled models").
+    expect(detail).toContain("onDeleteAlias={() => handleDisableModel(m.id)}");
   });
 
   it("writes the selection to the connection allowlist", () => {

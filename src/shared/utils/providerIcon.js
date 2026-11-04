@@ -1,6 +1,18 @@
 // Provider icon paths under /public/providers.
 // Alias related brands; session-cache 404s so one miss never spams again.
 
+import { PROVIDER_ICON_IDS } from "./providerIconManifest.js";
+
+// Only ids that really have a mark under public/providers are ever requested.
+// Custom providers (openai-compatible-chat-<uuid>, imported relay names like
+// "ViLao") used to fire a /providers/<name>.png 404 on every first render
+// because the chain guessed a filename from the id or the display name.
+const BUNDLED_ICON_IDS = new Set(PROVIDER_ICON_IDS);
+
+function hasBundledIcon(id) {
+  return !!id && BUNDLED_ICON_IDS.has(id);
+}
+
 const ICON_ALIASES = {
   "perplexity-agent": "perplexity",
   "gitlab-duo": "gitlab",
@@ -38,6 +50,7 @@ export function resolveProviderIconId(providerId) {
   if (failedIds.has(id)) return "";
   const aliased = ICON_ALIASES[id] || id;
   if (failedIds.has(aliased)) return "";
+  if (!hasBundledIcon(aliased)) return "";
   return aliased;
 }
 
@@ -71,7 +84,7 @@ export function getBrandIconSrc(baseUrl) {
     return null;
   }
   const brand = HOST_TO_BRAND[host];
-  if (!brand || failedIds.has(brand)) return null;
+  if (!brand || failedIds.has(brand) || !hasBundledIcon(brand)) return null;
   return `/providers/${brand}.png`;
 }
 
@@ -92,7 +105,7 @@ const TYPE_TO_BRAND = {
 export function getTypeBrandIconSrc(providerType) {
   if (!providerType || typeof providerType !== "string") return null;
   const brand = TYPE_TO_BRAND[providerType.trim().toLowerCase()];
-  if (!brand || failedIds.has(brand)) return null;
+  if (!brand || failedIds.has(brand) || !hasBundledIcon(brand)) return null;
   return `/providers/${brand}.png`;
 }
 
@@ -103,7 +116,7 @@ export function getTypeBrandIconSrc(providerType) {
 export function getNameIconSrc(alt) {
   if (!alt || typeof alt !== "string") return null;
   const name = alt.trim().toLowerCase().replace(/[^a-z0-9]/g, "");
-  if (!name || failedIds.has(name)) return null;
+  if (!name || failedIds.has(name) || !hasBundledIcon(name)) return null;
   return `/providers/${name}.png`;
 }
 

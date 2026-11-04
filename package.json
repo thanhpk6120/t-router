@@ -1,12 +1,14 @@
 {
   "name": "t-router",
-  "version": "0.5.112-pro.16-t.11",
+  "version": "0.5.112-pro.16-t.12",
   "description": "T Router — AI router with a Prompt Inject engine (per-model / per-key / global system prompts), based on 9Router by decolua",
   "author": "",
   "private": true,
   "scripts": {
+    "predev": "node scripts/gen-provider-icon-manifest.mjs",
     "dev": "next dev --port 20126",
     "dev:webpack": "next dev --webpack --port 20126",
+    "prebuild": "node scripts/gen-provider-icon-manifest.mjs",
     "build": "next build --webpack",
     "postbuild": "node scripts/copy-standalone-assets.mjs",
     "postbuild:bun": "node scripts/copy-standalone-assets.mjs",

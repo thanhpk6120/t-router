@@ -301,10 +301,11 @@ export default function BasicChatPageClient() {
         const normalized = Array.from(providerMap.values())
           .map((group) => ({
             ...group,
-            models: dedupeModels(group.models).sort((a, b) => a.name.localeCompare(b.name)),
+            models: dedupeModels(group.models).sort((a, b) =>
+              String(a.name || a.id || "").localeCompare(String(b.name || b.id || ""))),
           }))
           .filter((group) => group.models.length > 0)
-          .sort((a, b) => a.providerName.localeCompare(b.providerName));
+          .sort((a, b) => String(a.providerName || a.providerId || "").localeCompare(String(b.providerName || b.providerId || "")));
 
         if (!cancelled) {
           setProviderGroups(normalized);
