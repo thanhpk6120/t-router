@@ -77,6 +77,11 @@ export {
   getMitmAlias, setMitmAliasAll,
 } from "./repos/aliasRepo.js";
 
+// Loaded model catalogs (cached per provider/connection, refreshed on demand)
+export {
+  getLoadedModels, setLoadedModels, clearLoadedModels,
+} from "./repos/loadedModelsRepo.js";
+
 // Prompt Injection (T Router) — target-coordinate injections + templates
 export {
   getInjectModelPrompts, setInjectModelPrompt, deleteInjectModelPrompt,

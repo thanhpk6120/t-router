@@ -104,12 +104,57 @@ describe("model pickers sort on a safe label", () => {
   it("the provider models route normalizes every payload it returns", () => {
     const source = read("src/app/api/providers/[id]/models/route.js");
     expect(source).toContain("normalizeModelRows");
-    // Live, compatible, Anthropic-compatible, custom-resolver and
-    // config-driven payloads all pass through the normalizer.
-    expect(source).toContain("models: normalizeModels(models)");
-    expect(source).toContain("models: normalizeModels(result.models)");
-    expect(source).toContain("normalizeModels(config.parseResponse(data))");
-    expect(source).toContain('models: normalizeModels(models), source: "live"');
+    // Every resolver funnels through one responder, which normalizes first.
+    expect(source).toContain("const normalized = normalizeModels(models);");
+    expect(source).toContain("return remember(models);");
+    expect(source).toContain("return remember(result.models, { warning: result.warning });");
+    expect(source).toContain("return remember(staticModels, {");
+  });
+});
+
+describe("loaded catalogs are stored in the DB, not re-fetched on every view", () => {
+  const route = read("src/app/api/providers/[id]/models/route.js");
+  const page = read("src/app/(dashboard)/dashboard/providers/[id]/page.js");
+
+  it("serves the stored catalog before any upstream resolver runs", () => {
+    expect(route).toContain("getLoadedModels");
+    const storedIdx = route.indexOf("const saved = await getLoadedModels(cacheKey)");
+    const upstreamIdx = route.indexOf("if (isOpenAICompatibleProvider(connection.provider))");
+    expect(storedIdx).toBeGreaterThan(-1);
+    expect(upstreamIdx).toBeGreaterThan(storedIdx);
+  });
+
+  it("only an explicit refresh hits the provider again", () => {
+    expect(route).toContain('searchParams.get("refresh") === "1"');
+    expect(route).toContain("setLoadedModels(cacheKey");
+    // The Load button and the qoder/cline importers are the refresh paths.
+    expect(page).toContain("/models?refresh=1");
+    expect(page.match(/\?refresh=1/g) || []).toHaveLength(4);
+  });
+
+  it("keeps the stored catalog when a refresh fails", () => {
+    expect(route).toContain("stale: true");
+  });
+
+  it("has a repo that persists the catalog under its own scope", () => {
+    const repo = read("src/lib/db/repos/loadedModelsRepo.js");
+    expect(repo).toContain('makeKv("loadedModels")');
+    expect(repo).toContain("export async function setLoadedModels");
+  });
+});
+
+describe("custom model rows obey the denylist", () => {
+  const page = read("src/app/(dashboard)/dashboard/providers/[id]/page.js");
+
+  it("removes a disabled custom row from the list and surfaces it in Disabled models", () => {
+    // Custom rows were rendered straight from the custom-model table, so the
+    // X wrote to the denylist and the chip never moved.
+    expect(page).toContain(".filter((row) => !disabledSet.has(row.id))");
+    expect(page).toContain(".filter((row) => disabledSet.has(row.id))");
+  });
+
+  it("keeps the disabled list de-duplicated against the catalog", () => {
+    expect(page).toContain("...allModels.filter((m) => disabledSet.has(m.id) && !customRowIds.has(m.id))");
   });
 });
 

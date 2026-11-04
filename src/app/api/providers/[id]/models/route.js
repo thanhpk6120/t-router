@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getProviderConnectionById } from "@/models";
+import { getLoadedModels, setLoadedModels } from "@/lib/db/index.js";
 import { normalizeModelRows } from "@/shared/utils/modelRows.js";
 import { isOpenAICompatibleProvider, isAnthropicCompatibleProvider } from "@/shared/constants/providers";
 import { GEMINI_CONFIG, ANTIGRAVITY_CONFIG, ZED_HOSTED_CONFIG } from "@/lib/oauth/constants/oauth";
@@ -570,12 +571,75 @@ const PROVIDER_MODELS_CONFIG = {
 };
 
 /**
- * GET /api/providers/[id]/models - Get models list from provider
+ * GET /api/providers/[id]/models - Get the provider's model catalog.
+ *
+ * The catalog is persisted in the DB (kv scope "loadedModels", keyed by the
+ * connection id — or the provider id for no-auth providers) and served from
+ * there. The upstream /models endpoint is only called when this provider has
+ * never been fetched, or when the caller asks for a refresh (?refresh=1 — the
+ * "Load models from provider" button). Opening a provider page used to call
+ * the provider every single time, which made the detail view wait on a live
+ * round-trip for a list that had not changed.
  */
 export async function GET(request, { params }) {
   try {
     const { id } = await params;
+    const { searchParams } = new URL(request.url);
+    const refresh = searchParams.get("refresh") === "1";
     const connection = await getProviderConnectionById(id);
+    const cacheKey = connection?.id || id;
+
+    if (!refresh) {
+      const saved = await getLoadedModels(cacheKey);
+      if (saved) {
+        return NextResponse.json({
+          provider: connection?.provider || id,
+          connectionId: connection?.id || null,
+          models: saved.models,
+          source: saved.source || "stored",
+          updatedAt: saved.updatedAt,
+          cached: true,
+        });
+      }
+    }
+
+    // Persist + answer in one place so every resolver below shares the cache.
+    const remember = async (models, extra = {}) => {
+      const normalized = normalizeModels(models);
+      const updatedAt = new Date().toISOString();
+      const source = extra.source || "live";
+      if (normalized.length > 0) {
+        await setLoadedModels(cacheKey, { models: normalized, updatedAt, source });
+      }
+      return NextResponse.json({
+        provider: connection?.provider || id,
+        connectionId: connection?.id || null,
+        models: normalized,
+        source,
+        updatedAt,
+        cached: false,
+        ...(extra.warning ? { warning: extra.warning } : {}),
+      });
+    };
+
+    // A failed refresh keeps the catalog the user already has instead of
+    // blanking the page because the provider is briefly unreachable.
+    const failed = async (message, status) => {
+      const saved = await getLoadedModels(cacheKey);
+      if (saved) {
+        return NextResponse.json({
+          provider: connection?.provider || id,
+          connectionId: connection?.id || null,
+          models: saved.models,
+          source: saved.source || "stored",
+          updatedAt: saved.updatedAt,
+          cached: true,
+          stale: true,
+          warning: message,
+        });
+      }
+      return NextResponse.json({ error: message }, { status });
+    };
 
     if (!connection) {
       // No-auth providers own no connection rows, so the dashboard cannot pass a
@@ -601,7 +665,7 @@ export async function GET(request, { params }) {
               .map((m) => ({ id: m?.id || m?.model, name: m?.name || m?.id || m?.model }))
               .filter((m) => m.id);
             if (models.length > 0) {
-              return NextResponse.json({ provider: id, connectionId: null, models: normalizeModels(models), source: "live" });
+              return remember(models, { source: "live" });
             }
           }
         } catch {
@@ -610,7 +674,7 @@ export async function GET(request, { params }) {
       }
       const staticModels = getStaticProviderModels(id);
       if (staticModels.length > 0) {
-        return NextResponse.json({ provider: id, connectionId: null, models: staticModels, source: "static" });
+        return remember(staticModels, { source: "static" });
       }
       return NextResponse.json({ error: "Connection not found" }, { status: 404 });
     }
@@ -632,20 +696,13 @@ export async function GET(request, { params }) {
       if (!response.ok) {
         const errorText = await response.text();
         console.log(`Error fetching models from ${connection.provider}:`, errorText);
-        return NextResponse.json(
-          { error: `Failed to fetch models: ${response.status}` },
-          { status: response.status }
-        );
+        return failed(`Failed to fetch models: ${response.status}`, response.status);
       }
 
       const data = await response.json();
       const models = data.data || data.models || [];
 
-      return NextResponse.json({
-        provider: connection.provider,
-        connectionId: connection.id,
-        models: normalizeModels(models)
-      });
+      return remember(models);
     }
 
     if (isAnthropicCompatibleProvider(connection.provider)) {
@@ -673,20 +730,13 @@ export async function GET(request, { params }) {
       if (!response.ok) {
         const errorText = await response.text();
         console.log(`Error fetching models from ${connection.provider}:`, errorText);
-        return NextResponse.json(
-          { error: `Failed to fetch models: ${response.status}` },
-          { status: response.status }
-        );
+        return failed(`Failed to fetch models: ${response.status}`, response.status);
       }
 
       const data = await response.json();
       const models = data.data || data.models || [];
 
-      return NextResponse.json({
-        provider: connection.provider,
-        connectionId: connection.id,
-        models: normalizeModels(models)
-      });
+      return remember(models);
     }
 
     const config = PROVIDER_MODELS_CONFIG[connection.provider];
@@ -705,10 +755,7 @@ export async function GET(request, { params }) {
           { status: 400 }
         );
       }
-      return NextResponse.json({
-        provider: connection.provider,
-        connectionId: connection.id,
-        models: staticModels,
+      return remember(staticModels, {
         source: "static",
         warning: `No live model endpoint for ${connection.provider}; showing the built-in catalog.`,
       });
@@ -718,14 +765,9 @@ export async function GET(request, { params }) {
     if (typeof config.customResolver === "function") {
       const result = await config.customResolver(connection);
       if (result.error) {
-        return NextResponse.json({ error: result.error }, { status: result.status || 500 });
+        return failed(result.error, result.status || 500);
       }
-      return NextResponse.json({
-        provider: connection.provider,
-        connectionId: connection.id,
-        models: normalizeModels(result.models),
-        ...(result.warning ? { warning: result.warning } : {})
-      });
+      return remember(result.models, { warning: result.warning });
     }
 
     // Get auth token
@@ -761,20 +803,13 @@ export async function GET(request, { params }) {
     if (!response.ok) {
       const errorText = await response.text();
       console.log(`Error fetching models from ${connection.provider}:`, errorText);
-      return NextResponse.json(
-        { error: `Failed to fetch models: ${response.status}` },
-        { status: response.status }
-      );
+      return failed(`Failed to fetch models: ${response.status}`, response.status);
     }
 
     const data = await response.json();
-    const models = normalizeModels(config.parseResponse(data));
+    const models = config.parseResponse(data);
 
-    return NextResponse.json({
-      provider: connection.provider,
-      connectionId: connection.id,
-      models
-    });
+    return remember(models);
   } catch (error) {
     console.log("Error fetching provider models:", error);
     return NextResponse.json({ error: "Failed to fetch models" }, { status: 500 });

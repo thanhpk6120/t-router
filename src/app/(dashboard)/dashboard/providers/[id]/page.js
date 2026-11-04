@@ -718,7 +718,7 @@ export default function ProviderDetailPage() {
 
     setImportingQoderModels(true);
     try {
-      const res = await fetch(`/api/providers/${activeConnection.id}/models`);
+      const res = await fetch(`/api/providers/${activeConnection.id}/models?refresh=1`);
       const data = await res.json();
       if (!res.ok) {
         notify.error(data.error || translate("Failed to fetch models"));
@@ -772,7 +772,7 @@ export default function ProviderDetailPage() {
     }
     setImportingClineModels(true);
     try {
-      const res = await fetch(`/api/providers/${activeConnection.id}/models`);
+      const res = await fetch(`/api/providers/${activeConnection.id}/models?refresh=1`);
       const data = await res.json();
       if (!res.ok) {
         notify.error(data.error || translate("Failed to fetch models"));
@@ -825,23 +825,27 @@ export default function ProviderDetailPage() {
     try {
       let fetched = [];
       if (activeConnection) {
-        const res = await fetch(`/api/providers/${activeConnection.id}/models`, { cache: "no-store" });
+        // refresh=1: this is the one place that asks the provider for its live
+        // catalog again. Every other read comes from the copy stored in the DB.
+        const res = await fetch(`/api/providers/${activeConnection.id}/models?refresh=1`, { cache: "no-store" });
         const data = await res.json();
         if (!res.ok) {
           notify.error(data.error || translate("Failed to fetch models"));
           return;
         }
         fetched = data.models || [];
+        if (data?.warning) notify.warning(data.warning);
       } else {
         // No connection: ask the provider route for the provider's own catalog
         // (it fetches the live /models for providers that expose one).
-        const res = await fetch(`/api/providers/${encodeURIComponent(providerId)}/models`, { cache: "no-store" });
+        const res = await fetch(`/api/providers/${encodeURIComponent(providerId)}/models?refresh=1`, { cache: "no-store" });
         const data = await res.json();
         if (!res.ok) {
           notify.warning(translate("No models returned"));
           return;
         }
         fetched = (data.models || []).map((m) => ({ id: m.id, name: m.name || m.id }));
+        if (data?.warning) notify.warning(data.warning);
       }
       if (fetched.length === 0) {
         notify.warning(translate("No models returned"));
@@ -1464,7 +1468,6 @@ export default function ProviderDetailPage() {
     // Search matches the model id or its display name.
     const q = modelSearch.trim().toLowerCase();
     const matchSearch = (m) => !q || String(m.id || "").toLowerCase().includes(q) || String(m.name || "").toLowerCase().includes(q);
-    const disabledDisplayModels = allModels.filter((m) => disabledSet.has(m.id) && matchSearch(m));
     const customModelRows = getProviderCustomModelRows({
       customModels,
       modelAliases,
@@ -1473,6 +1476,16 @@ export default function ProviderDetailPage() {
       type: "llm",
     });
     const customRowIds = new Set(customModelRows.map((row) => row.id));
+    // The denylist owns every row, custom ones included. Custom rows used to be
+    // rendered straight from the custom-model table, so switching one off wrote
+    // the id to the denylist and the chip stayed exactly where it was — it
+    // looked like the model could not be disabled.
+    const disabledDisplayModels = [
+      ...customModelRows
+        .filter((row) => disabledSet.has(row.id))
+        .map((row) => ({ id: row.id, name: row.name || row.id })),
+      ...allModels.filter((m) => disabledSet.has(m.id) && !customRowIds.has(m.id)),
+    ].filter(matchSearch);
     // EVERY loaded model is listed, with its switch state. Filtering the list
     // to the selected ones made the first click irreversible: the row vanished
     // and there was no control left to bring it back.
@@ -1494,12 +1507,14 @@ export default function ProviderDetailPage() {
     // above the toolbar, which split one provider's models into two blocks
     // (three chips on top, the rest below the search box).
     const displayModels = [
-      ...customModelRows.map((row) => ({
-        key: `custom-${row.source}-${row.fullModel}`,
-        id: row.id,
-        name: row.name || row.id,
-        alias: row.alias,
-      })),
+      ...customModelRows
+        .filter((row) => !disabledSet.has(row.id))
+        .map((row) => ({
+          key: `custom-${row.source}-${row.fullModel}`,
+          id: row.id,
+          name: row.name || row.id,
+          alias: row.alias,
+        })),
       ...loadedDisplayModels.map((m) => ({
         key: `live-${m.id}`,
         id: m.id,
