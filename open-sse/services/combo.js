@@ -283,6 +283,27 @@ export function getRotatedModels(models, comboName, strategy, stickyLimit = 1) {
 }
 
 /**
+ * Read-only sibling of getRotatedModels: returns the order the NEXT request
+ * would try, without advancing the rotation counters. The combo tester shows
+ * "which member will serve next" — calling getRotatedModels there would consume
+ * a rotation slot and change what the next real request does.
+ */
+export function peekRotatedModels(models, comboName, strategy) {
+  if (!Array.isArray(models) || models.length <= 1 || strategy !== "round-robin") {
+    return Array.isArray(models) ? [...models] : [];
+  }
+  const rotationKey = comboName || "__default__";
+  const state = comboRotationState.get(rotationKey);
+  const normalized = typeof state === "number"
+    ? { index: state, consecutiveUseCount: 0 }
+    : (state || { index: 0, consecutiveUseCount: 0 });
+  const currentIndex = normalized.index % models.length;
+  // getRotatedModels always serves the order rotated by the CURRENT index and
+  // only advances the index afterwards, so the next request's order is this.
+  return rotateModelsFromIndex(models, currentIndex);
+}
+
+/**
  * Reset in-memory rotation state when combo/settings change
  * @param {string} [comboName] - Combo name to reset; omit to clear all
  */

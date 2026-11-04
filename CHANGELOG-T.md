@@ -5,6 +5,14 @@ Upstream changelogs (`CHANGELOG.md` and `CHANGELOG-PRO.md`) are kept intact for 
 
 ---
 
+## v0.5.112-pro.16-t.14 (2026-11-04)
+
+- **Test combo (new)**: every combo card now has a **Test** action that answers the three questions an operator asks about a combo — how it routes, whether each member works, and which model the next request will use. `POST /api/combos/test` sends one small real request per member (model = that member, never the combo name), reports `ok/error`, latency and the provider error, and returns the strategy plus the rotation-aware order. The dialog shows `x/y ready`, the predicted member (`next`), the judge for fusion combos, and labels nested combos.
+- **Prediction never disturbs routing**: the order comes from `peekRotatedModels()` (new read-only sibling of `getRotatedModels`) — a preview would otherwise consume a round-robin slot and change what the next production request does.
+- **Clear failure without a key**: model probes go through the normal `/v1` pipeline, so when `requireApiKey` is on and no active key exists the dialog says "No API key configured — create one under Endpoint & Key" instead of showing every member as `HTTP 401: Missing API key`.
+- **Combos page crash on Smart combos**: the strategy badge's "Configure" link used `<Link>` without importing `next/link`, which threw during render for any `smart` combo.
+- Regression guards: `tests/unit/combo-test.test.js`.
+
 ## v0.5.112-pro.16-t.13 (2026-11-04)
 
 - **Models that would not disable**: user-added (custom) models were rendered straight from the custom-model table, so clicking X wrote the id to the denylist and the chip never moved — it looked like the model refused to disable. Custom rows now honour the denylist: X moves them to "Disabled models", where `+` restores them and X deletes the custom row. Verified end-to-end (disable → leaves the list, appears under Disabled models, restore brings it back).

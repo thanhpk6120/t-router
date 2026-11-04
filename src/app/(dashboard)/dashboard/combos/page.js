@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef, useMemo } from "react";
+import Link from "next/link";
 import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors } from "@dnd-kit/core";
 import { arrayMove, SortableContext, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
@@ -81,6 +82,8 @@ export default function CombosPage() {
   const [capacityAdapter, setCapacityAdapter] = useState(EMPTY_CAPACITY_ADAPTER);
   const { getCaps } = useModelCaps();
   const [confirmState, setConfirmState] = useState(null);
+  const [testingCombo, setTestingCombo] = useState(null);
+  const [comboTest, setComboTest] = useState(null);
   const [selectedIds, setSelectedIds] = useState([]);
   const [bulkBusy, setBulkBusy] = useState(false);
   const [showStrategyInfo, setShowStrategyInfo] = useState(false);
@@ -324,6 +327,34 @@ export default function CombosPage() {
     const updated = { ...base };
     for (const name of names) delete updated[name];
     return updated;
+  };
+
+  // Test a combo: routes each member through a real call so the dialog can say
+  // whether every model serves and which one the next request will use.
+  const handleTestCombo = async (combo) => {
+    if (!combo?.name) return;
+    setTestingCombo(combo.name);
+    setComboTest({ loading: true, comboName: combo.name });
+    try {
+      const res = await fetch("/api/combos/test", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ comboName: combo.name }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setComboTest(null);
+        notify.error(data.error || "Failed to test combo");
+        return;
+      }
+      setComboTest(data);
+    } catch (error) {
+      console.log("Error testing combo:", error);
+      setComboTest(null);
+      notify.error("Failed to test combo");
+    } finally {
+      setTestingCombo(null);
+    }
   };
 
   const handleDelete = async (id) => {
@@ -653,6 +684,8 @@ export default function CombosPage() {
                   onCopy={copy}
                   onEdit={() => setEditingCombo(combo)}
                   onDelete={() => handleDelete(combo.id)}
+                  onTest={() => handleTestCombo(combo)}
+                  testing={testingCombo === combo.name}
                   strategy={comboStrategies[combo.name] || {}}
                   onSetStrategy={(patch) => handleSetComboStrategy(combo.name, patch)}
                   selected={selectedIds.includes(combo.id)}
@@ -673,6 +706,9 @@ export default function CombosPage() {
         getCaps={getCaps}
         saveState={adapterSaveState}
       />
+
+      {/* Combo test result */}
+      <ComboTestModal result={comboTest} onClose={() => setComboTest(null)} prefixById={prefixById} />
 
       {/* Create Modal - Use key to force remount and reset state */}
       {showCreateModal && (
@@ -753,7 +789,95 @@ function getRouterModelStatus(routerModel, activeProviderIds) {
   return { ready: false, label: "Not configured", providerId };
 }
 
-function ComboCard({ combo, getCaps, comboByName = {}, activeProviders = [], activeProviderIds = new Set(), prefixById = {}, copied, onCopy, onEdit, onDelete, strategy = {}, onSetStrategy, selected = false, onToggleSelect }) {
+const COMBO_STRATEGY_SUMMARY = {
+  fallback: "Tries the members in order — the first healthy one answers.",
+  "round-robin": "Rotates the starting member per request; this is the order the next request uses.",
+  smart: "System One picks the member per request; this order is the fallback when it cannot decide.",
+  fusion: "Every member runs as a panel, then the judge writes the final answer.",
+  capacity: "Ordered by live account capacity at request time.",
+};
+
+function ComboTestModal({ result, onClose, prefixById = {} }) {
+  if (!result) return null;
+  const loading = result.loading === true;
+  const rows = result.results || [];
+  const okCount = rows.filter((row) => row.status === "ok").length;
+  const label = (model) => displayBacking(model, prefixById) || model;
+
+  return (
+    <Modal
+      isOpen
+      onClose={onClose}
+      size="lg"
+      title={`Test combo — ${result.comboName || ""}`}
+    >
+      {loading ? (
+        <div className="flex items-center gap-2 py-8 text-sm text-text-muted">
+          <span className="material-symbols-outlined" style={{ animation: "spin 1s linear infinite" }}>progress_activity</span>
+          Sending one real request per model…
+        </div>
+      ) : (
+        <div className="flex flex-col gap-4">
+          <div className="flex flex-wrap items-center gap-2 text-xs">
+            <Badge variant="default" size="sm">{result.strategy}</Badge>
+            <Badge
+              variant={okCount === rows.length && rows.length > 0 ? "success" : okCount > 0 ? "warning" : "error"}
+              size="sm"
+              dot
+            >
+              {okCount}/{rows.length} ready
+            </Badge>
+            {result.predictedModel ? (
+              <span className="inline-flex min-w-0 items-center gap-1 rounded border border-primary/30 bg-primary/5 px-2 py-1 text-[11px] text-primary">
+                <span className="material-symbols-outlined text-[13px]">arrow_forward</span>
+                next:
+                <code className="truncate font-mono" title={result.predictedModel}>{label(result.predictedModel)}</code>
+              </span>
+            ) : (
+              <span className="inline-flex items-center gap-1 rounded border border-red-500/30 bg-red-500/5 px-2 py-1 text-[11px] text-red-500">
+                <span className="material-symbols-outlined text-[13px]">block</span>
+                No member is serving — the combo will fail
+              </span>
+            )}
+          </div>
+
+          <p className="text-[11px] text-text-muted">
+            {COMBO_STRATEGY_SUMMARY[result.strategy] || COMBO_STRATEGY_SUMMARY.fallback}
+            {result.strategy === "fusion" && result.judgeModel ? ` Judge: ${result.judgeModel}.` : ""}
+          </p>
+
+          <div className="flex flex-col divide-y divide-border-subtle overflow-hidden rounded-lg border border-border-subtle">
+            {rows.map((row) => (
+              <div key={`${row.order}-${row.model}`} className="flex min-w-0 items-start gap-2 p-2.5">
+                <span className="mt-0.5 w-4 shrink-0 font-mono text-[10px] text-text-muted">{row.order}</span>
+                <span className={`material-symbols-outlined text-[16px] ${row.status === "ok" ? "text-green-500" : "text-red-500"}`}>
+                  {row.status === "ok" ? "check_circle" : "cancel"}
+                </span>
+                <div className="min-w-0 flex-1">
+                  <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+                    <code className="min-w-0 truncate font-mono text-xs" title={row.model}>{label(row.model)}</code>
+                    {row.isCombo && <Badge size="sm">combo</Badge>}
+                    {row.model === result.predictedModel && <Badge variant="success" size="sm">next</Badge>}
+                  </div>
+                  {row.error && <p className="mt-1 break-words text-[11px] text-red-500">{row.error}</p>}
+                  {row.note && <p className="mt-1 text-[11px] text-text-muted">{row.note}</p>}
+                </div>
+                <span className="shrink-0 font-mono text-[11px] text-text-muted">{row.latencyMs} ms</span>
+              </div>
+            ))}
+          </div>
+
+          <p className="text-[10px] text-text-muted">
+            Each row is a real request to that model. The router&apos;s capacity adapter is bypassed, so the verdict
+            describes the model itself.
+          </p>
+        </div>
+      )}
+    </Modal>
+  );
+}
+
+function ComboCard({ combo, getCaps, comboByName = {}, activeProviders = [], activeProviderIds = new Set(), prefixById = {}, copied, onCopy, onEdit, onDelete, onTest, testing = false, strategy = {}, onSetStrategy, selected = false, onToggleSelect }) {
   const [showJudgeSelect, setShowJudgeSelect] = useState(false);
   const [showAllModels, setShowAllModels] = useState(false);
   const visibleModels = showAllModels ? combo.models : combo.models.slice(0, 3);
@@ -907,7 +1031,18 @@ function ComboCard({ combo, getCaps, comboByName = {}, activeProviders = [], act
             />
           </div>
 
-          <div className="grid grid-cols-3 gap-1 sm:flex">
+          <div className="grid grid-cols-4 gap-1 sm:flex">
+            <button
+              onClick={onTest}
+              disabled={testing}
+              className="flex flex-col items-center rounded px-2 py-1 text-text-muted transition-colors hover:bg-black/5 hover:text-primary disabled:opacity-60 dark:hover:bg-white/5"
+              title="Test every model in this combo and see which one will serve"
+            >
+              <span className="material-symbols-outlined text-[18px]" style={testing ? { animation: "spin 1s linear infinite" } : undefined}>
+                {testing ? "progress_activity" : "science"}
+              </span>
+              <span className="text-[10px] leading-tight">{testing ? "Testing" : "Test"}</span>
+            </button>
             <button
               onClick={(e) => { e.stopPropagation(); onCopy(combo.name, `combo-${combo.id}`); }}
               className="flex flex-col items-center rounded px-2 py-1 text-text-muted transition-colors hover:bg-black/5 hover:text-primary dark:hover:bg-white/5"
