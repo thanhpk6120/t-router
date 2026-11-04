@@ -19,6 +19,17 @@ const PROXY_SOURCES = [
   { value: "static", label: "Static Proxies Only" },
 ];
 
+function maskProxyUrl(rawUrl) {
+  const value = String(rawUrl || "").trim();
+  if (!value) return "";
+  try {
+    const parsed = new URL(value);
+    return `${parsed.protocol}//${parsed.hostname}${parsed.port ? `:${parsed.port}` : ""}`;
+  } catch {
+    return value;
+  }
+}
+
 
 export default function NoAuthProxyCard({ providerId, isNoAuth = false }) {
   const [proxyPools, setProxyPools] = useState([]);
@@ -33,6 +44,7 @@ export default function NoAuthProxyCard({ providerId, isNoAuth = false }) {
   const [saveError, setSaveError] = useState("");
   const [rotating, setRotating] = useState(false);
   const [rotateResult, setRotateResult] = useState(null);
+  const [exitCheck, setExitCheck] = useState(null);
   const [providerActive, setProviderActive] = useState(true);
   useEffect(() => {
     let cancelled = false;
@@ -146,6 +158,25 @@ export default function NoAuthProxyCard({ providerId, isNoAuth = false }) {
   const isRotation = rotateStrategy !== "none";
   const selectedPool = proxyPools.find((p) => p.id === proxyPoolId);
 
+  // "Check exit IP": proves the proxy carries traffic and shows the address the
+  // provider will see. Reuses the pool health test, which now reports the IP.
+  const checkExitIp = async (pool) => {
+    if (!pool?.id) return;
+    setExitCheck({ loading: true, ip: null, error: null, poolName: pool.name });
+    try {
+      const res = await fetch(`/api/proxy-pools/${pool.id}/test`, { method: "POST" });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setExitCheck({ loading: false, ip: null, error: data.error || `HTTP ${res.status}`, poolName: pool.name });
+        return;
+      }
+      if (data.exitIp) setExitCheck({ loading: false, ip: data.exitIp, error: null, poolName: pool.name });
+      else setExitCheck({ loading: false, ip: null, error: data.exitIpError || data.error || "No exit IP returned", poolName: pool.name });
+    } catch (e) {
+      setExitCheck({ loading: false, ip: null, error: e.message, poolName: pool.name });
+    }
+  };
+
   const handleQuickRotate = async () => {
     if (!selectedPool?.id) return;
     setRotating(true);
@@ -165,6 +196,20 @@ export default function NoAuthProxyCard({ providerId, isNoAuth = false }) {
       setTimeout(() => setRotateResult(null), 4000);
     }
   };
+  // Which proxy this provider actually uses right now, and what the outside
+  // world sees through it. A per-connection pool overrides this setting, so the
+  // summary is explicit about the level it describes.
+  const activePools = proxyPools.filter((p) => p && p.id !== "direct" && p.proxyUrl && p.proxyUrl !== "direct");
+  const rotationPools = (selectedPoolIds.length > 0
+    ? activePools.filter((p) => selectedPoolIds.includes(p.id))
+    : activePools);
+  const effectivePool = isRotation ? (rotationPools[0] || null) : (selectedPool || null);
+  const effectiveLabel = isRotation
+    ? `Rotation (${rotateStrategy}) over ${rotationPools.length} pool${rotationPools.length === 1 ? "" : "s"}: ${rotationPools.map((p) => p.name).join(", ") || "none"}`
+    : effectivePool
+      ? `${effectivePool.name} — ${maskProxyUrl(effectivePool.proxyUrl)}`
+      : "Direct (no proxy)";
+
   return (
     <Card>
       <div className="flex items-center gap-3 mb-4">
@@ -186,6 +231,37 @@ export default function NoAuthProxyCard({ providerId, isNoAuth = false }) {
           </div>
         )}
         {savedFlash && <Badge variant="success" size="sm">Saved</Badge>}
+      </div>
+
+      {/* Effective proxy: what this provider will actually use, and the exit IP
+          that proves it. Per-connection pools (Connections → Proxy) override it. */}
+      <div className="mb-4 rounded-lg border border-border-subtle bg-black/[0.02] p-2.5 dark:bg-white/[0.02]">
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
+          <span className="material-symbols-outlined text-[16px] text-text-muted">route</span>
+          <span className="text-[11px] font-medium uppercase tracking-wide text-text-muted">Effective</span>
+          <span className="min-w-0 flex-1 truncate text-xs text-text-main" title={effectiveLabel}>{effectiveLabel}</span>
+          {effectivePool && (
+            <button
+              type="button"
+              onClick={() => checkExitIp(effectivePool)}
+              disabled={exitCheck?.loading}
+              className="shrink-0 rounded border border-border px-2 py-0.5 text-[11px] font-medium text-primary transition-colors hover:bg-primary/5 disabled:opacity-50"
+              title={`Send a test through ${effectivePool.name} and report the exit IP`}
+            >
+              {exitCheck?.loading ? "Checking…" : "Check exit IP"}
+            </button>
+          )}
+        </div>
+        {exitCheck && !exitCheck.loading && (
+          <p className={`mt-1 text-[11px] ${exitCheck.ip ? "text-green-600 dark:text-green-400" : "text-red-500"}`}>
+            {exitCheck.ip
+              ? `Exit IP via ${exitCheck.poolName}: ${exitCheck.ip}`
+              : `${exitCheck.poolName}: ${exitCheck.error}`}
+          </p>
+        )}
+        <p className="mt-1 text-[10px] text-text-muted">
+          A per-connection proxy (Connections → Proxy) overrides this setting for that connection.
+        </p>
       </div>
 
       <Select

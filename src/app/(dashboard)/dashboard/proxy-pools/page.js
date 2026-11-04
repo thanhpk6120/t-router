@@ -223,7 +223,10 @@ export default function ProxyPoolsPage() {
       }
 
       await fetchProxyPools();
-      notify.success(data.ok ? "Proxy test passed" : "Proxy test failed");
+      // The exit IP is the proof that this proxy (not the server's own
+      // connection) carried the test request.
+      const ipNote = data.exitIp ? ` — exit IP ${data.exitIp}` : (data.exitIpError ? ` — exit IP unknown (${data.exitIpError})` : "");
+      notify.success(`${data.ok ? "Proxy test passed" : "Proxy test failed"}${ipNote}`);
     } catch (error) {
       console.log("Error testing proxy pool:", error);
       notify.error("Failed to test proxy");
@@ -1004,6 +1007,12 @@ export default function ProxyPoolsPage() {
                     Last tested: {formatDateTime(pool.lastTestedAt)}
                     {pool.lastError ? ` · ${pool.lastError}` : ""}
                   </p>
+                  {!isDirect && pool.lastExitIp ? (
+                    <p className="text-[11px] text-text-muted">
+                      Exit IP: <span className="font-mono text-text-main">{pool.lastExitIp}</span>
+                      {pool.lastExitIpAt ? ` · ${formatDateTime(pool.lastExitIpAt)}` : ""}
+                    </p>
+                  ) : null}
                   </div>
                 </div>
 

@@ -5,6 +5,13 @@ Upstream changelogs (`CHANGELOG.md` and `CHANGELOG-PRO.md`) are kept intact for 
 
 ---
 
+## v0.5.112-pro.16-t.16 (2026-11-04)
+
+- **Proxy verified end-to-end**: a chat request with a pool bound to the connection reaches the provider through that proxy (a logging proxy recorded `CONNECT <upstream>` while the upstream logged the POST); with no pool bound the request goes direct; the provider-level rotation (`providerStrategies[provider].rotateStrategy` + `proxyPoolIds`) also routes through the pool. Same path is used for model tests, usage/ping and token refresh (`chatCore` → `BaseExecutor` → `proxyAwareFetch`).
+- **Exit IP (new)**: "Test" on a proxy pool now also reports the address the outside world sees through it (`probeExitIp` via the proxy: ipify, then ifconfig.me), persists it as `lastExitIp`/`lastExitIpAt`, and the pool card shows "Exit IP: … · time". A passing health check alone proved nothing — a bypassing pool still answers.
+- **Effective proxy on the provider page**: the proxy card now leads with `EFFECTIVE — <pool name> — http://host:port`, or `Rotation (<strategy>) over N pools: …`, or `Direct (no proxy)`, plus a **Check exit IP** button that runs the probe through the pool actually in use and prints `Exit IP via <pool>: <ip>`. It also states that a per-connection proxy overrides the provider setting.
+- Regression guards: `tests/unit/proxy-visibility.test.js`.
+
 ## v0.5.112-pro.16-t.15 (2026-11-04)
 
 - **"Loaded 101 models" but the list was empty**: OpenAI-compatible catalogs tag every row with their own `type` field — `api.cencori.com` answers `type: "chat"`. `getModelKind` returned that verbatim and every LLM filter compares against `"llm"`, so the whole catalog was filtered out of the provider page and the model picker right after it had been loaded and cached. `getModelKind` now maps the chat/text/completion aliases to `"llm"` (media kinds such as `image`, `tts`, `embedding` are untouched).
