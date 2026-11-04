@@ -37,7 +37,19 @@ export const AI_MODELS = Object.entries(MODELS).flatMap(([alias, models]) =>
   models.map(m => ({ provider: alias, model: m.id, name: m.name }))
 );
 
-export const getModelKind = (m, fallback = null) => m?.kind || m?.type || fallback;
+// Upstream catalogs carry their own `type` field: OpenAI-compatible gateways
+// answer with "chat"/"text"/"completion", while the registry uses "llm". Every
+// LLM filter in the dashboard compares against "llm", so an unmapped "chat"
+// read as a non-LLM kind and hid the ENTIRE catalog of such a provider — the
+// page said "Loaded 101 models" and then rendered an empty list.
+const LLM_KIND_ALIASES = new Set(["llm", "chat", "text", "completion", "completions", "language", "chat.completion"]);
+
+export const getModelKind = (m, fallback = null) => {
+  const kind = m?.kind || m?.type || fallback;
+  if (!kind) return kind ?? null;
+  const normalized = String(kind).trim().toLowerCase();
+  return LLM_KIND_ALIASES.has(normalized) ? "llm" : kind;
+};
 
 // Capacity metadata for UI badges — icon + label + color per capability.
 export const CAPACITY_META = {

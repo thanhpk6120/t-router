@@ -8,6 +8,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { normalizeModelRows } from "../../src/shared/utils/modelRows.js";
+import { getModelKind } from "../../src/shared/constants/models.js";
 import {
   getBrandIconSrc,
   getNameIconSrc,
@@ -155,6 +156,25 @@ describe("custom model rows obey the denylist", () => {
 
   it("keeps the disabled list de-duplicated against the catalog", () => {
     expect(page).toContain("...allModels.filter((m) => disabledSet.has(m.id) && !customRowIds.has(m.id))");
+  });
+});
+
+describe("model kind", () => {
+  it("treats upstream chat types as LLM so the catalog is not filtered away", () => {
+    // OpenAI-compatible catalogs (e.g. api.cencori.com) tag every row
+    // `type: "chat"`. Comparing that to "llm" hid all 101 loaded models.
+    expect(getModelKind({ type: "chat" })).toBe("llm");
+    expect(getModelKind({ type: "text" })).toBe("llm");
+    expect(getModelKind({ type: "completion" })).toBe("llm");
+    expect(getModelKind({ kind: "llm" })).toBe("llm");
+    expect(getModelKind({}, "llm")).toBe("llm");
+  });
+
+  it("keeps real media kinds untouched", () => {
+    expect(getModelKind({ type: "image" })).toBe("image");
+    expect(getModelKind({ kind: "tts" })).toBe("tts");
+    expect(getModelKind({ type: "embedding" })).toBe("embedding");
+    expect(getModelKind({})).toBeNull();
   });
 });
 

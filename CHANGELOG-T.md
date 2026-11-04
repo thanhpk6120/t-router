@@ -5,6 +5,12 @@ Upstream changelogs (`CHANGELOG.md` and `CHANGELOG-PRO.md`) are kept intact for 
 
 ---
 
+## v0.5.112-pro.16-t.15 (2026-11-04)
+
+- **"Loaded 101 models" but the list was empty**: OpenAI-compatible catalogs tag every row with their own `type` field — `api.cencori.com` answers `type: "chat"`. `getModelKind` returned that verbatim and every LLM filter compares against `"llm"`, so the whole catalog was filtered out of the provider page and the model picker right after it had been loaded and cached. `getModelKind` now maps the chat/text/completion aliases to `"llm"` (media kinds such as `image`, `tts`, `embedding` are untouched).
+- Verified against a Cencori-shaped catalog (`type: "chat"`): models render under the search bar immediately after Load and again after a reload (served from the DB).
+- Regression guards in `tests/unit/provider-model-rows.test.js`.
+
 ## v0.5.112-pro.16-t.14 (2026-11-04)
 
 - **Test combo (new)**: every combo card now has a **Test** action that answers the three questions an operator asks about a combo — how it routes, whether each member works, and which model the next request will use. `POST /api/combos/test` sends one small real request per member (model = that member, never the combo name), reports `ok/error`, latency and the provider error, and returns the strategy plus the rotation-aware order. The dialog shows `x/y ready`, the predicted member (`next`), the judge for fusion combos, and labels nested combos.
