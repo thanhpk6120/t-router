@@ -848,21 +848,22 @@ function ComboTestModal({ result, onClose, prefixById = {} }) {
 
           <div className="flex flex-col divide-y divide-border-subtle overflow-hidden rounded-lg border border-border-subtle">
             {rows.map((row) => (
-              <div key={`${row.order}-${row.model}`} className="flex min-w-0 items-start gap-2 p-2.5">
+              <div key={`${row.order}-${row.model}`} className={`flex min-w-0 items-start gap-2 p-2.5 ${row.status === "disabled" ? "opacity-60 bg-surface-muted/30" : ""}`}>
                 <span className="mt-0.5 w-4 shrink-0 font-mono text-[10px] text-text-muted">{row.order}</span>
-                <span className={`material-symbols-outlined text-[16px] ${row.status === "ok" ? "text-green-500" : "text-red-500"}`}>
-                  {row.status === "ok" ? "check_circle" : "cancel"}
+                <span className={`material-symbols-outlined text-[16px] ${row.status === "ok" ? "text-green-500" : row.status === "disabled" ? "text-text-muted" : "text-red-500"}`}>
+                  {row.status === "ok" ? "check_circle" : row.status === "disabled" ? "block" : "cancel"}
                 </span>
                 <div className="min-w-0 flex-1">
                   <div className="flex min-w-0 flex-wrap items-center gap-1.5">
                     <code className="min-w-0 truncate font-mono text-xs" title={row.model}>{label(row.model)}</code>
                     {row.isCombo && <Badge size="sm">combo</Badge>}
+                    {row.status === "disabled" && <Badge variant="secondary" size="sm">disabled</Badge>}
                     {row.model === result.predictedModel && <Badge variant="success" size="sm">next</Badge>}
                   </div>
                   {row.error && <p className="mt-1 break-words text-[11px] text-red-500">{row.error}</p>}
                   {row.note && <p className="mt-1 text-[11px] text-text-muted">{row.note}</p>}
                 </div>
-                <span className="shrink-0 font-mono text-[11px] text-text-muted">{row.latencyMs} ms</span>
+                <span className="shrink-0 font-mono text-[11px] text-text-muted">{row.status === "disabled" ? "skipped" : `${row.latencyMs} ms`}</span>
               </div>
             ))}
           </div>

@@ -16,7 +16,9 @@ import { orderModelsByCapacity } from "./capacityOrder.js";
 import { resolveSmartChoice } from "./systemoneRouter.js";
 import { filterAdapterModels } from "./keyAccess.js";
 import { recordProviderSuccess } from "./providerBreaker.js";
-import { parseModel } from "./model.js";
+import { parseModel, filterActiveComboModels } from "./model.js";
+import { errorResponse } from "open-sse/utils/error.js";
+import { HTTP_STATUS } from "open-sse/config/runtimeConfig.js";
 import { handleComboChat, handleFusionChat } from "open-sse/services/combo.js";
 import { augmentModelsWithCapacityAdapter, withCapacityAdapterStripping } from "open-sse/services/capacityAdapter.js";
 
@@ -110,19 +112,31 @@ export async function dispatchCombo({
   const pinFor = memberPinFor(settings, comboName);
   const cap = () => resolveComboMemberAttemptCap(settings);
   const comboStrategies = settings.comboStrategies || {};
-  const comboStrategy = await resolveComboStrategy(comboName, comboModels, settings, apiKey);
+
+  const activeComboModels = await filterActiveComboModels(comboModels);
+  if (activeComboModels.length === 0) {
+    log?.warn?.("CHAT", `All models in combo "${comboName}" are disabled`);
+    return errorResponse(HTTP_STATUS.NOT_FOUND, `All models in combo "${comboName}" are disabled`);
+  }
+
+  const comboStrategy = await resolveComboStrategy(comboName, activeComboModels, settings, apiKey);
   const augmentedModels = await filterAdapterModels(
     keyAccess,
-    augmentModelsWithCapacityAdapter(comboModels, requiredCapabilities, settings, variantBacking),
-    comboModels,
+    augmentModelsWithCapacityAdapter(activeComboModels, requiredCapabilities, settings, variantBacking),
+    activeComboModels,
   );
-  const adapterAdded = augmentedModels.filter((m) => !comboModels.includes(m));
+  const activeAugmented = await filterActiveComboModels(augmentedModels);
+  if (activeAugmented.length === 0) {
+    log?.warn?.("CHAT", `All models in combo "${comboName}" are disabled`);
+    return errorResponse(HTTP_STATUS.NOT_FOUND, `All models in combo "${comboName}" are disabled`);
+  }
+  const adapterAdded = activeAugmented.filter((m) => !activeComboModels.includes(m));
   const { effectiveStrategy, orderedModels } = await applyCapacityStrategy({
-    comboStrategy, models: augmentedModels, getCapacityConnections, variantBacking, log, comboName,
+    comboStrategy, models: activeAugmented, getCapacityConnections, variantBacking, log, comboName,
   });
 
   if (comboStrategy === "fusion") {
-    log?.info?.("CHAT", `Combo "${comboName}" with ${comboModels.length} models (strategy: fusion)`);
+    log?.info?.("CHAT", `Combo "${comboName}" with ${activeComboModels.length} models (strategy: fusion)`);
     const panelFn = (b, m, isPanel, signal) =>
       handleSingleModel(
         b, m,
@@ -131,7 +145,7 @@ export async function dispatchCombo({
       );
     return handleFusionChat({
       body,
-      models: comboModels,
+      models: activeComboModels,
       handleSingleModel: recordBreakerSuccess
         ? withBreakerSuccess(panelFn, (m) => variantBacking(m) || m)
         : panelFn,

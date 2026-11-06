@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getApiKeys, getComboByName, getCombos, getSettings } from "@/lib/localDb";
 import { resolveComboStrategy } from "@/sse/services/pairStrategy.js";
+import { filterActiveComboModels } from "@/sse/services/model.js";
 import { peekRotatedModels } from "open-sse/services/combo.js";
 import { pingModelByKind } from "@/app/api/models/test/ping.js";
 import { UPDATER_CONFIG } from "@/shared/constants/config";
@@ -71,15 +72,34 @@ export async function POST(request) {
       }
     }
 
-    const strategy = await resolveComboStrategy(comboName, models, settings, null)
+    const activeModels = await filterActiveComboModels(models);
+    const strategy = await resolveComboStrategy(comboName, activeModels.length > 0 ? activeModels : models, settings, null)
       .catch(() => "fallback");
-    const order = peekRotatedModels(models, comboName, strategy);
+    const order = peekRotatedModels(activeModels, comboName, strategy);
+    const activeSet = new Set(activeModels);
     const baseUrl = internalBaseUrl();
 
     const allCombos = await getCombos().catch(() => []);
     const comboSet = new Set(allCombos.map((c) => c.name));
 
-    const results = await Promise.all(order.map(async (model, index) => {
+    // Active models first in their rotated order, then disabled models
+    const disabledModels = models.filter((m) => !activeSet.has(m));
+    const fullOrder = [...order, ...disabledModels];
+
+    const results = await Promise.all(fullOrder.map(async (model, index) => {
+      const isDisabled = !activeSet.has(model);
+      if (isDisabled) {
+        return {
+          model,
+          order: "-",
+          isCombo: comboSet.has(model),
+          disabled: true,
+          status: "disabled",
+          latencyMs: 0,
+          error: null,
+          note: "Model is disabled (skipped in combo)",
+        };
+      }
       const startedAt = Date.now();
       const ping = await pingModelByKind(model, PROBE_KIND, baseUrl)
         .catch((error) => ({ ok: false, error: error?.message || "Probe failed" }));
@@ -87,6 +107,7 @@ export async function POST(request) {
         model,
         order: index + 1,
         isCombo: comboSet.has(model),
+        disabled: false,
         status: ping?.ok ? "ok" : "error",
         latencyMs: ping?.latencyMs ?? (Date.now() - startedAt),
         error: ping?.ok ? null : String(ping?.error || "Unknown error").slice(0, 400),

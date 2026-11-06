@@ -124,7 +124,7 @@ function RecentRequests({ requests = [], providerNames = {} }) {
                     <td className="py-1.5">
                       <span className={`block w-1.5 h-1.5 rounded-full ${ok ? "bg-success" : "bg-error"}`} />
                     </td>
-                    <td className="py-1.5 max-w-[120px]">
+                    <td className="py-1.5 max-w-0 w-full">
                       <div className="font-mono truncate" title={r.model}>{r.model}</div>
                       <div className="text-[11px] leading-tight text-text-muted truncate" title={providerName}>{providerName}</div>
                     </td>
@@ -622,7 +622,7 @@ export default function UsageStats({ period: periodProp, setPeriod: setPeriodPro
 
       {/* Provider topology + Recent Requests */}
       {loading ? spinner : (
-        <div className="grid min-w-0 grid-cols-1 items-stretch gap-2 lg:grid-cols-[minmax(0,2fr)_minmax(280px,1fr)]">
+        <div className="grid min-w-0 grid-cols-1 items-stretch gap-2 lg:grid-cols-2">
           <ProviderTopology
             providers={providers}
             activeRequests={stats.activeRequests || []}

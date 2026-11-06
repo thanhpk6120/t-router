@@ -13,7 +13,7 @@ import { dispatchCombo, createVariantHelpers, withBreakerSuccess } from "../serv
 import { getSettings, getApiKeyByKey, resolvePromptInjections, resolvePromptInjectionMeta, resolveVariantSampling, applyVariantSampling, resolveBriefLevel, recordRtkSavings, getInjectVariants, getProviderConnections, recordPromptInjectFire, classifyInjectStack, getInjectKeyModelPrompts } from "@/lib/localDb";
 import { getDisabledModels } from "@/lib/disabledModelsDb";
 import { parseAutoTarget, buildAutoCandidates, getLatencyByProviderCached, AUTO_EXPLORATION_SHARE } from "../services/autoRouting.js";
-import { getModelInfo, getComboModels, parseModel } from "../services/model.js";
+import { getModelInfo, getComboModels, parseModel, isModelDisabled } from "../services/model.js";
 import { recordProviderSuccess } from "../services/providerBreaker.js";
 import { handleChatCore } from "open-sse/handlers/chatCore.js";
 import { DEFAULT_HEADROOM_URL } from "@/lib/headroom/detect";
@@ -243,6 +243,15 @@ async function handleChatImpl(request, clientRawRequest = null, requestId = null
   if (!autoIntent) {
     const keyAccessDenied = await enforceKeyAccess(keyAccess, modelStr);
     if (keyAccessDenied) return keyAccessDenied;
+
+    const allowDisabled = clientRawRequest?.headers?.["x-allow-disabled"] === "1";
+    if (!allowDisabled) {
+      const comboModels = await getComboModels(modelStr);
+      if (!comboModels && await isModelDisabled(modelStr)) {
+        log.warn("CHAT", `Requested model "${modelStr}" is disabled`);
+        return errorResponse(HTTP_STATUS.NOT_FOUND, `Model "${modelStr}" is disabled`);
+      }
+    }
   }
 
   // Bypass naming/warmup requests before combo rotation to avoid wasting rotation slots
@@ -433,6 +442,12 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
   }
 
   const { provider, model } = modelInfo;
+
+  const allowDisabled = clientRawRequest?.headers?.["x-allow-disabled"] === "1";
+  if (!allowDisabled && await isModelDisabled(modelStr)) {
+    log.warn("CHAT", `Model "${modelStr}" is disabled`);
+    return errorResponse(HTTP_STATUS.NOT_FOUND, `Model "${modelStr}" is disabled`);
+  }
 
   // Per-provider/per-model cap override (P3-30): the caller passes the
   // global cap, but the member that actually serves is this provider/

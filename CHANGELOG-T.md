@@ -5,6 +5,24 @@ Upstream changelogs (`CHANGELOG.md` and `CHANGELOG-PRO.md`) are kept intact for 
 
 ---
 
+## 0.5.112-pro.23-t.2 (2026-11-07)
+
+- **Chặn và lọc toàn diện model đã bị disable (Disabled Models Enforcement)**:
+  - `src/sse/services/model.js`: bổ sung `isModelDisabled(modelStr, options)` hỗ trợ kiểm tra đa tầng (provider alias, providerId, custom node prefix, variant backing model, và combo mà mọi model con đều bị disabled) cùng `filterActiveComboModels(models, options)` lọc sạch danh sách combo member.
+  - `src/sse/handlers/chat.js`: chặn request gọi trực tiếp tới model bị disabled (`handleChat` và `handleSingleModelChat`), trả về HTTP 404 Not Found rõ ràng (bỏ qua nếu có header nội bộ `x-allow-disabled: 1`).
+  - `src/sse/services/comboDispatch.js`: tự động lọc bỏ các model bị disabled khỏi `comboModels` và `augmentedModels`. Nếu tất cả model trong combo đều bị disabled, trả về HTTP 404 `All models in combo are disabled`.
+  - `src/app/api/v1/models/route.js`: ẩn các model bị disabled khỏi danh sách `/v1/models`, ẩn các variant có backing model bị disabled, và ẩn các combo mà toàn bộ model thành viên đều bị disabled; đồng thời tính capabilities combo chỉ dựa trên các thành viên còn active.
+  - `src/app/api/v1/models/info/route.js`: trả về HTTP 404 cho metadata của model bị disabled.
+  - `src/app/api/models/route.js`: lọc bỏ các custom models bị disabled khi query không có cờ `includeDisabled`.
+  - `src/app/api/combos/test/route.js`: đánh dấu status `"disabled"` rõ ràng cho các member bị disable trong combo test mà không gọi probe tốn tài nguyên.
+  - `src/app/(dashboard)/dashboard/combos/page.js`: giao diện Combo Test Modal hiển thị trạng thái `disabled` với icon block và nhãn xám skipped.
+- **Tối ưu layout giao diện Dashboard Usage**:
+  - `src/shared/components/UsageStats.js`: chia đều 2 panel (Providers và Recent Requests) với tỷ lệ 50% / 50% (`lg:grid-cols-2`), đồng thời mở rộng độ rộng cột Model (`max-w-0 w-full`) tránh bị cắt ngắn tên model.
+- **Unit Testing**:
+  - Bổ sung bộ kiểm thử `tests/unit/disabled-models.test.js` kiểm tra đầy đủ 13 kịch bản: phát hiện disabled qua providerAlias, providerId, variants, combos, lọc combo members, và các static guards qua toàn bộ routes.
+
+---
+
 ## Đồng bộ bản vá từ upstream 9router 0.5.112 và 9router-pro 0.5.109-pro.23 (2026-11-06)
 
 - **Security & Masking**:

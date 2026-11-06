@@ -11,6 +11,7 @@ import { getProviderConnections, getCombos, getCustomModels, getModelAliases, ge
 import { getDisabledModels } from "@/lib/disabledModelsDb";
 import { getKeyAccessContext, filterModelsListForKey } from "@/sse/services/keyAccess.js";
 import { AUTO_INTENTS } from "@/sse/services/autoRouting.js";
+import { isModelDisabled } from "@/sse/services/model.js";
 import { getModelsListCache, setModelsListCache } from "@/sse/services/modelsListCache.js";
 import { resolveKiroModels } from "open-sse/services/kiroModels.js";
 import { resolveKimchiModels } from "open-sse/services/kimchiModels.js";
@@ -406,6 +407,15 @@ export async function buildModelsList(kindFilter, options = {}) {
   // Combos first (filtered by kind). Web combos expose `kind` so AI knows search vs fetch.
   for (const combo of combos) {
     if (!comboMatchesKinds(combo, kindFilter)) continue;
+    const activeComboMembers = [];
+    for (const m of (combo.models || [])) {
+      if (!(await isModelDisabled(m, { disabledByAlias, combosByName }))) {
+        activeComboMembers.push(m);
+      }
+    }
+    // If every model in the combo is disabled, do not expose this combo on /v1/models
+    if (activeComboMembers.length === 0 && (combo.models || []).length > 0) continue;
+
     const entry = {
       id: combo.name,
       object: "model",
@@ -414,13 +424,13 @@ export async function buildModelsList(kindFilter, options = {}) {
     if (combo.kind === "webSearch" || combo.kind === "webFetch") {
       entry.kind = combo.kind;
     } else {
-      const comboCaps = aggregateComboCapabilities(combo.models, comboByName, comboSeatCapabilities);
+      const comboCaps = aggregateComboCapabilities(activeComboMembers, comboByName, comboSeatCapabilities);
       if (comboCaps) entry.capabilities = comboCaps;
       // Any seat can serve the request, so the only window a combo can promise is
       // its smallest. Combo entries were the only models on this endpoint that
       // published no limits at all, which leaves a client to guess from the name —
       // and it guesses high (see the snake_case note on the per-provider path).
-      const { contextWindow, maxOutput } = comboSeatLimits(combo, combosByName);
+      const { contextWindow, maxOutput } = comboSeatLimits({ ...combo, models: activeComboMembers }, combosByName);
       if (Number.isFinite(contextWindow)) entry.context_length = contextWindow;
       if (Number.isFinite(maxOutput)) entry.max_completion_tokens = maxOutput;
     }
@@ -438,6 +448,7 @@ export async function buildModelsList(kindFilter, options = {}) {
     for (const [name, entry] of Object.entries(variants)) {
       if (combosByName.has(name)) continue;
       if (typeof entry?.model !== "string" || !entry.model.includes("/")) continue;
+      if (await isModelDisabled(entry.model, { disabledByAlias })) continue;
       const slash = entry.model.indexOf("/");
       const alias = entry.model.slice(0, slash);
       const modelId = entry.model.slice(slash + 1);
@@ -661,7 +672,10 @@ export async function buildModelsList(kindFilter, options = {}) {
         // imageToText custom models stay in the LLM list (vision-capable chat models)
         const allowAsLlm = kind === "imageToText" && kindFilter.includes(LLM_KIND);
         if (!kindFilter.includes(kind) && !allowAsLlm) continue;
-        if (isDisabled(outputAlias, modelId) || isDisabled(staticAlias, modelId) || isDisabled(providerId, modelId)) continue;
+        if (isDisabled(outputAlias, modelId)
+          || isDisabled(staticAlias, modelId)
+          || isDisabled(providerId, modelId)
+          || await isModelDisabled(`${outputAlias}/${modelId}`, { disabledByAlias })) continue;
         // The allowlist must gate the merged list too, not only rawModelIds:
         // custom rows (what "Load models from provider" persists) and alias
         // entries are merged back in below that point, so a selection could be

@@ -52,8 +52,8 @@ describe("POST /api/combos/test", () => {
   });
 
   it("reports strategy, rotation-aware order and the predicted member", () => {
-    expect(route).toContain("resolveComboStrategy(comboName, models, settings, null)");
-    expect(route).toContain("peekRotatedModels(models, comboName, strategy)");
+    expect(route).toContain("filterActiveComboModels(models)");
+    expect(route).toContain("peekRotatedModels(activeModels, comboName, strategy)");
     expect(route).toContain("healthy[0]?.model");
     // Fusion is answered by the judge, not by the first healthy panel member.
     expect(route).toContain('strategy === "fusion" ? judgeModel : (healthy[0]?.model || null)');

@@ -77,6 +77,11 @@ export async function GET(request) {
     const routedEntry = new Map(models.map((m) => [m.routedModel, m]));
     const customModels = (await getCustomModels()).filter((m) => {
       if (!m?.id || (m.kind || m.type || "llm") !== "llm") return false;
+      if (!includeDisabled) {
+        const aliasList = disabled[m.providerAlias] || [];
+        const idList = (ALIAS_TO_ID[m.providerAlias] && disabled[ALIAS_TO_ID[m.providerAlias]]) || [];
+        if (aliasList.includes(m.id) || idList.includes(m.id)) return false;
+      }
       const key = `${m.providerAlias}/${m.id}`;
       const isKnown = routedEntry.has(key) || seenFull.has(key);
       // A custom row carrying explicit caps for an existing built-in model is

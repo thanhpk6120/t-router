@@ -1,6 +1,7 @@
 import { PROVIDER_MODELS } from "open-sse/config/providerModels.js";
 import { AI_PROVIDERS, ALIAS_TO_ID } from "@/shared/constants/providers";
 import { getModelKind } from "@/shared/constants/models";
+import { isModelDisabled } from "@/sse/services/model.js";
 
 const KIND_ENDPOINT = {
   llm: "/v1/chat/completions",
@@ -91,6 +92,12 @@ export async function GET(request) {
     return Response.json(
       { error: { message: "Missing required query param: id (e.g. ?id=openai/dall-e-3)", type: "invalid_request_error" } },
       { status: 400, headers: { "Access-Control-Allow-Origin": "*" } },
+    );
+  }
+  if (await isModelDisabled(id)) {
+    return Response.json(
+      { error: { message: `Model not found: ${id}`, type: "not_found" } },
+      { status: 404, headers: { "Access-Control-Allow-Origin": "*" } },
     );
   }
   const info = lookup(id, kind);
