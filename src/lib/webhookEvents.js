@@ -15,6 +15,7 @@
 // events carry only the masked key form (first 8 + "***" + last 4, the
 // same form the usage-history API already exposes).
 import { getNotifyConfig, signWebhook, NOTIFY_TIMEOUT_MS } from "./notify.js";
+import { maskApiKey } from "@/shared/utils/maskApiKey.js";
 
 export const WEBHOOK_EVENT_TYPES = ["usage", "quota", "error"];
 
@@ -41,12 +42,7 @@ const SECRET_KEYS = new Set([
   "botToken", "clientSecret", "sessionToken", "cookie", "authorization",
 ]);
 
-export function maskApiKeyForWebhook(key) {
-  if (!key || typeof key !== "string") return null;
-  const t = key.trim();
-  if (t.length <= 12) return `${t.charAt(0)}***`;
-  return `${t.slice(0, 8)}***${t.slice(-4)}`;
-}
+export { maskApiKey as maskApiKeyForWebhook };
 
 // Deep-redact one payload: secret keys become "[masked]" (mask on) or
 // are dropped (mask off); everything else passes through, capped in

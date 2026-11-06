@@ -278,6 +278,7 @@ async function handleChatImpl(request, clientRawRequest = null, requestId = null
       comboName: modelStr,
       comboStrategy: "fallback",
       comboStickyLimit: settings.comboStickyRoundRobinLimit,
+      signal: request?.signal,
       sessionId,
     });
   }
@@ -334,7 +335,8 @@ async function handleChatImpl(request, clientRawRequest = null, requestId = null
       ),
       log,
       comboName: modelStr,
-      comboStrategy: getActiveAdapterStrategy(requiredCapabilities, settings)
+      comboStrategy: getActiveAdapterStrategy(requiredCapabilities, settings),
+      signal: request?.signal,
     });
   }
 

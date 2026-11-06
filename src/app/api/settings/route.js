@@ -22,7 +22,7 @@ const PROTECTED_SETTING_KEYS = ["password", "mitmSudoEncrypted", "ssoLastTestOk"
 export async function GET() {
   try {
     const settings = await getSettings();
-    const { password, oidcClientSecret, ...safeSettings } = settings;
+    const { password, oidcClientSecret, mitmSudoEncrypted, ...safeSettings } = settings;
     safeSettings.oidcConfigured = !!(safeSettings.oidcIssuerUrl && safeSettings.oidcClientId && oidcClientSecret);
     // opt44: the SSO test-pass fingerprint is server-managed — never expose
     // it through the dashboard API. databasePath is the real server-side
@@ -159,7 +159,7 @@ export async function PATCH(request) {
       resetComboRotation();
     }
 
-    const { password, oidcClientSecret, ...safeSettings } = settings;
+    const { password, oidcClientSecret, mitmSudoEncrypted, ...safeSettings } = settings;
     safeSettings.oidcConfigured = !!(safeSettings.oidcIssuerUrl && safeSettings.oidcClientId && oidcClientSecret);
     delete safeSettings.ssoLastTestOk;
     safeSettings.databasePath = DATA_FILE;

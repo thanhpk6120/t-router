@@ -5,6 +5,43 @@ Upstream changelogs (`CHANGELOG.md` and `CHANGELOG-PRO.md`) are kept intact for 
 
 ---
 
+## Đồng bộ bản vá từ upstream 9router 0.5.112 và 9router-pro 0.5.109-pro.23 (2026-11-06)
+
+- **Security & Masking**:
+  - Tích hợp `src/shared/utils/maskApiKey.js` dùng chung giữa usageRepo, webhookEvents và Dashboard, bảo đảm không lộ full API key.
+  - Cập nhật `open-sse/utils/requestLogger.js` (maskSensitiveHeaders) che giấu token/cookie thực tế trong logs (`[REDACTED]`).
+  - Lọc bỏ `mitmSudoEncrypted` khỏi response GET và PATCH trong `src/app/api/settings/route.js`.
+  - Cập nhật `src/app/api/shutdown/route.js` dùng `await headers()` tương thích Next.js 15.
+  - Cập nhật `src/app/api/settings/database/route.js` trả về HTTP 500 khi server restore lỗi.
+  - Cập nhật `src/app/api/notifications/route.js` trả về HTTP 404 khi không tìm thấy notification cần đánh dấu đã đọc.
+  - Cập nhật `src/lib/auth/oidc.js` với hằng số `OIDC_FETCH_TIMEOUT_MS = 15000` (15s timeout cho tất cả OIDC discovery/token/probe calls).
+
+- **Executors & Upstream Wire Updates**:
+  - Cập nhật `open-sse/executors/opencode.js` và `opencode-zen.js`: chuẩn hóa User-Agent 2.2.5 (`opencode/latest/2.2.5/cli`), bổ sung cặp session affinity headers (`x-session-affinity`, `x-session-id`), loại bỏ `x-opencode-request` (chống lỗi 403 FreeTierError), cập nhật bộ validator version cho major >= 2.
+  - Cập nhật `open-sse/executors/gemini-web.js`: trả về HTTP 401 khi session hết hạn hoặc trang redirect sang trang đăng nhập Google (accounts.google.com/signin), giúp account fallback chuyển sang tài khoản khác thay vì báo lỗi 400.
+  - Cập nhật `open-sse/executors/base.js`: kiểm tra `connectCtrl.signal.aborted` trước khi thực hiện retry nhằm fail-fast ngay khi gặp connect timeout, tránh lặp lại request làm treo kết nối.
+  - Cập nhật `open-sse/services/lazyRuntime.js`: thêm hàm `normalizeDep` chuẩn hóa import `playwright-core` (xử lý export chromium trên default của CJS module trong môi trường ESM), giữ nguyên tên package và thư mục `t-router-runtime`.
+  - Cập nhật `open-sse/services/webLogin.js`: bổ sung cờ `--no-sandbox` khi khởi chạy browser, hỗ trợ môi trường root/VPS Linux.
+
+- **Rotation & Combo Resilience**:
+  - Cập nhật `open-sse/config/runtimeConfig.js`: bổ sung `envMsAllowZero`, cho phép biến `COMBO_FIRST_RESPONSE_TIMEOUT_MS` nhận giá trị `= 0` để tắt timer timeout thành viên.
+  - Cập nhật `open-sse/services/combo.js` và `src/sse/handlers/chat.js`: kết nối `request.signal` của client với timer của từng member thông qua `AbortSignal.any`, ngắt ngay upstream khi client disconnect (trả về 499) thay vì tiếp tục thử phí phạm các model tiếp theo.
+  - Cập nhật `src/sse/services/auth.js` với đầy đủ các bản vá:
+    - **C-3**: Giải phóng sticky selection mutex trước khi sleep trong cơ chế small-fleet rescue để không chặn các request đồng thời khác.
+    - **C-4**: Chỉ xóa sticky current route khi tài khoản thực sự bị khóa sau khi đã xác định `shouldFallback = true`.
+    - **C-5**: Tính cooldown lũy tiến `max(executorResetMs, blindBackoffMs)` và duy trì leo thang cấp độ backoff.
+    - **C-6**: Bỏ qua các account đã bị loại trừ (`excludeSet`) khi tính toán thời gian giải cứu small-fleet rescue.
+    - **C-7**: Ghép đôi connection với thời điểm hết hạn chính xác (`lockedByExpiry`) thay vì lấy phần tử đầu tiên theo thứ tự DB.
+    - **Bảo toàn**: Giữ nguyên vẹn logic Proxy Pools nâng cao của t-router (`rotateLink`, `triggerBackgroundRotate`, proxy pools theo provider/connection, auto-rotate trên 429/403).
+
+- **UI & Routes**:
+  - Cập nhật `src/app/(dashboard)/dashboard/basic-chat/BasicChatPageClient.js`: chuyển hướng gửi chat sang endpoint chuẩn `/v1/chat/completions`, tích hợp dropdown chọn API Key trực tiếp trên giao diện chat, loại bỏ hoàn toàn các thông tin donate/tele/author.
+  - Thêm helper `src/lib/compatibleModels.js` và cập nhật `src/app/api/providers/[id]/models/route.js`, `test-models/route.js`, `compatible-models/route.js` loại bỏ hoàn toàn HTTP self-fetch.
+  - Thêm `src/shared/utils/testErrorStage.js` phân loại trạng thái lỗi kiểm tra nhà cung cấp và model.
+  - Bổ sung `src/app/api/monitoring/route.js` và `src/app/(dashboard)/dashboard/MonitoringPageClient.js` (cùng route `/dashboard/monitoring`) hỗ trợ theo dõi hiệu năng hệ thống, tài nguyên và lưu lượng mạng theo chuẩn Azure theme của t-router.
+
+---
+
 ## v0.5.112-pro.16-t.16 (2026-11-04)
 
 - **Proxy verified end-to-end**: a chat request with a pool bound to the connection reaches the provider through that proxy (a logging proxy recorded `CONNECT <upstream>` while the upstream logged the POST); with no pool bound the request goes direct; the provider-level rotation (`providerStrategies[provider].rotateStrategy` + `proxyPoolIds`) also routes through the pool. Same path is used for model tests, usage/ping and token refresh (`chatCore` → `BaseExecutor` → `proxyAwareFetch`).

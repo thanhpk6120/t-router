@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getProviderConnectionById } from "@/lib/localDb";
 import { getProviderModels, PROVIDER_ID_TO_ALIAS } from "open-sse/config/providerModels.js";
 import { isOpenAICompatibleProvider, isAnthropicCompatibleProvider } from "@/shared/constants/providers";
+import { fetchCompatibleProviderModels } from "@/lib/compatibleModels";
 import { UPDATER_CONFIG } from "@/shared/constants/config";
 import { pingModelByKind } from "@/app/api/models/test/ping";
 
@@ -24,17 +25,15 @@ export async function POST(request, { params }) {
 
     let models = getProviderModels(alias);
 
-    const baseUrl = `http://127.0.0.1:${process.env.PORT || UPDATER_CONFIG.appPort}`;
-
     // Compatible providers: fetch live model list
     if (isCompatible && models.length === 0) {
-      try {
-        const modelsRes = await fetch(`${baseUrl}/api/providers/${id}/models`);
-        if (modelsRes.ok) {
-          const data = await modelsRes.json();
-          models = (data.models || []).map((m) => ({ id: m.id || m.name, name: m.name || m.id }));
-        }
-      } catch { /* fallback to empty */ }
+      const compat = await fetchCompatibleProviderModels(connection);
+      if (compat.ok) {
+        models = (compat.models || []).map((m) => ({
+          id: m.id || m.name,
+          name: m.name || m.id,
+        }));
+      }
     }
 
     if (models.length === 0) {

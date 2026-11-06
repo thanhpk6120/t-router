@@ -159,6 +159,7 @@ export async function dispatchCombo({
     comboName,
     comboStrategy: effectiveStrategy,
     comboStickyLimit,
+    signal: request?.signal,
     sessionId,
     smartPolicy: comboCfg.smartPolicy || "smart",
     sessionSticky: comboCfg.sessionSticky !== false,

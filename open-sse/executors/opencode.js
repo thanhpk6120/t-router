@@ -16,13 +16,13 @@ import {
   coerceResponsesOutput,
 } from "../translator/formats/responsesApi.js";
 
-// Shape as of the 1.19.x CLI (reverse-engineered 2026-10-23 via mitmproxy):
-// "opencode/<version> ai-sdk/provider-utils/<v> runtime/bun/<v>" with
-// x-opencode-client: cli, x-opencode-project, and a per-message
-// x-opencode-request: msg_<...>. The executor must keep mirroring whatever
-// the current CLI sends: a stale UA is how the free tier tells a relay apart
-// from the real client (upstream #5107).
-const OPENCODE_UA = "opencode/1.19.4 ai-sdk/provider-utils/4.0.23 runtime/bun/1.4.4";
+// Shape as of the 2.2.x CLI (reverse-engineered 2026-11-03 via mitmproxy):
+// "opencode/<channel>/<version>/<client>" with x-opencode-client,
+// x-opencode-project, and the session-affinity header pair. The executor
+// must keep mirroring whatever the current CLI sends: a stale UA or missing
+// affinity header is how the free tier tells a relay apart from the real
+// client (upstream #5107, D-BUG-1).
+const OPENCODE_UA = "opencode/latest/2.2.5/cli";
 const OPENCODE_CLIENT = "cli";
 const MAX_SESSION_LENGTH = 256;
 const MAX_TOOL_NAME_LEN = 128;
@@ -32,13 +32,14 @@ export const OPENCODE_SESSION_RE = /^ses_[0-9a-f]{12}[0-9A-Za-z]{14}$/;
 const BASE62_CHARS = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
 
 function hasValidOpencodeVersion(ua) {
-  // Only the real current CLI shape passes through: the v2 channel shape
-  // ("opencode/<channel>/<major>.<minor>.<patch>/<client>") was the previous
-  // generation and now reads as a stale relay UA, so anything that is not the
-  // current "opencode/<version> ai-sdk/provider-utils/<v> runtime/bun/<v>"
-  // form is replaced with the current UA. Anything else (curl, python, a
-  // pinned UA) is not the CLI.
-  return /^opencode\/\d+\.\d+\.\d+ ai-sdk\/provider-utils\/[\d.]+ runtime\/bun\/[\d.]+$/i.test(String(ua || ""));
+  // The current CLI shape is the v2 channel form
+  // ("opencode/<channel>/<major>.<minor>.<patch>/<client>"); only major >= 2
+  // passes through. Anything else (the retired 1.19.x form, curl, python, a
+  // pinned UA) is replaced with the current UA. This mirrors upstream ori
+  // (decolua/9router master): the old 1.19-only validator read the channel
+  // shape backwards and rejected the real client.
+  const m = String(ua || "").match(/^opencode\/[a-z0-9-]+\/(\d+)\.\d+\.\d+\/[a-z0-9-]+$/i);
+  return !!m && parseInt(m[1], 10) >= 2;
 }
 // Models served by /inference/v1/responses; every other model stays on /chat/completions.
 const RESPONSES_MODELS = new Set([
@@ -481,9 +482,10 @@ export class OpenCodeExecutor extends BaseExecutor {
 
     const session = credentials?.[SESSION_FIELD] || this.prepareRequestCredentials({ credentials })[SESSION_FIELD];
 
-    // Mirrors the current CLI (OpenCode 1.19.4). The official client sends
-    // x-opencode-request alongside x-opencode-session / session-id, and omits
-    // x-session-affinity and x-session-id (which are only for non-opencode providers).
+    // Mirrors the current CLI (OpenCode 2.2.5). The official client sends the
+    // session-affinity header pair alongside x-opencode-session / session-id,
+    // and omits x-opencode-request (which was only present on 1.19.x and now
+    // flags the request as a relay, returning 403).
     const headers = {
       "Content-Type": "application/json",
       "Authorization": "Bearer public",
@@ -491,7 +493,8 @@ export class OpenCodeExecutor extends BaseExecutor {
       "x-opencode-client": lower["x-opencode-client"] || OPENCODE_CLIENT,
       "x-opencode-session": session,
       "x-opencode-session-id": session,
-      "x-opencode-request": generateRequestId(),
+      "x-session-affinity": session,
+      "x-session-id": session,
       "x-opencode-project": lower["x-opencode-project"] || "global",
       "Accept": stream ? "text/event-stream" : "*/*",
     };

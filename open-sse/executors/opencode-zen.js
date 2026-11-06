@@ -17,7 +17,7 @@ const RESPONSES_BASE_URL = "https://opencode.ai/inference/v1/responses";
 const MAX_TOOL_NAME_LEN = 128;
 // Same current-CLI shape as the opencode executor (reverse-engineered
 // 2026-10-23 via mitmproxy): the zen lane keys off the same fingerprint.
-const OPENCODE_UA = "opencode/1.19.4 ai-sdk/provider-utils/4.0.23 runtime/bun/1.4.4";
+const OPENCODE_UA = "opencode/2.2.5 ai-sdk/provider-utils/4.0.23 runtime/bun/1.4.4";
 export const OPENCODE_SESSION_RE = /^ses_[0-9a-f]{12}[0-9A-Za-z]{14}$/;
 const BASE62_CHARS = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
 // Free-tier fingerprint (mirrors opencode executor, PR #4132): upstream 403s
@@ -29,7 +29,7 @@ function hasValidOpencodeVersion(ua) {
   if (!m) return false;
   const major = parseInt(m[1], 10);
   const minor = parseInt(m[2], 10);
-  return major > 1 || (major === 1 && minor >= 17);
+  return major >= 2 || (major === 1 && minor >= 17);
 }
 
 function unstableRandom() {

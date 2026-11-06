@@ -32,11 +32,24 @@ export const MEMORY_CONFIG = {
 };
 
 // Parse a positive integer env override, falling back to a default.
+// Parse a positive integer env override, falling back to a default.
 function envMs(name, def) {
   const raw = process.env[name];
   if (raw == null || raw === "") return def;
   const n = parseInt(raw, 10);
   return Number.isFinite(n) && n > 0 ? n : def;
+}
+
+// Like envMs, but 0 is a real value (disables the timer) instead of falling
+// back to the default. Only for variables whose documented contract is
+// "0 disables" — other timers keep envMs so a stray 0 can't silently
+// remove a safety bound.
+function envMsAllowZero(name, def) {
+  const raw = process.env[name];
+  if (raw == null || raw === "") return def;
+  const n = parseInt(raw, 10);
+  if (Number.isFinite(n) && n >= 0) return n;
+  return def;
 }
 
 function envUrl(name, def) {
@@ -59,6 +72,18 @@ export const STREAM_FIRST_CHUNK_TIMEOUT_MS = envMs("STREAM_FIRST_CHUNK_TIMEOUT_M
 // content-bearing frame before committing to that model (fail-open on expiry).
 // Env: EMPTY_PEEK_DEADLINE_MS.
 export const EMPTY_PEEK_DEADLINE_MS = envMs("EMPTY_PEEK_DEADLINE_MS", 45 * 1000);
+
+// Combo member fetch budget (streaming combos only): how long one member's
+// fetch may take to return response headers before the combo abandons it
+// and tries the next member. A hung connect/proxy previously stalled the
+// whole combo until the CLIENT gave up, so no failover ever ran. 60s sits
+// below client patience and above any healthy header wait; it bounds
+// headers only, never a flowing stream (STREAM_STALL_TIMEOUT_MS owns that)
+// and never a non-streaming generation (which has no first token to wait
+// for — its fetch stays bounded by FETCH_CONNECT_TIMEOUT_MS /
+// TOTAL_REQUEST_TIMEOUT_MS). Env: COMBO_FIRST_RESPONSE_TIMEOUT_MS.
+// 0 disables the timer; an invalid value falls back to the default.
+export const COMBO_FIRST_RESPONSE_TIMEOUT_MS = envMsAllowZero("COMBO_FIRST_RESPONSE_TIMEOUT_MS", 60 * 1000);
 
 // Fetch connect timeout: abort if upstream doesn't return response headers within this duration
 export const FETCH_CONNECT_TIMEOUT_MS = envMs("FETCH_CONNECT_TIMEOUT_MS", 60 * 1000);

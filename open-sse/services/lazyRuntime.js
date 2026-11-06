@@ -140,10 +140,20 @@ function npmInstall(pkg, version) {
 
 const inflight = new Map();
 
+// playwright-core's CJS entry exposes chromium only on .default when imported
+// as ESM (cjs-module-lexer can't see the export), so `const { chromium } =
+// await import('playwright-core')` yields undefined and every consumer dies
+// with "Cannot read properties of undefined (reading
+// 'launchPersistentContext')". Normalize once here for all consumers.
+function normalizeDep(mod) {
+  if (mod && !mod.chromium && mod.default?.chromium) return mod.default;
+  return mod;
+}
+
 async function load(pkg) {
   // 1) Resolvable from the app install (dev machine / traced standalone).
   try {
-    return await import(/* webpackIgnore: true */ pkg);
+    return normalizeDep(await import(/* webpackIgnore: true */ pkg));
   } catch (error) {
     if (!isModuleMissing(error)) throw error;
   }
@@ -153,7 +163,7 @@ async function load(pkg) {
   const existingPath = resolvePackagePath(dir, pkg);
   if (existingPath) {
     try {
-      return await import(/* webpackIgnore: true */ pathToFileURL(existingPath).href);
+      return normalizeDep(await import(/* webpackIgnore: true */ pathToFileURL(existingPath).href));
     } catch (error) {
       if (!isModuleMissing(error)) throw error;
     }
@@ -174,7 +184,7 @@ async function load(pkg) {
   if (!installedPath) {
     throw new Error(`${pkg} was installed into "${dir}" but could not be resolved.`);
   }
-  return import(/* webpackIgnore: true */ pathToFileURL(installedPath).href);
+  return import(/* webpackIgnore: true */ pathToFileURL(installedPath).href).then(normalizeDep);
 }
 export function loadRuntimeDep(pkg) {
   if (!inflight.has(pkg)) {

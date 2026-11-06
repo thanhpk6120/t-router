@@ -3,6 +3,7 @@ import { getProviderConnectionById } from "@/models";
 import { getLoadedModels, setLoadedModels } from "@/lib/db/index.js";
 import { normalizeModelRows } from "@/shared/utils/modelRows.js";
 import { isOpenAICompatibleProvider, isAnthropicCompatibleProvider } from "@/shared/constants/providers";
+import { fetchCompatibleProviderModels } from "@/lib/compatibleModels";
 import { GEMINI_CONFIG, ANTIGRAVITY_CONFIG, ZED_HOSTED_CONFIG } from "@/lib/oauth/constants/oauth";
 import { refreshGoogleToken, refreshCodexToken, updateProviderCredentials } from "@/sse/services/tokenRefresh";
 import { ANTIGRAVITY_IDE_BASE_URL, ANTIGRAVITY_IDE_USER_AGENT } from "open-sse/providers/shared.js";
@@ -679,64 +680,13 @@ export async function GET(request, { params }) {
       return NextResponse.json({ error: "Connection not found" }, { status: 404 });
     }
 
-    if (isOpenAICompatibleProvider(connection.provider)) {
-      const baseUrl = connection.providerSpecificData?.baseUrl;
-      if (!baseUrl) {
-        return NextResponse.json({ error: "No base URL configured for OpenAI compatible provider" }, { status: 400 });
+    if (isOpenAICompatibleProvider(connection.provider) || isAnthropicCompatibleProvider(connection.provider)) {
+      const result = await fetchCompatibleProviderModels(connection);
+      if (!result.ok) {
+        if (result.errorText) console.log(`Error fetching models from ${connection.provider}:`, result.errorText);
+        return failed(result.error, result.status);
       }
-      const url = `${baseUrl.replace(/\/$/, "")}/models`;
-      const response = await fetch(url, {
-        method: "GET",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${connection.apiKey}`,
-        },
-      });
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        console.log(`Error fetching models from ${connection.provider}:`, errorText);
-        return failed(`Failed to fetch models: ${response.status}`, response.status);
-      }
-
-      const data = await response.json();
-      const models = data.data || data.models || [];
-
-      return remember(models);
-    }
-
-    if (isAnthropicCompatibleProvider(connection.provider)) {
-      let baseUrl = connection.providerSpecificData?.baseUrl;
-      if (!baseUrl) {
-        return NextResponse.json({ error: "No base URL configured for Anthropic compatible provider" }, { status: 400 });
-      }
-
-      baseUrl = baseUrl.replace(/\/$/, "");
-      if (baseUrl.endsWith("/messages")) {
-        baseUrl = baseUrl.slice(0, -9);
-      }
-
-      const url = `${baseUrl}/models`;
-      const response = await fetch(url, {
-        method: "GET",
-        headers: {
-          "Content-Type": "application/json",
-          "x-api-key": connection.apiKey,
-          "anthropic-version": "2023-06-01",
-          "Authorization": `Bearer ${connection.apiKey}`
-        },
-      });
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        console.log(`Error fetching models from ${connection.provider}:`, errorText);
-        return failed(`Failed to fetch models: ${response.status}`, response.status);
-      }
-
-      const data = await response.json();
-      const models = data.data || data.models || [];
-
-      return remember(models);
+      return remember(result.models);
     }
 
     const config = PROVIDER_MODELS_CONFIG[connection.provider];

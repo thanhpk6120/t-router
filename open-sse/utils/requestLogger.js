@@ -69,25 +69,28 @@ function writeJsonFile(sessionPath, filename, data) {
   }
 }
 
-// Mask sensitive data in headers (DISABLED - keep full token for testing)
+// Mask sensitive data in headers (Authorization, api-key, etc.)
 function maskSensitiveHeaders(headers) {
-  if (!headers) return {};
-  return { ...headers };
-  
-  // Old masking code (disabled):
-  // const masked = { ...headers };
-  // const sensitiveKeys = ["authorization", "x-api-key", "cookie", "token"];
-  // 
-  // for (const key of Object.keys(masked)) {
-  //   const lowerKey = key.toLowerCase();
-  //   if (sensitiveKeys.some(sk => lowerKey.includes(sk))) {
-  //     const value = masked[key];
-  //     if (value && value.length > 20) {
-  //       masked[key] = value.slice(0, 10) + "..." + value.slice(-5);
-  //     }
-  //   }
-  // }
-  // return masked;
+  if (!headers || typeof headers !== "object") return headers;
+  const masked = { ...headers };
+  const sensitiveKeys = [
+    "authorization",
+    "x-api-key",
+    "api-key",
+    "x-auth-token",
+    "session-token",
+    "proxy-authorization",
+    "cookie",
+    "set-cookie",
+  ];
+  for (const key of Object.keys(masked)) {
+    if (sensitiveKeys.includes(key.toLowerCase())) {
+      const v = String(masked[key] || "");
+      // Keep the scheme/prefix so the type of credential is visible
+      masked[key] = v.length > 16 ? `${v.slice(0, 8)}...[REDACTED]` : "[REDACTED]";
+    }
+  }
+  return masked;
 }
 
 // No-op logger when logging is disabled

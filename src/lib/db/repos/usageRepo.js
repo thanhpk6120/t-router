@@ -3,14 +3,11 @@ import { createHash } from "crypto";
 import { getAdapter } from "../driver.js";
 import { parseJson, stringifyJson } from "../helpers/jsonCol.js";
 import { getMeta, setMeta } from "../helpers/metaStore.js";
-import { emitUsageWebhook, maskApiKeyForWebhook } from "@/lib/webhookEvents.js";
+import { emitUsageWebhook } from "@/lib/webhookEvents.js";
+import { maskApiKey as sharedMaskApiKey } from "@/shared/utils/maskApiKey.js";
 
 function maskApiKey(key) {
-  if (!key || typeof key !== "string") return null;
-  const trimmed = key.trim();
-  if (trimmed.length <= 12) return trimmed.charAt(0) + "***";
-  // Keep the tail: keys sharing a machine-id prefix (team keys) must not collide.
-  return trimmed.slice(0, 8) + "***" + trimmed.slice(-4);
+  return sharedMaskApiKey(key);
 }
 
 // Output bucket key for byApiKey stats. The full API key must never leave the
@@ -375,7 +372,7 @@ export async function saveRequestUsage(entry) {
         provider: entry.provider,
         model: entry.model,
         connectionId: entry.connectionId || null,
-        apiKeyMasked: maskApiKeyForWebhook(entry.apiKey),
+        apiKeyMasked: maskApiKey(entry.apiKey),
         endpoint: entry.endpoint || null,
         promptTokens,
         completionTokens,
