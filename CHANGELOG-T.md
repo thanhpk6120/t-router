@@ -42,6 +42,10 @@ Upstream changelogs (`CHANGELOG.md` and `CHANGELOG-PRO.md`) are kept intact for 
 
 ---
 
+## v0.5.112-pro.23-t.1 (2026-11-06)
+
+- Automated sync and release via Telegram Bot.
+
 ## v0.5.112-pro.16-t.16 (2026-11-04)
 
 - **Proxy verified end-to-end**: a chat request with a pool bound to the connection reaches the provider through that proxy (a logging proxy recorded `CONNECT <upstream>` while the upstream logged the POST); with no pool bound the request goes direct; the provider-level rotation (`providerStrategies[provider].rotateStrategy` + `proxyPoolIds`) also routes through the pool. Same path is used for model tests, usage/ping and token refresh (`chatCore` → `BaseExecutor` → `proxyAwareFetch`).
