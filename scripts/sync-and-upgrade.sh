@@ -94,21 +94,22 @@ if [ "$HAS_NEW_CODE" = true ] && [ "$HAS_NEW_VER" = true ]; then
   # Run preliminary syntax verification
   find "$DIR_TROUTER/src" "$DIR_TROUTER/open-sse" -name "*.js" -exec node -c {} +
 
-  # Build CLI with strict resource limits
+  # Build CLI with strict resource limits in isolated staging directory
   log "Building CLI package with strict resource limits (nice 19, ionice 3, taskset 0,1,2, memory 4096M)..."
-  $NICE_CMD node --max-old-space-size=4096 "$DIR_TROUTER/cli/scripts/build-cli.js" 2>&1 | tee -a "$LOG_FILE"
+  TEMP_TEST_CLI_APP=$(mktemp -d /tmp/trouter-cli-test-XXXXXX)
+  NINEROUTER_CLI_APP_DIR="$TEMP_TEST_CLI_APP" $NICE_CMD node --max-old-space-size=4096 "$DIR_TROUTER/cli/scripts/build-cli.js" 2>&1 | tee -a "$LOG_FILE"
 
   # Zero-downtime test instance on port 20127 with isolated temporary DATA_DIR
   log "Zero-downtime test: verifying build on port 20127 (port 20126 remains untouched)..."
   fuser -k 20127/tcp 2>/dev/null || true
   TEMP_DATA_DIR=$(mktemp -d /tmp/trouter-test-XXXXXX)
-  PORT=20127 DATA_DIR="$TEMP_DATA_DIR" $NICE_CMD node --max-old-space-size=1024 "$DIR_TROUTER/cli/app/custom-server.js" --port 20127 > /dev/null 2>&1 &
+  PORT=20127 DATA_DIR="$TEMP_DATA_DIR" $NICE_CMD node --max-old-space-size=1024 "$TEMP_TEST_CLI_APP/custom-server.js" --port 20127 > /dev/null 2>&1 &
   TEST_PID=$!
   sleep 4
   TEST_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:20127/ || echo "000")
   kill -9 $TEST_PID 2>/dev/null || true
   fuser -k 20127/tcp 2>/dev/null || true
-  rm -rf "$TEMP_DATA_DIR"
+  rm -rf "$TEMP_DATA_DIR" "$TEMP_TEST_CLI_APP"
 
   if [ "$TEST_CODE" != "200" ] && [ "$TEST_CODE" != "307" ] && [ "$TEST_CODE" != "308" ]; then
     log "ERROR: Port 20127 test check failed with HTTP $TEST_CODE. Aborting notification."
@@ -195,20 +196,21 @@ if [ "$OLD_HEAD" != "$NEW_HEAD" ]; then
   fi
 
   # 7. Zero-Downtime Test Build & Verification on Port 20127
-  # Test build with strict memory cap and low CPU priority; does NOT disrupt active t-router.service on port 20126
+  # Test build with strict memory cap and low CPU priority in isolated staging directory; does NOT disrupt active t-router.service on port 20126
   log "Running test build with resource limits (nice 19, ionice 3, memory 2048M)..."
-  $NICE_CMD node --max-old-space-size=2048 "$DIR_TROUTER/cli/scripts/build-cli.js" 2>&1 | tee -a "$LOG_FILE"
+  TEMP_TEST_CLI_APP=$(mktemp -d /tmp/trouter-cli-test-XXXXXX)
+  NINEROUTER_CLI_APP_DIR="$TEMP_TEST_CLI_APP" $NICE_CMD node --max-old-space-size=2048 "$DIR_TROUTER/cli/scripts/build-cli.js" 2>&1 | tee -a "$LOG_FILE"
 
   # Zero-downtime test instance on port 20127 with isolated temporary DATA_DIR
   log "Starting temporary test instance on port 20127 with isolated DATA_DIR..."
   TEMP_DATA_DIR=$(mktemp -d /tmp/trouter-test-XXXXXX)
-  PORT=20127 DATA_DIR="$TEMP_DATA_DIR" node "$DIR_TROUTER/cli/app/custom-server.js" --port 20127 > /dev/null 2>&1 &
+  PORT=20127 DATA_DIR="$TEMP_DATA_DIR" node "$TEMP_TEST_CLI_APP/custom-server.js" --port 20127 > /dev/null 2>&1 &
   TEST_PID=$!
   sleep 4
   TEST_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:20127/ || echo "000")
   kill $TEST_PID 2>/dev/null || true
   wait $TEST_PID 2>/dev/null || true
-  rm -rf "$TEMP_DATA_DIR"
+  rm -rf "$TEMP_DATA_DIR" "$TEMP_TEST_CLI_APP"
 
   if [ "$TEST_CODE" != "200" ] && [ "$TEST_CODE" != "307" ] && [ "$TEST_CODE" != "308" ]; then
     log "ERROR: Port 20127 test check failed with status $TEST_CODE"
