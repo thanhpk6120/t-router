@@ -184,7 +184,7 @@ export async function resolveConnectionProxyConfig(
   try {
     const legacy = normalizeLegacyProxy(providerSpecificData);
 
-    const directActive = await isDirectProxyActive().catch(() => true);
+    const directActive = typeof isDirectProxyActive === "function" ? await isDirectProxyActive().catch(() => true) : true;
     let poolStrictProxy = false;
 
     const proxyIntended = Boolean(
@@ -212,7 +212,7 @@ export async function resolveConnectionProxyConfig(
 
       if (isValidPool) {
         const proxySource = providerSpecificData?.proxySource || "both";
-        const allActivePools = await getProxyPools({ isActive: true }).catch(() => []);
+        const allActivePools = typeof getProxyPools === "function" ? await getProxyPools({ isActive: true }).catch(() => []) : [];
         let otherPools = allActivePools.filter((p) => p && p.id !== proxyPool.id && p.id !== "direct" && p.proxyUrl !== "direct");
         if (proxySource === "static") {
           otherPools = otherPools.filter((p) => !p.rotateLink && !p.rotateUrl);

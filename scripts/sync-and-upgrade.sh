@@ -4,9 +4,9 @@ set -eo pipefail
 export PATH="/home/thanhpk/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 export HOME="/home/thanhpk"
 export ANTHROPIC_BASE_URL="http://127.0.0.1:20130/v1"
-export ANTHROPIC_AUTH_TOKEN="sk-bd802b6b81d63797-2ed6ws-9c6f28c7"
+export ANTHROPIC_AUTH_TOKEN="${ANTHROPIC_AUTH_TOKEN:-}"
 export CLAUDE_DANGEROUSLY_SKIP_PERMISSIONS=1
-export NODE_OPTIONS="--max-old-space-size=4096"
+export NODE_OPTIONS="--max-old-space-size=8192"
 
 # Strict resource limits: low CPU priority (nice 19), idle I/O priority (ionice -c 3),
 # and CPU affinity restricted to cores 0,1 (taskset -c 0,1) so cores 2,3 remain 100% free for active services

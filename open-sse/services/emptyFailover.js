@@ -36,7 +36,7 @@ import { parseSSELine } from "../utils/streamHelpers.js";
 export function deltaHasClientContent(delta) {
   if (!delta || typeof delta !== "object") return false;
   const c = delta.content;
-  if (typeof c === "string" && c.length > 0) return true;
+  if (typeof c === "string" && c.trim().length > 0) return true;
   if (Array.isArray(c) && c.length > 0) return true;
   if (Array.isArray(delta.tool_calls) && delta.tool_calls.length > 0) return true;
   // OpenAI "Responses" style / non-chat deltas occasionally use output_text
@@ -50,7 +50,7 @@ export function deltaHasClientContent(delta) {
 // turn, and the LAST one returned. Every format gets the same rule: answer text and tool calls
 // are content; reasoning / thinking is not (as reasoning_content is not). Finish reasons are
 // reported in the hub (OpenAI) vocabulary so isNoRetryFinish applies to every format.
-const nonEmptyString = (s) => typeof s === "string" && s.length > 0;
+const nonEmptyString = (s) => typeof s === "string" && s.trim().length > 0;
 
 // Anthropic Messages event.
 function inspectClaudeEvent(obj) {

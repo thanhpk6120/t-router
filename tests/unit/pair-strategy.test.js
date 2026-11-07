@@ -37,9 +37,9 @@ describe("resolveComboStrategy", () => {
     expect(await resolveComboStrategy("dpsk_un", TWO, { comboStrategy: "fusion" }, null)).toBe("fusion");
   });
 
-  it("rotates a pair despite the ambient global 'fallback' default", async () => {
+  it("rotates a pair under the ambient global 'auto' default", async () => {
     state.modelPrompts = { dpsk_un: { enabled: true } };
-    expect(await resolveComboStrategy("dpsk_un", TWO, { comboStrategy: "fallback" }, null)).toBe("round-robin");
+    expect(await resolveComboStrategy("dpsk_un", TWO, { comboStrategy: "auto" }, null)).toBe("round-robin");
   });
 
   it("honors a per-combo 'fallback' pin over the pair default", async () => {

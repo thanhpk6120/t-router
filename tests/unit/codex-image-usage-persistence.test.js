@@ -87,7 +87,7 @@ describe("Codex image usage persistence", () => {
     }));
 
     expect(mocks.saveRequestUsage).toHaveBeenCalledTimes(1);
-    expect(mocks.saveRequestUsage).toHaveBeenCalledWith({
+    expect(mocks.saveRequestUsage).toHaveBeenCalledWith(expect.objectContaining({
       provider: "codex",
       model: "gpt-6-sol-image",
       connectionId: "connection-a",
@@ -101,10 +101,10 @@ describe("Codex image usage persistence", () => {
         reasoning_tokens: 22,
       },
       status: "success",
-    });
+    }));
   });
 
-  it("does not persist fabricated usage when upstream usage is absent", async () => {
+  it("persists a request-only row without fabricated tokens when upstream usage is absent", async () => {
     mocks.handleImageGenerationCore.mockImplementation(async ({ onRequestSuccess }) => {
       await onRequestSuccess?.();
       return { success: true, response: Response.json({ data: [{ b64_json: "image" }] }) };
@@ -115,6 +115,11 @@ describe("Codex image usage persistence", () => {
       body: JSON.stringify({ model: "cx/gpt-6-sol-image", prompt: "draw a cat" }),
     }));
 
-    expect(mocks.saveRequestUsage).not.toHaveBeenCalled();
+    expect(mocks.saveRequestUsage).toHaveBeenCalledWith(expect.objectContaining({
+      provider: "codex",
+      model: "gpt-6-sol-image",
+      meta: { accrual: "request-only", reason: "provider reports no token usage" },
+      tokens: { prompt_tokens: 0, completion_tokens: 0 },
+    }));
   });
 });

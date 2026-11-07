@@ -10,7 +10,7 @@ const source = readFileSync(
 
 describe("API key visibility guidance source verification", () => {
   it("explains that created keys remain available in the API Keys list", () => {
-    const modal = source.match(/title="API Key Created"[\s\S]*?<\/Modal>/)?.[0];
+    const modal = source.match(/title=\{[\s\S]*?"API Key Created"\}[\s\S]*?<\/Modal>/)?.[0] || source.match(/title="API Key Created"[\s\S]*?<\/Modal>/)?.[0];
     expect(modal).toBeDefined();
     expect(modal).toContain(guidance);
     expect(modal).not.toContain(oldGuidance);

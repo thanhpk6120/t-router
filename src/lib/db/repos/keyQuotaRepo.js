@@ -20,7 +20,14 @@ export function cleanQuota(raw) {
   const limit = Math.floor(Number(raw.limit));
   if (!Number.isFinite(limit) || limit <= 0) return null;
   const windowHours = QUOTA_WINDOWS.includes(Number(raw.windowHours)) ? Number(raw.windowHours) : 24;
-  return { enabled: raw.enabled !== false, limit, windowHours };
+  const costLimit = Number(raw.costLimit);
+  const validCost = Number.isFinite(costLimit) && costLimit > 0 ? costLimit : undefined;
+  return {
+    enabled: raw.enabled !== false,
+    limit,
+    windowHours,
+    ...(validCost !== undefined ? { costLimit: validCost } : {}),
+  };
 }
 
 export async function getKeyQuota(keyId) {
@@ -65,6 +72,17 @@ export async function getKeyUsageInWindow(rawKey, windowHours) {
   );
   return Number(row?.used) || 0;
 }
+export async function getKeyCostInWindow(rawKey, windowHours) {
+  if (!rawKey) return 0;
+  const cutoff = new Date(Date.now() - windowHours * 3600 * 1000).toISOString();
+  const db = await getAdapter();
+  const row = db.get(
+    `SELECT COALESCE(SUM(cost), 0) AS costUsed
+     FROM usageHistory WHERE apiKey = ? AND timestamp >= ?`,
+    [rawKey, cutoff]
+  );
+  return Number(row?.costUsed) || 0;
+}
 
 // Decision used by the chat handler; never throws.
 export async function checkKeyQuota(keyId, rawKey) {
@@ -72,8 +90,20 @@ export async function checkKeyQuota(keyId, rawKey) {
     const quota = await getKeyQuota(keyId);
     if (!quota || !quota.enabled) return { blocked: false };
     const used = await getKeyUsageInWindow(rawKey, quota.windowHours);
-    if (used >= quota.limit) return { blocked: true, quota, used };
-    return { blocked: false, quota, used };
+    let costUsed = 0;
+    let costBlocked = false;
+    if (Number.isFinite(quota.costLimit) && quota.costLimit > 0) {
+      costUsed = await getKeyCostInWindow(rawKey, quota.windowHours);
+      if (costUsed >= quota.costLimit) costBlocked = true;
+    }
+    const tokenBlocked = used >= quota.limit;
+    const blocked = tokenBlocked || costBlocked;
+    return {
+      blocked,
+      quota,
+      used,
+      ...(Number.isFinite(quota.costLimit) ? { costUsed, costBlocked } : {}),
+    };
   } catch {
     return { blocked: false };
   }

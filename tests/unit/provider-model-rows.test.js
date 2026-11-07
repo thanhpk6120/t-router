@@ -120,7 +120,7 @@ describe("loaded catalogs are stored in the DB, not re-fetched on every view", (
   it("serves the stored catalog before any upstream resolver runs", () => {
     expect(route).toContain("getLoadedModels");
     const storedIdx = route.indexOf("const saved = await getLoadedModels(cacheKey)");
-    const upstreamIdx = route.indexOf("if (isOpenAICompatibleProvider(connection.provider))");
+    const upstreamIdx = route.indexOf("if (isOpenAICompatibleProvider(connection.provider) ||");
     expect(storedIdx).toBeGreaterThan(-1);
     expect(upstreamIdx).toBeGreaterThan(storedIdx);
   });

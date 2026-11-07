@@ -20,7 +20,7 @@ vi.mock("@/lib/localDb", () => ({
   getComboByName: async (name) => fx.combos.find((c) => c.name === name) || null,
   getProviderNodes: async () => [],
   getCombos: async () => fx.combos,
-  getProviderConnections: async () => [],
+  getProviderConnections: async () => [{ id: "c-openai", provider: "openai", isActive: true }],
   getProviderConnectionById: async () => null,
   getCustomModels: async () => [],
   // Keep in sync with src/sse/handlers/chat.js imports: the mock replaces the
@@ -33,6 +33,12 @@ vi.mock("@/lib/localDb", () => ({
   checkKeyQuota: async () => ({ blocked: false, used: 0, quota: { limit: 0, windowHours: 24 } }),
   getKeyLimits: async () => null,
   getKeyUsageInWindow: async () => 0,
+  resolveVariantSampling: async () => null,
+  applyVariantSampling: (body) => body,
+  resolvePromptInjectionMeta: async () => null,
+  recordPromptInjectFire: async () => {},
+  classifyInjectStack: () => ({}),
+  getInjectKeyModelPrompts: async () => ({}),
 }));
 vi.mock("@/lib/disabledModelsDb", () => ({ getDisabledModels: async () => ({}) }));
 vi.mock("@/lib/db/repos/combosRepo.js", () => ({ getCombos: async () => fx.combos }));
@@ -67,6 +73,7 @@ const geminiRoute = await import("../../src/app/api/v1beta/models/[...path]/rout
 const modelsRoute = await import("../../src/app/api/v1/models/route.js");
 const modelsKindRoute = await import("../../src/app/api/v1/models/[...model]/route.js");
 
+const { invalidateModelsListCache } = await import("../../src/sse/services/modelsListCache.js");
 const enc = new TextEncoder();
 const sse = (frames) => new Response(new ReadableStream({
   start(c) { for (const f of frames) c.enqueue(enc.encode(f)); c.close(); },
@@ -83,6 +90,7 @@ const post = (path, body, k, extra = {}) => new Request(`http://localhost${path}
 });
 
 beforeEach(() => {
+  invalidateModelsListCache();
   vi.clearAllMocks();
   fx.keys = {
     "sk-open": { id: "o", name: "open", isActive: true, access: { restricted: false, allow: [] } },

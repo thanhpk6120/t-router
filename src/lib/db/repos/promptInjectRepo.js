@@ -750,16 +750,19 @@ export async function deleteInjectRule(id) {
 // identity). Combo names never match.
 export function selectPromptInjectionsDetailed({ global, byKey, byModel, byKeyModel, byVariant, rules, templates } = {}, ctx = {}) {
   const out = [];
-  const push = (name, e) => {
+  const push = (name, e, extra = {}) => {
     if (!e || !e.enabled) return;
-    if (e.mode === "chat") out.push({ name, mode: "chat", turns: e.turns, position: e.position });
-    else out.push({ name, mode: "single", text: e.content || e.text, position: e.position });
+    const item = { name, position: e.position };
+    if (extra.scope || e.scope) item.scope = extra.scope || e.scope;
+    if (extra.ruleId || e.ruleId) item.ruleId = extra.ruleId || e.ruleId;
+    if (e.mode === "chat") out.push({ ...item, mode: "chat", turns: e.turns });
+    else out.push({ ...item, mode: "single", text: e.content || e.text });
   };
 
-  push("global", cleanEntry(global));
+  push("global", cleanEntry(global), { scope: "global" });
 
   if (ctx.apiKeyId) {
-    push("user", cleanMap(byKey)[ctx.apiKeyId]);
+    push("user", cleanMap(byKey)[ctx.apiKeyId], { scope: "key" });
   }
 
   // Multi-target Rules: evaluated in exact array order.
@@ -818,14 +821,14 @@ export function selectPromptInjectionsDetailed({ global, byKey, byModel, byKeyMo
               turns: tpl.turns,
               position: rule.position || tpl.position || "prepend",
               enabled: true,
-            });
+            }, { scope: "rule", ruleId: rule.id });
           } else if (tpl.content && tpl.content.trim()) {
             push(rule.name || tpl.name || "rule", {
               mode: "single",
               content: tpl.content,
               position: rule.position || tpl.position || "prepend",
               enabled: true,
-            });
+            }, { scope: "rule", ruleId: rule.id });
           }
         }
       } else {
@@ -836,14 +839,14 @@ export function selectPromptInjectionsDetailed({ global, byKey, byModel, byKeyMo
             turns: rule.turns,
             position: rule.position || "prepend",
             enabled: true,
-          });
+          }, { scope: "rule", ruleId: rule.id });
         } else if (rule.content && rule.content.trim()) {
           push(rule.name || "rule", {
             mode: "single",
             content: rule.content,
             position: rule.position || "prepend",
             enabled: true,
-          });
+          }, { scope: "rule", ruleId: rule.id });
         }
       }
     }
@@ -860,7 +863,7 @@ export function selectPromptInjectionsDetailed({ global, byKey, byModel, byKeyMo
       isVariantPick = true;
     }
   }
-  if (variantHit) push(variantHit.name, variantHit.entry);
+  if (variantHit) push(variantHit.name, variantHit.entry, { scope: "variant" });
 
   if (!variantHit) {
     const names = [ctx.resolvedModel]
@@ -874,13 +877,13 @@ export function selectPromptInjectionsDetailed({ global, byKey, byModel, byKeyMo
     };
 
     const modelHit = firstHit(cleanMap(byModel));
-    if (modelHit) push(modelHit.name, modelHit.entry);
+    if (modelHit) push(modelHit.name, modelHit.entry, { scope: "model" });
 
     if (ctx.apiKeyId) {
       const scoped = cleanKeyModelMap(byKeyModel)[ctx.apiKeyId];
       if (scoped) {
         const hit = firstHit(scoped);
-        if (hit) push(hit.name, hit.entry);
+        if (hit) push(hit.name, hit.entry, { scope: "modelKey" });
       }
     }
   }

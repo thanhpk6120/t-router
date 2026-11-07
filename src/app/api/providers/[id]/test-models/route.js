@@ -44,6 +44,7 @@ export async function POST(request, { params }) {
     // This prevents race condition where multiple requests concurrently refresh the same token.
     const [first, ...rest] = models;
     const firstKind = first.kind || first.type || "llm";
+    const baseUrl = `http://127.0.0.1:${process.env.PORT || UPDATER_CONFIG.appPort}`;
     const firstResult = await pingModelByKind(`${alias}/${first.id}`, firstKind, baseUrl);
     const results = [{ modelId: first.id, name: first.name || first.id, ...firstResult }];
 

@@ -5,6 +5,27 @@ Upstream changelogs (`CHANGELOG.md` and `CHANGELOG-PRO.md`) are kept intact for 
 
 ---
 
+## 0.5.112-pro.23-t.3 (2026-11-08)
+
+- **Vá lỗi và Tối ưu hóa Toàn diện Prompt Injection Engine**:
+  - `src/lib/db/repos/promptInjectStatsRepo.js`: sửa lỗi `TypeError: keyModelNames.has is not a function` khi nhận `keyModelNames` là Array từ `chat.js`, giúp việc ghi nhận thống kê (fire stats) của các injection dạng per-model (`byKeyModel`) hoạt động trơn tru. Bổ sung hỗ trợ phân loại thống kê cho cả Rules (`scope: "rule"`, `ruleId`).
+  - `src/lib/db/repos/promptInjectRepo.js`: đính kèm metadata `scope` và `ruleId` cho từng entry trong stack của `selectPromptInjectionsDetailed`.
+  - `src/app/api/prompt-injection/route.js`: hỗ trợ RESTful DELETE cho global injection (`DELETE /api/prompt-injection?global=1`).
+  - `src/app/api/prompt-injection/route.js`: đồng bộ Stack Preview cho Variant bằng cách phân giải backing model (`resolvedModel`, `bareModel`), giúp hiển thị chính xác các Rule nhắm vào backing model đồng nhất với runtime chat (`chat.js`).
+  - `tests/unit/prompt-inject-audit.test.js`: bổ sung bộ test suite toàn diện 20 test cases cho Prompt Injection Engine (classify, select, variants, sampling overrides, wire injections, CRUD repos, API endpoints), chạy cô lập hoàn toàn trong thư mục tạm.
+- **Bảo mật và Khắc phục Lỗi Hệ thống**:
+  - `custom-server.js`: lọc bỏ các header nội bộ giả mạo từ bên ngoài (`x-allow-disabled`, `x-9r-cli-token`).
+  - `src/lib/network/proxyTest.js`: vá triệt để lỗ hổng SSRF khi kiểm tra proxy, chặn đứng mọi request trỏ tới loopback/link-local/metadata IP.
+  - `src/lib/providerConnectionResponse.js`: che giấu bảo mật proxy credentials (`username:password`) và các token nhạy cảm trước khi trả về client.
+  - `scripts/t-router-publisher.js` & `server-monitor-bot-index.js`: kiểm tra định dạng và sanitize nghiêm ngặt ngăn chặn Command Injection / RCE.
+  - `src/shared/components/ChangelogModal.js`: lọc DOM XSS qua `DOMPurify.sanitize` trước khi render markdown.
+  - `open-sse/services/emptyFailover.js`: khắc phục lỗi Anti-Empty Guard chặn nhầm failover khi upstream stream rỗng.
+  - `open-sse/utils/proxyFetch.js`: ngăn ngừa đệ quy vô hạn `RangeError: Maximum call stack size exceeded`.
+  - `src/sse/services/model.js`: loại bỏ hoàn toàn N+1 database queries khi kiểm tra model disabled.
+  - Cấp 8GB heap memory Node.js (`--max-old-space-size=8192`) trong `package.json`, `cli/scripts/build-cli.js` và `sync-and-upgrade.sh` chống tràn RAM khi compile Webpack.
+  - `.github/workflows/ci.yml`: tạo CI workflow chuẩn tự động chạy lint, build và full test suite trên GitHub Actions.
+  - Chuẩn hóa Dockerfile & docker-compose.yml cho t-router độc lập.
+
 ## 0.5.112-pro.23-t.2 (2026-11-07)
 
 - **Chặn và lọc toàn diện model đã bị disable (Disabled Models Enforcement)**:

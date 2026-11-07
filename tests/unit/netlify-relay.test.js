@@ -2,6 +2,8 @@ import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 
 vi.mock("@/models", () => ({
   getProxyPoolById: vi.fn(),
+  getProxyPools: vi.fn(async () => []),
+  isDirectProxyActive: vi.fn(async () => true),
   createProxyPool: vi.fn(async (data) => ({ id: "pool-1", ...data })),
 }));
 

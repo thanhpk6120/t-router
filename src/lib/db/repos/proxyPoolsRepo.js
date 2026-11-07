@@ -26,8 +26,8 @@ function ensureDirectPool(db) {
         lastRotatedAt: null,
         lastRotateResponse: null,
         lastError: null,
-        createdAt: now,
-        updatedAt: now,
+        createdAt: "1970-01-01T00:00:00.000Z",
+        updatedAt: "1970-01-01T00:00:00.000Z",
         isSystem: true,
       };
       upsert(db, directPool);
@@ -81,11 +81,7 @@ export async function getProxyPools(filter = {}) {
   if (filter.testStatus) { where.push("testStatus = ?"); params.push(filter.testStatus); }
   const sql = `SELECT * FROM proxyPools${where.length ? ` WHERE ${where.join(" AND ")}` : ""}`;
   const list = db.all(sql, params).map(rowToPool);
-  list.sort((a, b) => {
-    if (a.id === DIRECT_PROXY_ID) return -1;
-    if (b.id === DIRECT_PROXY_ID) return 1;
-    return new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0);
-  });
+  list.sort((a, b) => new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0));
   return list;
 }
 

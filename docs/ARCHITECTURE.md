@@ -1,4 +1,4 @@
-# 9Router Architecture
+# T-Router Architecture
 
 _Last updated: 2026-02-06_
 
@@ -52,12 +52,12 @@ flowchart LR
         BROWSER[Browser Dashboard]
     end
 
-    subgraph Router[9Router Local Process]
+    subgraph Router[T-Router Local Process]
         API[V1 Compatibility API\n/v1/*]
         DASH[Dashboard + Management API\n/api/*]
         CORE[SSE + Translation Core\nopen-sse + src/sse]
-        DB[(db.json)]
-        UDB[(usage.json + log.txt)]
+        DB[(data.sqlite)]
+        UDB[(SQLite Usage Repo)]
     end
 
     subgraph Upstreams[Upstream Providers]
@@ -135,18 +135,13 @@ Main flow modules:
 
 ## 3) Persistence Layer
 
-Primary state DB:
+Primary state & usage DB (SQLite):
 
-- `src/lib/localDb.js`
-- file: `${DATA_DIR}/db.json` (or `~/.9router/db.json` when `DATA_DIR` is unset)
-- entities: providerConnections, providerNodes, modelAliases, combos, apiKeys, settings, pricing
-
-Usage DB:
-
-- `src/lib/usageDb.js`
-- files: `~/.9router/usage.json`, `~/.9router/log.txt`
-- note: currently independent from `DATA_DIR`
-
+- Drivers: `node:sqlite` / `better-sqlite3` with runtime fallback to `sql.js` (WebAssembly).
+- File path: `${DATA_DIR}/db/data.sqlite` (defaults to `~/.trouter/db/data.sqlite` when `DATA_DIR` is unset).
+- Schema & Repos: `src/lib/db/repos/*` (connectionsRepo, apiKeysRepo, usageRepo, proxyPoolRepo, etc.).
+- Entities: `providerConnections`, `providerNodes`, `modelAliases`, `combos`, `apiKeys`, `settings`, `pricing`, `proxyPools`, `requestDetails`.
+- Automatic migration: Legacy JSON files (`db.json`, `usage.json`, `disabledModels.json`, `request-details.json`) are automatically migrated into SQLite on first startup.
 ## 4) Auth + Security Surfaces
 
 - Dashboard cookie auth: `src/proxy.js`, `src/app/api/auth/login/route.js`

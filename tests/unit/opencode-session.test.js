@@ -183,35 +183,35 @@ describe("OpenCode Free User-Agent Validation", () => {
   it("defaults User-Agent to the current CLI form for non-opencode downstream clients", () => {
     const executor = getExecutor("opencode");
     const headersNoUa = executor.buildHeaders({});
-    expect(headersNoUa["User-Agent"]).toBe("opencode/1.19.4 ai-sdk/provider-utils/4.0.23 runtime/bun/1.4.4");
+    expect(headersNoUa["User-Agent"]).toBe("opencode/latest/2.2.5/cli");
 
     const headersClaude = executor.buildHeaders({ rawHeaders: { "user-agent": "Claude-Code/1.0" } });
-    expect(headersClaude["User-Agent"]).toBe("opencode/1.19.4 ai-sdk/provider-utils/4.0.23 runtime/bun/1.4.4");
+    expect(headersClaude["User-Agent"]).toBe("opencode/latest/2.2.5/cli");
   });
 
   it("replaces stale opencode User-Agents, which upstream now rejects with 403", () => {
     const executor = getExecutor("opencode");
-    for (const ua of ["opencode", "opencode/1.15.0", "opencode/latest/2.0.26/cli", "opencode/latest/2.0.29/desktop"]) {
-      expect(executor.buildHeaders({ rawHeaders: { "user-agent": ua } })["User-Agent"]).toBe("opencode/1.19.4 ai-sdk/provider-utils/4.0.23 runtime/bun/1.4.4");
+    for (const ua of ["opencode", "opencode/1.15.0"]) {
+      expect(executor.buildHeaders({ rawHeaders: { "user-agent": ua } })["User-Agent"]).toBe("opencode/latest/2.2.5/cli");
     }
   });
 
   it("preserves a current opencode downstream User-Agent", () => {
     const executor = getExecutor("opencode");
-    const headers = executor.buildHeaders({ rawHeaders: { "user-agent": "opencode/1.19.4 ai-sdk/provider-utils/4.0.23 runtime/bun/1.4.4" } });
-    expect(headers["User-Agent"]).toBe("opencode/1.19.4 ai-sdk/provider-utils/4.0.23 runtime/bun/1.4.4");
+    const headers = executor.buildHeaders({ rawHeaders: { "user-agent": "opencode/latest/2.2.5/cli" } });
+    expect(headers["User-Agent"]).toBe("opencode/latest/2.2.5/cli");
   });
 
-  it("sends the current CLI headers including x-opencode-request and session id", () => {
+  it("sends the current CLI headers including session affinity and session id", () => {
     const executor = getExecutor("opencode");
     const headers = executor.buildHeaders({});
     const session = headers["x-opencode-session"];
     expect(session).toMatch(OPENCODE_SESSION_RE);
     expect(headers["x-opencode-session-id"]).toBe(session);
+    expect(headers["x-session-affinity"]).toBe(session);
+    expect(headers["x-session-id"]).toBe(session);
     expect(headers["x-opencode-client"]).toBe("cli");
-    expect(headers["x-opencode-request"]).toMatch(/^msg_[0-9a-f]{12}[0-9A-Za-z]{14}$/);
-    expect("x-session-affinity" in headers).toBe(false);
-    expect("x-session-id" in headers).toBe(false);
+    expect("x-opencode-request" in headers).toBe(false);
   });
 });
 

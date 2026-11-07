@@ -47,6 +47,10 @@ function escapeHtml(str) {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;');
 }
+function isValidVersion(str) {
+  return typeof str === 'string' && /^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.-]+)?$/.test(str.trim());
+}
+
 
 async function sendTelegram(text, replyMarkup = null) {
   try {
@@ -316,6 +320,9 @@ async function doPublish(targetVersion) {
 
     // 4. Commit and push bump
     log('Committing and pushing release version to GitHub...');
+    if (!isValidVersion(targetVersion)) {
+      throw new Error(`Invalid targetVersion format: "${targetVersion}"`);
+    }
     try {
       await runExec(
         `git add package.json cli/package.json CHANGELOG-T.md && (git commit -m "release: v${targetVersion}" || true) && git push origin main && (git tag -a "v${targetVersion}" -m "Release v${targetVersion}" && git push origin "v${targetVersion}" || true)`,
@@ -502,9 +509,12 @@ const server = http.createServer(async (req, res) => {
 
       if (url.pathname === '/publish') {
         const customVersion = body.version || url.searchParams.get('version');
+        if (customVersion && !isValidVersion(customVersion)) {
+          log('Rejected invalid custom version: ' + customVersion);
+          return sendJson(400, { error: 'Invalid version format' });
+        }
         const action = body.action || url.searchParams.get('action') || (customVersion ? 'custom' : 'auto');
         log('Received publish request: action=' + action + ', version=' + customVersion);
-
         if (action === 'cancel') {
           try {
             if (fs.existsSync(STATE_FILE)) fs.unlinkSync(STATE_FILE);

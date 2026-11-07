@@ -15,24 +15,15 @@ async function getObservabilityConfig() {
   try {
     const { getSettings } = await import("./settingsRepo.js");
     const settings = await getSettings();
-    const envRequestLogs = process.env.ENABLE_REQUEST_LOGS;
-    if (envRequestLogs !== undefined) {
-      const enabled = envRequestLogs.toLowerCase() === "true";
-      cachedConfig = {
-        enabled,
-        maxRecords: settings.observabilityMaxRecords || parseInt(process.env.OBSERVABILITY_MAX_RECORDS || String(DEFAULT_MAX_RECORDS), 10),
-        batchSize: settings.observabilityBatchSize || parseInt(process.env.OBSERVABILITY_BATCH_SIZE || String(DEFAULT_BATCH_SIZE), 10),
-        flushIntervalMs: settings.observabilityFlushIntervalMs || parseInt(process.env.OBSERVABILITY_FLUSH_INTERVAL_MS || String(DEFAULT_FLUSH_INTERVAL_MS), 10),
-        maxJsonSize: (settings.observabilityMaxJsonSize || parseInt(process.env.OBSERVABILITY_MAX_JSON_SIZE || "5", 10)) * 1024,
-      };
-      cachedConfigTs = Date.now();
-      return cachedConfig;
-    }
-    const envFallback = process.env.OBSERVABILITY_ENABLED !== "false";
     const uiFlag = typeof settings.enableObservability === "boolean";
-    const enabled = uiFlag
-      ? settings.enableObservability
-      : envFallback;
+    let enabled;
+    if (uiFlag) {
+      enabled = settings.enableObservability;
+    } else if (process.env.ENABLE_REQUEST_LOGS !== undefined) {
+      enabled = process.env.ENABLE_REQUEST_LOGS.toLowerCase() === "true";
+    } else {
+      enabled = process.env.OBSERVABILITY_ENABLED !== "false";
+    }
 
     cachedConfig = {
       enabled,
@@ -41,6 +32,8 @@ async function getObservabilityConfig() {
       flushIntervalMs: settings.observabilityFlushIntervalMs || parseInt(process.env.OBSERVABILITY_FLUSH_INTERVAL_MS || String(DEFAULT_FLUSH_INTERVAL_MS), 10),
       maxJsonSize: (settings.observabilityMaxJsonSize || parseInt(process.env.OBSERVABILITY_MAX_JSON_SIZE || "5", 10)) * 1024,
     };
+    cachedConfigTs = Date.now();
+    return cachedConfig;
   } catch {
     cachedConfig = {
       enabled: false,
@@ -164,7 +157,13 @@ export async function saveRequestDetail(detail) {
   }
 }
 
+export async function flushRequestDetails() {
+  if (flushTimer) { clearTimeout(flushTimer); flushTimer = null; }
+  await flushToDatabase();
+}
+
 export async function getRequestDetails(filter = {}) {
+  if (writeBuffer.length > 0) await flushRequestDetails().catch(() => {});
   const db = await getAdapter();
   const conds = [];
   const params = [];
@@ -211,12 +210,14 @@ export async function getRequestDetails(filter = {}) {
 }
 
 export async function getDistinctProviders() {
+  if (writeBuffer.length > 0) await flushRequestDetails().catch(() => {});
   const db = await getAdapter();
   const rows = db.all(`SELECT DISTINCT provider FROM requestDetails WHERE provider IS NOT NULL ORDER BY provider ASC`);
   return rows.map((r) => r.provider);
 }
 
 export async function getRequestDetailById(id) {
+  if (writeBuffer.length > 0) await flushRequestDetails().catch(() => {});
   const db = await getAdapter();
   const row = db.get(`SELECT data FROM requestDetails WHERE id = ?`, [id]);
   return row ? parseJson(row.data, null) : null;

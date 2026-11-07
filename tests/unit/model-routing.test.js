@@ -17,7 +17,9 @@ async function setupDb() {
     createProviderNode,
     getModelInfo,
     cleanup() {
-      fs.rmSync(tempDir, { recursive: true, force: true });
+      try {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+      } catch {}
     },
   };
 }

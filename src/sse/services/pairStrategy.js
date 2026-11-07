@@ -22,9 +22,11 @@ import { getApiKeyByKey, getInjectKeyModelPrompts, getInjectModelPrompts } from 
 export async function resolveComboStrategy(modelStr, comboModels, settings, apiKey) {
   const comboStrategies = settings?.comboStrategies || {};
   const specific = comboStrategies[modelStr]?.fallbackStrategy;
-  if (specific) return specific;
-  if (settings?.comboStrategy && settings.comboStrategy !== "fallback") return settings.comboStrategy;
+  if (specific && specific !== "auto") return specific;
 
+  if (settings?.comboStrategy && settings.comboStrategy !== "auto") {
+    return settings.comboStrategy;
+  }
   if (Array.isArray(comboModels) && comboModels.length > 1) {
     try {
       const modelPrompts = await getInjectModelPrompts();

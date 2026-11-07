@@ -545,7 +545,9 @@ export async function handleComboChat({
     try {
       let result;
       try {
-        result = await handleSingleModel(body, modelStr, attemptSignal);
+        result = attemptSignal
+          ? await handleSingleModel(body, modelStr, attemptSignal)
+          : await handleSingleModel(body, modelStr);
       } finally {
         if (attemptTimer) clearTimeout(attemptTimer);
       }

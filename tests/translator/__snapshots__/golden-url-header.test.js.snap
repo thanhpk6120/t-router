@@ -438,26 +438,26 @@ exports[`GOLDEN buildHeaders (default executor providers) > cline → headers (a
     "Authorization": "Bearer <TOK>",
     "Content-Type": "application/json",
     "HTTP-Referer": "https://cline.bot",
-    "User-Agent": "9Router/0.5.104",
+    "User-Agent": "9Router/0.5.112-pro.23-t.2",
     "X-CLIENT-TYPE": "9router",
-    "X-CLIENT-VERSION": "0.5.104",
-    "X-CORE-VERSION": "0.5.104",
+    "X-CLIENT-VERSION": "0.5.112-pro.23-t.2",
+    "X-CORE-VERSION": "0.5.112-pro.23-t.2",
     "X-IS-MULTIROOT": "false",
-    "X-PLATFORM": "linux",
-    "X-PLATFORM-VERSION": "v22.23.2",
+    "X-PLATFORM": "win32",
+    "X-PLATFORM-VERSION": "v24.18.0",
     "X-Title": "Cline",
   },
   "nonStream": {
     "Authorization": "Bearer <TOK>",
     "Content-Type": "application/json",
     "HTTP-Referer": "https://cline.bot",
-    "User-Agent": "9Router/0.5.104",
+    "User-Agent": "9Router/0.5.112-pro.23-t.2",
     "X-CLIENT-TYPE": "9router",
-    "X-CLIENT-VERSION": "0.5.104",
-    "X-CORE-VERSION": "0.5.104",
+    "X-CLIENT-VERSION": "0.5.112-pro.23-t.2",
+    "X-CORE-VERSION": "0.5.112-pro.23-t.2",
     "X-IS-MULTIROOT": "false",
-    "X-PLATFORM": "linux",
-    "X-PLATFORM-VERSION": "v22.23.2",
+    "X-PLATFORM": "win32",
+    "X-PLATFORM-VERSION": "v24.18.0",
     "X-Title": "Cline",
   },
   "oauth": {
@@ -465,13 +465,13 @@ exports[`GOLDEN buildHeaders (default executor providers) > cline → headers (a
     "Authorization": "Bearer <TOK>",
     "Content-Type": "application/json",
     "HTTP-Referer": "https://cline.bot",
-    "User-Agent": "9Router/0.5.104",
+    "User-Agent": "9Router/0.5.112-pro.23-t.2",
     "X-CLIENT-TYPE": "9router",
-    "X-CLIENT-VERSION": "0.5.104",
-    "X-CORE-VERSION": "0.5.104",
+    "X-CLIENT-VERSION": "0.5.112-pro.23-t.2",
+    "X-CORE-VERSION": "0.5.112-pro.23-t.2",
     "X-IS-MULTIROOT": "false",
-    "X-PLATFORM": "linux",
-    "X-PLATFORM-VERSION": "v22.23.2",
+    "X-PLATFORM": "win32",
+    "X-PLATFORM-VERSION": "v24.18.0",
     "X-Title": "Cline",
   },
 }
@@ -484,26 +484,26 @@ exports[`GOLDEN buildHeaders (default executor providers) > clinepass → header
     "Authorization": "Bearer <TOK>",
     "Content-Type": "application/json",
     "HTTP-Referer": "https://cline.bot",
-    "User-Agent": "9Router/0.5.104",
+    "User-Agent": "9Router/0.5.112-pro.23-t.2",
     "X-CLIENT-TYPE": "9router",
-    "X-CLIENT-VERSION": "0.5.104",
-    "X-CORE-VERSION": "0.5.104",
+    "X-CLIENT-VERSION": "0.5.112-pro.23-t.2",
+    "X-CORE-VERSION": "0.5.112-pro.23-t.2",
     "X-IS-MULTIROOT": "false",
-    "X-PLATFORM": "linux",
-    "X-PLATFORM-VERSION": "v22.23.2",
+    "X-PLATFORM": "win32",
+    "X-PLATFORM-VERSION": "v24.18.0",
     "X-Title": "Cline",
   },
   "nonStream": {
     "Authorization": "Bearer <TOK>",
     "Content-Type": "application/json",
     "HTTP-Referer": "https://cline.bot",
-    "User-Agent": "9Router/0.5.104",
+    "User-Agent": "9Router/0.5.112-pro.23-t.2",
     "X-CLIENT-TYPE": "9router",
-    "X-CLIENT-VERSION": "0.5.104",
-    "X-CORE-VERSION": "0.5.104",
+    "X-CLIENT-VERSION": "0.5.112-pro.23-t.2",
+    "X-CORE-VERSION": "0.5.112-pro.23-t.2",
     "X-IS-MULTIROOT": "false",
-    "X-PLATFORM": "linux",
-    "X-PLATFORM-VERSION": "v22.23.2",
+    "X-PLATFORM": "win32",
+    "X-PLATFORM-VERSION": "v24.18.0",
     "X-Title": "Cline",
   },
   "oauth": {
@@ -511,13 +511,13 @@ exports[`GOLDEN buildHeaders (default executor providers) > clinepass → header
     "Authorization": "Bearer <TOK>",
     "Content-Type": "application/json",
     "HTTP-Referer": "https://cline.bot",
-    "User-Agent": "9Router/0.5.104",
+    "User-Agent": "9Router/0.5.112-pro.23-t.2",
     "X-CLIENT-TYPE": "9router",
-    "X-CLIENT-VERSION": "0.5.104",
-    "X-CORE-VERSION": "0.5.104",
+    "X-CLIENT-VERSION": "0.5.112-pro.23-t.2",
+    "X-CORE-VERSION": "0.5.112-pro.23-t.2",
     "X-IS-MULTIROOT": "false",
-    "X-PLATFORM": "linux",
-    "X-PLATFORM-VERSION": "v22.23.2",
+    "X-PLATFORM": "win32",
+    "X-PLATFORM-VERSION": "v24.18.0",
     "X-Title": "Cline",
   },
 }
@@ -549,9 +549,13 @@ exports[`GOLDEN buildHeaders (default executor providers) > codebuddy-cn → hea
     "Authorization": "Bearer <TOK>",
     "Content-Type": "application/json",
     "User-Agent": "CLI/2.108.1 CodeBuddy/2.108.1",
+    "X-Conversation-ID": "<VOLATILE>",
+    "X-Conversation-Message-ID": "<VOLATILE>",
+    "X-Conversation-Request-ID": "<VOLATILE>",
     "X-IDE-Name": "CLI",
     "X-IDE-Type": "CLI",
     "X-Product": "SaaS",
+    "X-Request-ID": "<VOLATILE>",
     "x-codebuddy-request": "1",
     "x-requested-with": "XMLHttpRequest",
   },
@@ -559,9 +563,13 @@ exports[`GOLDEN buildHeaders (default executor providers) > codebuddy-cn → hea
     "Authorization": "Bearer <TOK>",
     "Content-Type": "application/json",
     "User-Agent": "CLI/2.108.1 CodeBuddy/2.108.1",
+    "X-Conversation-ID": "<VOLATILE>",
+    "X-Conversation-Message-ID": "<VOLATILE>",
+    "X-Conversation-Request-ID": "<VOLATILE>",
     "X-IDE-Name": "CLI",
     "X-IDE-Type": "CLI",
     "X-Product": "SaaS",
+    "X-Request-ID": "<VOLATILE>",
     "x-codebuddy-request": "1",
     "x-requested-with": "XMLHttpRequest",
   },
@@ -570,9 +578,13 @@ exports[`GOLDEN buildHeaders (default executor providers) > codebuddy-cn → hea
     "Authorization": "Bearer <TOK>",
     "Content-Type": "application/json",
     "User-Agent": "CLI/2.108.1 CodeBuddy/2.108.1",
+    "X-Conversation-ID": "<VOLATILE>",
+    "X-Conversation-Message-ID": "<VOLATILE>",
+    "X-Conversation-Request-ID": "<VOLATILE>",
     "X-IDE-Name": "CLI",
     "X-IDE-Type": "CLI",
     "X-Product": "SaaS",
+    "X-Request-ID": "<VOLATILE>",
     "x-codebuddy-request": "1",
     "x-requested-with": "XMLHttpRequest",
   },
@@ -586,9 +598,13 @@ exports[`GOLDEN buildHeaders (default executor providers) > codebuddy-intl → h
     "Authorization": "Bearer <TOK>",
     "Content-Type": "application/json",
     "User-Agent": "IDE/2.108.1 CodeBuddy/2.108.1",
+    "X-Conversation-ID": "<VOLATILE>",
+    "X-Conversation-Message-ID": "<VOLATILE>",
+    "X-Conversation-Request-ID": "<VOLATILE>",
     "X-IDE-Name": "IDE",
     "X-IDE-Type": "IDE",
     "X-Product": "SaaS",
+    "X-Request-ID": "<VOLATILE>",
     "x-codebuddy-request": "1",
     "x-requested-with": "XMLHttpRequest",
   },
@@ -596,9 +612,13 @@ exports[`GOLDEN buildHeaders (default executor providers) > codebuddy-intl → h
     "Authorization": "Bearer <TOK>",
     "Content-Type": "application/json",
     "User-Agent": "IDE/2.108.1 CodeBuddy/2.108.1",
+    "X-Conversation-ID": "<VOLATILE>",
+    "X-Conversation-Message-ID": "<VOLATILE>",
+    "X-Conversation-Request-ID": "<VOLATILE>",
     "X-IDE-Name": "IDE",
     "X-IDE-Type": "IDE",
     "X-Product": "SaaS",
+    "X-Request-ID": "<VOLATILE>",
     "x-codebuddy-request": "1",
     "x-requested-with": "XMLHttpRequest",
   },
@@ -607,9 +627,13 @@ exports[`GOLDEN buildHeaders (default executor providers) > codebuddy-intl → h
     "Authorization": "Bearer <TOK>",
     "Content-Type": "application/json",
     "User-Agent": "IDE/2.108.1 CodeBuddy/2.108.1",
+    "X-Conversation-ID": "<VOLATILE>",
+    "X-Conversation-Message-ID": "<VOLATILE>",
+    "X-Conversation-Request-ID": "<VOLATILE>",
     "X-IDE-Name": "IDE",
     "X-IDE-Type": "IDE",
     "X-Product": "SaaS",
+    "X-Request-ID": "<VOLATILE>",
     "x-codebuddy-request": "1",
     "x-requested-with": "XMLHttpRequest",
   },
@@ -984,10 +1008,10 @@ exports[`GOLDEN buildHeaders (default executor providers) > kimi → headers (ap
     "Anthropic-Version": "2023-06-01",
     "Content-Type": "application/json",
     "X-Msh-Device-Id": "kimi-<TS>",
-    "X-Msh-Device-Model": "Linux x64",
+    "X-Msh-Device-Model": "Windows x64",
     "X-Msh-Device-Name": "<VOLATILE>",
     "X-Msh-Platform": "9router",
-    "X-Msh-Version": "0.5.104",
+    "X-Msh-Version": "0.5.112-pro.23-t.2",
     "x-api-key": "<CRED>",
   },
   "nonStream": {
@@ -995,10 +1019,10 @@ exports[`GOLDEN buildHeaders (default executor providers) > kimi → headers (ap
     "Anthropic-Version": "2023-06-01",
     "Content-Type": "application/json",
     "X-Msh-Device-Id": "kimi-<TS>",
-    "X-Msh-Device-Model": "Linux x64",
+    "X-Msh-Device-Model": "Windows x64",
     "X-Msh-Device-Name": "<VOLATILE>",
     "X-Msh-Platform": "9router",
-    "X-Msh-Version": "0.5.104",
+    "X-Msh-Version": "0.5.112-pro.23-t.2",
     "x-api-key": "<CRED>",
   },
   "oauth": {
@@ -1007,10 +1031,10 @@ exports[`GOLDEN buildHeaders (default executor providers) > kimi → headers (ap
     "Anthropic-Version": "2023-06-01",
     "Content-Type": "application/json",
     "X-Msh-Device-Id": "kimi-<TS>",
-    "X-Msh-Device-Model": "Linux x64",
+    "X-Msh-Device-Model": "Windows x64",
     "X-Msh-Device-Name": "<VOLATILE>",
     "X-Msh-Platform": "9router",
-    "X-Msh-Version": "0.5.104",
+    "X-Msh-Version": "0.5.112-pro.23-t.2",
     "x-api-key": "<CRED>",
   },
 }
@@ -1094,7 +1118,7 @@ exports[`GOLDEN buildHeaders (default executor providers) > minimax-code → hea
     "User-Agent": "MiniMaxAgent",
     "X-Mavis-Agent-Id": "main",
     "X-Mavis-Session-Id": "<VOLATILE>",
-    "X-Mavis-Timezone-Offset": "0",
+    "X-Mavis-Timezone-Offset": "25200",
     "anthropic-version": "2023-06-01",
     "x-api-key": "sk-xxx",
   },
@@ -1104,7 +1128,7 @@ exports[`GOLDEN buildHeaders (default executor providers) > minimax-code → hea
     "User-Agent": "MiniMaxAgent",
     "X-Mavis-Agent-Id": "main",
     "X-Mavis-Session-Id": "<VOLATILE>",
-    "X-Mavis-Timezone-Offset": "0",
+    "X-Mavis-Timezone-Offset": "25200",
     "anthropic-version": "2023-06-01",
     "x-api-key": "sk-xxx",
   },
@@ -1115,7 +1139,7 @@ exports[`GOLDEN buildHeaders (default executor providers) > minimax-code → hea
     "User-Agent": "MiniMaxAgent",
     "X-Mavis-Agent-Id": "main",
     "X-Mavis-Session-Id": "<VOLATILE>",
-    "X-Mavis-Timezone-Offset": "0",
+    "X-Mavis-Timezone-Offset": "25200",
     "anthropic-version": "2023-06-01",
     "x-api-key": "sk-xxx",
   },
@@ -1131,7 +1155,7 @@ exports[`GOLDEN buildHeaders (default executor providers) > minimax-code-global 
     "User-Agent": "MiniMaxAgent",
     "X-Mavis-Agent-Id": "main",
     "X-Mavis-Session-Id": "<VOLATILE>",
-    "X-Mavis-Timezone-Offset": "0",
+    "X-Mavis-Timezone-Offset": "25200",
     "anthropic-version": "2023-06-01",
     "x-api-key": "sk-xxx",
   },
@@ -1141,7 +1165,7 @@ exports[`GOLDEN buildHeaders (default executor providers) > minimax-code-global 
     "User-Agent": "MiniMaxAgent",
     "X-Mavis-Agent-Id": "main",
     "X-Mavis-Session-Id": "<VOLATILE>",
-    "X-Mavis-Timezone-Offset": "0",
+    "X-Mavis-Timezone-Offset": "25200",
     "anthropic-version": "2023-06-01",
     "x-api-key": "sk-xxx",
   },
@@ -1152,7 +1176,7 @@ exports[`GOLDEN buildHeaders (default executor providers) > minimax-code-global 
     "User-Agent": "MiniMaxAgent",
     "X-Mavis-Agent-Id": "main",
     "X-Mavis-Session-Id": "<VOLATILE>",
-    "X-Mavis-Timezone-Offset": "0",
+    "X-Mavis-Timezone-Offset": "25200",
     "anthropic-version": "2023-06-01",
     "x-api-key": "sk-xxx",
   },
@@ -1413,6 +1437,25 @@ exports[`GOLDEN buildHeaders (default executor providers) > openrouter → heade
 }
 `;
 
+exports[`GOLDEN buildHeaders (default executor providers) > orcarouter → headers (apiKey / oauth) 1`] = `
+{
+  "apiKey": {
+    "Accept": "text/event-stream",
+    "Authorization": "Bearer <TOK>",
+    "Content-Type": "application/json",
+  },
+  "nonStream": {
+    "Authorization": "Bearer <TOK>",
+    "Content-Type": "application/json",
+  },
+  "oauth": {
+    "Accept": "text/event-stream",
+    "Authorization": "Bearer <TOK>",
+    "Content-Type": "application/json",
+  },
+}
+`;
+
 exports[`GOLDEN buildHeaders (default executor providers) > perplexity → headers (apiKey / oauth) 1`] = `
 {
   "apiKey": {
@@ -1623,6 +1666,25 @@ exports[`GOLDEN buildHeaders (default executor providers) > tokenharbor → head
 `;
 
 exports[`GOLDEN buildHeaders (default executor providers) > tokenrouter → headers (apiKey / oauth) 1`] = `
+{
+  "apiKey": {
+    "Accept": "text/event-stream",
+    "Authorization": "Bearer <TOK>",
+    "Content-Type": "application/json",
+  },
+  "nonStream": {
+    "Authorization": "Bearer <TOK>",
+    "Content-Type": "application/json",
+  },
+  "oauth": {
+    "Accept": "text/event-stream",
+    "Authorization": "Bearer <TOK>",
+    "Content-Type": "application/json",
+  },
+}
+`;
+
+exports[`GOLDEN buildHeaders (default executor providers) > totu-ai → headers (apiKey / oauth) 1`] = `
 {
   "apiKey": {
     "Accept": "text/event-stream",
@@ -2218,6 +2280,13 @@ exports[`GOLDEN buildUrl (default executor providers) > openrouter → url (stre
 }
 `;
 
+exports[`GOLDEN buildUrl (default executor providers) > orcarouter → url (stream + non-stream) 1`] = `
+{
+  "nonStream": "https://api.orcarouter.ai/v1/chat/completions",
+  "stream": "https://api.orcarouter.ai/v1/chat/completions",
+}
+`;
+
 exports[`GOLDEN buildUrl (default executor providers) > perplexity → url (stream + non-stream) 1`] = `
 {
   "nonStream": "https://api.perplexity.ai/chat/completions",
@@ -2299,6 +2368,13 @@ exports[`GOLDEN buildUrl (default executor providers) > tokenrouter → url (str
 {
   "nonStream": "https://api.tokenrouter.com/v1/chat/completions",
   "stream": "https://api.tokenrouter.com/v1/chat/completions",
+}
+`;
+
+exports[`GOLDEN buildUrl (default executor providers) > totu-ai → url (stream + non-stream) 1`] = `
+{
+  "nonStream": "https://totu-ai.com/v1/chat/completions",
+  "stream": "https://totu-ai.com/v1/chat/completions",
 }
 `;
 

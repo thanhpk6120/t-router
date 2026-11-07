@@ -67,6 +67,10 @@ http.createServer = (...args) => {
     delete req.headers["x-forwarded-for"];
     delete req.headers["x-9r-via-proxy"];
     delete req.headers["x-9r-peer-token"];
+    if (!isLoopbackProxy || !req.headers["x-9r-cli-token"]) {
+      delete req.headers["x-allow-disabled"];
+      delete req.headers["x-9r-capability-probe"];
+    }
     req.headers["x-9r-real-ip"] = ip;
     req.headers["x-9r-peer-token"] = PEER_TOKEN;
     if (viaProxy) req.headers["x-9r-via-proxy"] = "1";

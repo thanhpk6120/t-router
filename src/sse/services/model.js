@@ -112,8 +112,12 @@ export async function isModelDisabled(modelStr, options = {}) {
   const disabledByAlias = options.disabledByAlias || (await getDisabledModels().catch(() => ({})));
 
   // 1. Check if modelStr is a combo
-  const combo = (options.combosByName?.get ? options.combosByName.get(modelStr) : options.combosByName?.[modelStr])
-    || await getComboByName(modelStr).catch(() => null);
+  let combo = null;
+  if (options.combosByName) {
+    combo = options.combosByName.get ? options.combosByName.get(modelStr) : options.combosByName[modelStr];
+  } else if (!modelStr.includes("/")) {
+    combo = await getComboByName(modelStr).catch(() => null);
+  }
   if (combo && Array.isArray(combo.models) && combo.models.length > 0) {
     // A combo is considered disabled if ALL its members are disabled
     for (const member of combo.models) {

@@ -7,6 +7,8 @@ import { getFaviconCandidates } from "../../src/shared/utils/providerIcon.js";
 describe("getFaviconCandidates", () => {
   it("returns origin then parent domain for an api subdomain", () => {
     expect(getFaviconCandidates("https://api.gonka-api.org/v1")).toEqual([
+      "https://api.gonka-api.org/apple-touch-icon.png",
+      "https://gonka-api.org/apple-touch-icon.png",
       "https://api.gonka-api.org/favicon.ico",
       "https://gonka-api.org/favicon.ico",
     ]);
@@ -14,12 +16,15 @@ describe("getFaviconCandidates", () => {
 
   it("returns only the origin for an apex host", () => {
     expect(getFaviconCandidates("https://openrouter.ai/api/v1")).toEqual([
+      "https://openrouter.ai/apple-touch-icon.png",
       "https://openrouter.ai/favicon.ico",
     ]);
   });
 
   it("keeps the scheme and strips paths, ports stay with the origin", () => {
     expect(getFaviconCandidates("http://api.example.com:8080/v1/chat")).toEqual([
+      "http://api.example.com/apple-touch-icon.png",
+      "http://example.com/apple-touch-icon.png",
       "http://api.example.com/favicon.ico",
       "http://example.com/favicon.ico",
     ]);

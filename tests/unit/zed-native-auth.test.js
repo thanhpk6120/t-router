@@ -37,7 +37,9 @@ beforeAll(async () => {
 }, 30_000);
 
 afterAll(() => {
-  fs.rmSync(process.env.DATA_DIR, { recursive: true, force: true });
+  try {
+    fs.rmSync(process.env.DATA_DIR, { recursive: true, force: true });
+  } catch {}
   if (originalDataDir === undefined) delete process.env.DATA_DIR;
   else process.env.DATA_DIR = originalDataDir;
 });

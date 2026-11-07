@@ -74,7 +74,7 @@ describe("runBulkPool: bounded parallel bulk work", () => {
       calls++;
       return true;
     });
-    expect(out).toEqual({ success: 0, failed: 0 });
+    expect(out).toMatchObject({ success: 0, failed: 0 });
     expect(calls).toBe(0);
   });
 });

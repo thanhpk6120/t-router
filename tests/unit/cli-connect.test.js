@@ -101,7 +101,7 @@ describe("connect tool writers", () => {
     const cfg = readJson(f);
     expect(cfg.theme).toBe("dark");
     expect(cfg.env).toMatchObject({ KEEP: "1", ANTHROPIC_BASE_URL: "http://gw.test:20128/v1", ANTHROPIC_AUTH_TOKEN: CTX.apiKey });
-    expect(fs.existsSync(`${f}.bak-9router`)).toBe(true);
+    expect(fs.existsSync(`${f}.bak-trouter`)).toBe(true);
     await tool("claude").reset();
     expect(readJson(f)).toEqual({ theme: "dark", hasCompletedOnboarding: true, env: { KEEP: "1" } });
   });
@@ -112,12 +112,12 @@ describe("connect tool writers", () => {
     fs.writeFileSync(f, '[mcp_servers.x]\ncommand = "foo"\n');
     await tool("codex").apply(CTX);
     const text = fs.readFileSync(f, "utf8");
-    expect(text).toContain('model_provider = "9router"');
+    expect(text).toContain('model_provider = "trouter"');
     expect(text).toContain("[mcp_servers.x]");
     await tool("codex").reset();
     const after = fs.readFileSync(f, "utf8");
     expect(after).toContain("[mcp_servers.x]");
-    expect(after).not.toMatch(/9router|model_providers|\[agents\]/);
+    expect(after).not.toMatch(/trouter|9router|model_providers|\[agents\]/);
   });
 
   it("droid keeps user models and puts 9router first", async () => {
@@ -125,7 +125,7 @@ describe("connect tool writers", () => {
     fs.mkdirSync(path.dirname(f), { recursive: true });
     fs.writeFileSync(f, JSON.stringify({ customModels: [{ id: "mine", model: "m" }] }));
     await tool("droid").apply(CTX);
-    expect(readJson(f).customModels.map((m) => m.id)).toEqual(["custom:9Router-0", "mine"]);
+    expect(readJson(f).customModels.map((m) => m.id)).toEqual(["custom:TRouter-0", "mine"]);
     await tool("droid").reset();
     expect(readJson(f).customModels.map((m) => m.id)).toEqual(["mine"]);
   });
@@ -152,8 +152,9 @@ describe("connect tool writers", () => {
     await tool("pi").apply(CTX);
     const p = readJson(f).providers;
     expect(p.mine).toEqual({ baseUrl: "http://x" });
-    expect(p["9router"]).toMatchObject({ baseUrl: "http://gw.test:20128/v1", apiKey: CTX.apiKey, api: "openai-completions" });
-    expect(p["9router"].models.map((m) => m.id)).toEqual([CTX.model]);
+    const pEntry = p["trouter"] || p["9router"];
+    expect(pEntry).toMatchObject({ baseUrl: "http://gw.test:20128/v1", apiKey: CTX.apiKey, api: "openai-completions" });
+    expect(pEntry.models.map((m) => m.id)).toEqual([CTX.model]);
     await tool("pi").reset();
     expect(readJson(f)).toEqual({ providers: { mine: { baseUrl: "http://x" } } });
   });
@@ -172,11 +173,11 @@ describe("connect tool writers", () => {
     await tool("omp").apply(CTX);
     const text = fs.readFileSync(f, "utf8");
     expect(text).toContain("theme: dark");
-    expect(text).toMatch(/9router:\n\s+baseUrl: http:\/\/gw\.test:20128\/v1/);
+    expect(text).toMatch(/(9router|trouter):\n\s+baseUrl: http:\/\/gw\.test:20128\/v1/);
     expect(text).toMatch(/discovery:\n\s+type: proxy/);
     await tool("omp").reset();
     const after = fs.readFileSync(f, "utf8");
-    expect(after).not.toContain("9router");
+    expect(after).not.toMatch(/9router|trouter/);
     expect(after).toContain("mine:");
     expect(after).toContain("theme: dark");
   });
@@ -245,7 +246,7 @@ describe("connect run()", () => {
     // Tiers the server leaves unset stay unset — no invented model id.
     expect(env).not.toHaveProperty("ANTHROPIC_DEFAULT_HAIKU_MODEL");
     expect(env).not.toHaveProperty("ANTHROPIC_DEFAULT_FABLE_MODEL");
-    expect(readJson(path.join(home, ".config", "opencode", "opencode.json")).model).toBe("9router/srv/default");
+    expect(readJson(path.join(home, ".config", "opencode", "opencode.json")).model).toMatch(/(9router|trouter)\/srv\/default/);
 
     // The server's own key and loopback base URL must not leak into our config.
     const written = fs.readFileSync(path.join(home, ".claude", "settings.json"), "utf8");
@@ -280,7 +281,7 @@ describe("connect run()", () => {
         return json({ installed: true, config: `model = "srv/codex"\nmodel_provider = "9router"\n[model_providers.9router]\nhttp_headers = { Authorization = "Bearer ${SERVER_KEY}" }\n` });
       }
       if (u.endsWith("/api/cli-tools/droid-settings")) {
-        return json({ installed: true, settings: { customModels: [{ id: "mine", model: "x" }, { id: "custom:9Router-0", model: "srv/droid", apiKey: SERVER_KEY }] } });
+        return json({ installed: true, settings: { customModels: [{ id: "mine", model: "x" }, { id: "custom:TRouter-0", model: "srv/droid", apiKey: SERVER_KEY }] } });
       }
       if (u.endsWith("/api/cli-tools/cline-settings")) {
         return json({ installed: true, settings: { actModeApiProvider: "openai", openAiModelId: "srv/cline" } });
@@ -295,7 +296,8 @@ describe("connect run()", () => {
     expect(readJson(path.join(home, ".factory", "settings.json")).customModels[0].model).toBe("srv/droid");
     expect(readJson(path.join(home, ".cline", "data", "globalState.json")).openAiModelId).toBe("srv/cline");
     // crush (not installed on server) and kilo (no model exposed) fall back to OpenCode's model.
-    expect(readJson(path.join(home, ".config", "crush", "crush.json")).providers["9router"].models[0].id).toBe("srv/default");
+    const crushProv = readJson(path.join(home, ".config", "crush", "crush.json")).providers;
+    expect((crushProv["trouter"] || crushProv["9router"]).models[0].id).toBe("srv/default");
     expect(readJson(path.join(home, ".local", "share", "kilo", "auth.json"))["openai-compatible"].model).toBe("srv/default");
 
     for (const f of [
@@ -320,7 +322,7 @@ describe("connect run()", () => {
   it("--model overrides every non-Claude tool's server value", async () => {
     mockServer();
     await connect.run(["http://gw.test", "--password", "x", "--tools", "opencode,kilo", "--model", "mine/all"]);
-    expect(readJson(path.join(home, ".config", "opencode", "opencode.json")).model).toBe("9router/mine/all");
+    expect(readJson(path.join(home, ".config", "opencode", "opencode.json")).model).toMatch(/(9router|trouter)\/mine\/all/);
     expect(readJson(path.join(home, ".local", "share", "kilo", "auth.json"))["openai-compatible"].model).toBe("mine/all");
   });
 
@@ -361,7 +363,7 @@ describe("connect run()", () => {
     expect(console.log.mock.calls.map((c) => c[0]).some((l) => String(l).includes("skipped"))).toBe(true);
     // ...unless the user says which model to use.
     expect(await connect.run(["http://gw.test", "--password", "x", "--tools", "opencode", "--model", "mine/m"])).toBe(0);
-    expect(readJson(path.join(home, ".config", "opencode", "opencode.json")).model).toBe("9router/mine/m");
+    expect(readJson(path.join(home, ".config", "opencode", "opencode.json")).model).toMatch(/(9router|trouter)\/mine\/m/);
   });
 
   // savedEnvPath() reads %APPDATA% on Windows, not homedir(), so point both at
@@ -371,8 +373,8 @@ describe("connect run()", () => {
     vi.stubEnv("APPDATA", path.join(home, "AppData", "Roaming"));
   };
   const expectedEnvPath = () => (process.platform === "win32"
-    ? path.join(home, "AppData", "Roaming", "9router", "connect.env")
-    : path.join(home, ".9router", "connect.env"));
+    ? path.join(home, "AppData", "Roaming", "trouter", "connect.env")
+    : path.join(home, ".trouter", "connect.env"));
 
   it("--save stores the password (mode 600) bound to the server, and later runs reuse it", async () => {
     isolateDataDir();

@@ -51,7 +51,7 @@ bot.on("message", async (msg) => {
       return;
     }
 
-    if (/^[0-9]+\.[0-9]+\.[0-9]+.*$/.test(text)) {
+    if (/^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.-]+)?$/.test(text)) {
       delete userState[chatId];
       await bot.sendMessage(chatId, "⏳ Đã nhận phiên bản: <code>" + text + "</code>. Bắt đầu build & publish...", { parse_mode: "HTML" });
       try {

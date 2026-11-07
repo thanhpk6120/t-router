@@ -1,4 +1,5 @@
 import { ProxyAgent, fetch as undiciFetch } from "undici";
+import { assertPublicUrlResolved } from "@/shared/utils/ssrfGuard";
 
 const DEFAULT_TEST_URL = "https://google.com/";
 const DEFAULT_TIMEOUT_MS = 8000;
@@ -39,6 +40,11 @@ export async function testProxyUrl({ proxyUrl, testUrl, timeoutMs } = {}) {
       : DEFAULT_TIMEOUT_MS;
 
   if (normalizedProxyUrl === "direct") {
+    try {
+      await assertPublicUrlResolved(normalizedTestUrl);
+    } catch (ssrfErr) {
+      return { ok: false, status: 400, error: ssrfErr.message || "SSRF check failed: target URL not allowed" };
+    }
     const controller = new AbortController();
     const startedAt = Date.now();
     const timer = setTimeout(() => controller.abort(), normalizedTimeoutMs);

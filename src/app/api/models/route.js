@@ -31,7 +31,8 @@ export async function GET(request) {
     // ?includeDisabled=1 → the full catalog. "Load models from provider" uses it
     // so a provider whose models are all switched off can still be re-listed
     // (the dashboard keeps its own disabled list and shows them as restorable).
-    const includeDisabled = new URL(request.url).searchParams.get("includeDisabled") === "1";
+    const url = request?.url ? new URL(request.url) : null;
+    const includeDisabled = url?.searchParams?.get("includeDisabled") === "1";
     if (modelsCache.payload && Date.now() - modelsCache.at < MODELS_CACHE_TTL_MS && !includeDisabled) {
       return NextResponse.json(modelsCache.payload);
     }

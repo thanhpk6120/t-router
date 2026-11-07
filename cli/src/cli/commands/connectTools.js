@@ -151,7 +151,7 @@ const codex = {
       if (err.code === "ENOENT") return {};
       throw new Error(`Cannot parse ${codexPath()}: ${err.message}`);
     }
-    const p = cfg.model_providers?.["trouter"] || cfg.model_providers?.["trouter"] || providers?.["9router"];
+    const p = cfg.model_providers?.["trouter"] || cfg.model_providers?.["9router"];
     const auth = p?.http_headers?.Authorization;
     return {
       baseUrl: p?.base_url,
@@ -301,7 +301,8 @@ const crush = {
   paths: () => [crushPath()],
   route: "crush-settings",
   serverModel(data) {
-    const m = data?.config?.providers?.["trouter"] || providers?.["9router"]?.models?.[0]?.id;
+    const p = data?.config?.providers?.["trouter"] || data?.config?.providers?.["9router"];
+    const m = p?.models?.[0]?.id;
     return isStr(m) ? m : null;
   },
   async apply({ baseUrl, apiKey, model }) {
@@ -318,15 +319,16 @@ const crush = {
     return [file];
   },
   async show() {
-    const p = readJson(crushPath())?.providers?.["trouter"] || providers?.["9router"];
+    const p = readJson(crushPath())?.providers?.["trouter"] || readJson(crushPath())?.providers?.["9router"];
     const ids = (p?.models || []).map((m) => m.id).filter(isStr);
     return { baseUrl: p?.base_url, apiKey: p?.api_key, models: ids.length ? { main: ids[0] } : {} };
   },
   async reset() {
     const file = crushPath();
     const cfg = readJson(file);
-    if (!cfg?.providers?.["trouter"] || providers?.["9router"]) return [];
+    if (!cfg?.providers?.["trouter"] && !cfg?.providers?.["9router"]) return [];
     delete cfg.providers["trouter"];
+    delete cfg.providers["9router"];
     if (Object.keys(cfg.providers).length === 0) delete cfg.providers;
     rewriteFile(file, JSON.stringify(cfg, null, 2));
     return [file];
@@ -439,7 +441,8 @@ const pi = {
   paths: () => [piPath()],
   route: "pi-settings",
   serverModel(data) {
-    const m = data?.config?.providers?.["trouter"] || providers?.["9router"]?.models?.[0];
+    const p = data?.config?.providers?.["trouter"] || data?.config?.providers?.["9router"];
+    const m = p?.models?.[0];
     const id = typeof m === "string" ? m : m?.id;
     return isStr(id) ? id : null;
   },
@@ -458,7 +461,7 @@ const pi = {
     return [file];
   },
   async show() {
-    const p = readJson(piPath())?.providers?.["trouter"] || providers?.["9router"];
+    const p = readJson(piPath())?.providers?.["trouter"] || readJson(piPath())?.providers?.["9router"];
     const ids = (p?.models || []).map((m) => (typeof m === "string" ? m : m?.id)).filter(isStr);
     return {
       baseUrl: p?.baseUrl,
@@ -469,8 +472,9 @@ const pi = {
   async reset() {
     const file = piPath();
     const cfg = readJson(file);
-    if (!cfg?.providers?.["trouter"] || providers?.["9router"]) return [];
+    if (!cfg?.providers?.["trouter"] && !cfg?.providers?.["9router"]) return [];
     delete cfg.providers["trouter"];
+    delete cfg.providers["9router"];
     if (Object.keys(cfg.providers).length === 0) delete cfg.providers;
     rewriteFile(file, JSON.stringify(cfg, null, 2));
     return [file];
@@ -516,7 +520,8 @@ const omp = {
     return [file];
   },
   async show() {
-    const p = (await readYaml(ompPath()))?.providers?.["trouter"] || providers?.["9router"];
+    const providers = (await readYaml(ompPath()))?.providers;
+    const p = providers?.["trouter"] || providers?.["9router"];
     return {
       baseUrl: p?.baseUrl,
       apiKey: p?.apiKey,
@@ -527,9 +532,9 @@ const omp = {
     const { stringifyYAML } = await toml();
     const file = ompPath();
     const cfg = await readYaml(file);
-    if (!cfg?.providers?.["trouter"] || providers?.["9router"]) return [];
+    if (!cfg?.providers?.["trouter"] && !cfg?.providers?.["9router"]) return [];
     delete cfg.providers["trouter"];
-    if (Object.keys(cfg.providers).length === 0) delete cfg.providers;
+    delete cfg.providers["9router"];
     rewriteFile(file, Object.keys(cfg).length ? stringifyYAML(cfg) : "");
     return [file];
   },

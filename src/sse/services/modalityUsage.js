@@ -38,16 +38,19 @@ export function recordModalityUsage({
   costOverride,
   meta,
 }) {
-  saveRequestUsage({
-    provider,
-    model,
-    connectionId: connectionId || undefined,
-    apiKey,
-    endpoint: endpoint || null,
-    tokens: tokens || { prompt_tokens: 0, completion_tokens: 0 },
-    status: "success",
-    requestId: requestId || undefined,
-    ...(Number.isFinite(costOverride) ? { costOverride } : {}),
-    ...(meta ? { meta } : {}),
-  }).catch(() => {});
+  try {
+    const p = saveRequestUsage({
+      provider,
+      model,
+      connectionId: connectionId || undefined,
+      apiKey,
+      endpoint: endpoint || null,
+      tokens: tokens || { prompt_tokens: 0, completion_tokens: 0 },
+      status: "success",
+      requestId: requestId || undefined,
+      ...(Number.isFinite(costOverride) ? { costOverride } : {}),
+      ...(meta ? { meta } : {}),
+    });
+    if (p && typeof p.catch === "function") p.catch(() => {});
+  } catch {}
 }

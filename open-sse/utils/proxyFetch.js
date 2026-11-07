@@ -15,13 +15,18 @@ function isOwnPatchedFetch(fn) {
 
 // Resolved at call time, not module load: tests replace globalThis.fetch
 // after import, and a cached reference would bypass the mock.
+const systemFetch = globalThis.__trouterSystemFetch || (typeof globalThis.fetch === "function" && !isOwnPatchedFetch(globalThis.fetch) ? globalThis.fetch : undefined);
+if (!globalThis.__trouterSystemFetch && systemFetch) {
+  globalThis.__trouterSystemFetch = systemFetch;
+}
+
 function resolveBaseFetch() {
   const g = globalThis.fetch;
   if (!isOwnPatchedFetch(g)) {
     if (typeof g === "function") globalThis.__trouterOriginalFetch = g;
     return g;
   }
-  return globalThis.__trouterOriginalFetch || g;
+  return globalThis.__trouterOriginalFetch || initialNativeFetch || g;
 }
 
 resolveBaseFetch();
@@ -316,7 +321,8 @@ async function fetchWithTlsFallback(url, options, proxyUrl) {
     // Resolve at call time: a test may have replaced globalThis.fetch with a
     // mock after this module loaded, and only our own patched instances must
     // be skipped (see isOwnPatchedFetch).
-    return await resolveBaseFetch()(url, dispatcher ? { ...options, dispatcher, _proxyUrl: proxyUrl } : options);
+    const callOptions = dispatcher ? { ...options, dispatcher, _proxyUrl: proxyUrl, _inProxyAware: true } : { ...options, _inProxyAware: true };
+    return await resolveBaseFetch()(url, callOptions);
   } catch (err) {
     const isStrictSsl = options.strictTls === true || process.env.STRICT_SSL === "true" || process.env.STRICT_SSL === "1";
     if (!isStrictSsl && isTlsCertError(err)) {
@@ -326,7 +332,7 @@ async function fetchWithTlsFallback(url, options, proxyUrl) {
       // ponytail: in-memory insecure agent fallback for self-signed MITM corporate/antivirus certs
       console.warn(`[ProxyFetch] TLS cert verification failed (${err.cause?.code || err.code}), retrying with insecure TLS: ${url}`);
       const insecureDispatcher = await getDispatcher(proxyUrl, true);
-      return await resolveBaseFetch()(url, { ...options, dispatcher: insecureDispatcher, _proxyUrl: proxyUrl });
+      return await resolveBaseFetch()(url, { ...options, dispatcher: insecureDispatcher, _proxyUrl: proxyUrl, _inProxyAware: true });
     }
     throw err;
   }
@@ -658,6 +664,12 @@ export async function proxyAwareFetch(url, options = {}, proxyOptions = null) {
  * Patched global fetch with env-proxy support and MITM DNS bypass
  */
 async function patchedFetch(url, options = {}) {
+  if (options?._inProxyAware) {
+    const sys = globalThis.__trouterSystemFetch;
+    if (typeof sys === "function") {
+      return sys(url, options);
+    }
+  }
   return proxyAwareFetch(url, options, null);
 }
 // Tagged so a re-evaluated module, and any test that swaps globalThis.fetch,

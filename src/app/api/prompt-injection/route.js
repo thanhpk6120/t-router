@@ -55,20 +55,27 @@ export async function GET(request) {
     const params = new URL(request.url).searchParams;
     if (params.get("preview")) {
       const model = params.get("model") || "";
-      let resolvedModel = model;
+      let targetModel = model;
+      if (!model.includes("/") && variants[model]?.model) {
+        targetModel = variants[model].model;
+      }
+      let resolvedModel = targetModel;
       try {
-        if (model.includes("/")) {
-          const routed = resolveRoutableBacking(model, await getProviderNodes().catch(() => []));
+        if (targetModel.includes("/")) {
+          const routed = resolveRoutableBacking(targetModel, await getProviderNodes().catch(() => []));
           if (typeof routed === "string" && routed) resolvedModel = routed;
         }
       } catch { /* fail-open: preview with the raw input */ }
+      const bareModel = resolvedModel.includes("/")
+        ? resolvedModel.slice(resolvedModel.lastIndexOf("/") + 1)
+        : (targetModel.includes("/") ? targetModel.slice(targetModel.lastIndexOf("/") + 1) : model);
       const stack = selectPromptInjections(
         { global, byKey: userPrompts, byModel: prompts, byKeyModel: keyModelPrompts, byVariant: variants, rules, templates },
         {
           apiKeyId: params.get("keyId") || null,
           requestedModel: model,
           resolvedModel,
-          bareModel: model.includes("/") ? model.slice(model.lastIndexOf("/") + 1) : model,
+          bareModel,
         }
       );
       return NextResponse.json({ stack });
@@ -187,13 +194,18 @@ export async function DELETE(request) {
     const keyId = params.get("keyId");
     const templateId = params.get("templateId");
     const ruleId = params.get("ruleId");
+    const isGlobal = params.get("global") === "1" || params.get("global") === "true";
+    if (isGlobal) {
+      await setInjectGlobal({});
+      return NextResponse.json({ deleted: true });
+    }
     if (ruleId) return NextResponse.json({ deleted: await deleteInjectRule(ruleId) });
     if (templateId) return NextResponse.json({ deleted: await deletePromptTemplate(templateId) });
     if (variant) return NextResponse.json({ deleted: await deleteInjectVariant(variant) });
     if (model && keyId) return NextResponse.json({ deleted: await deleteInjectKeyModelPrompt(keyId, model) });
     if (model) return NextResponse.json({ deleted: await deleteInjectModelPrompt(model) });
     if (keyId) return NextResponse.json({ deleted: await deleteInjectUserPrompt(keyId) });
-    return NextResponse.json({ error: "Provide ruleId, variant, model, keyId, or templateId" }, { status: 400 });
+    return NextResponse.json({ error: "Provide global, ruleId, variant, model, keyId, or templateId" }, { status: 400 });
   } catch (error) {
     console.log("Error deleting prompt injection:", error);
     return NextResponse.json({ error: "Failed to delete prompt injection" }, { status: 500 });

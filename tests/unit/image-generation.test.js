@@ -364,7 +364,7 @@ describe("handleImageGenerationCore", () => {
 
     const fetchCall = global.fetch.mock.calls[0];
     const requestBody = JSON.parse(fetchCall[1].body);
-    expect(requestBody.model).toBe(model);
+    expect(requestBody.model).toBe("gpt-6-sol");
     expect(requestBody.tools).toEqual([
       { type: "image_generation", output_format: "png", size: "1024x1024" },
     ]);

@@ -55,21 +55,30 @@ export function classifyInjectStack(stack, { apiKeyId = null, isVariantPick = fa
   const modelish = [];
   for (const entry of stack) {
     if (!entry || typeof entry.name !== "string" || !entry.name) continue;
-    if (entry.name === "global") {
+    if (entry.name === "global" || entry.scope === "global") {
       fires.push({ key: "global", scope: "global", mode: entry.mode || "single" });
-    } else if (entry.name === "user") {
+    } else if (entry.name === "user" || entry.scope === "key") {
       fires.push({ key: `key:${apiKeyId || "?"}`, scope: "key", mode: entry.mode || "single" });
-    } else if (variantPick) {
+    } else if (entry.scope === "rule" || entry.ruleId) {
+      fires.push({ key: `rule:${entry.ruleId || entry.name}`, scope: "rule", mode: entry.mode || "single" });
+    } else if (variantPick || entry.scope === "variant") {
       fires.push({ key: `variant:${entry.name}`, scope: "variant", mode: entry.mode || "single" });
     } else {
       modelish.push(entry);
     }
   }
+  const hasKey = (name) => {
+    if (!keyModelNames) return false;
+    if (typeof keyModelNames.has === "function") return keyModelNames.has(name);
+    if (Array.isArray(keyModelNames)) return keyModelNames.includes(name);
+    if (typeof keyModelNames === "object") return Boolean(keyModelNames[name]);
+    return false;
+  };
   const loneModelish = modelish.length === 1;
   modelish.forEach((entry, i) => {
-    let scope = "model";
+    let scope = entry.scope || "model";
     if (i > 0) scope = "modelKey";
-    else if (loneModelish && keyModelNames && keyModelNames.has(entry.name)) scope = "modelKey";
+    else if (loneModelish && hasKey(entry.name)) scope = "modelKey";
     const key =
       scope === "modelKey" ? `km:${apiKeyId || "?"}::${entry.name}` : `model:${entry.name}`;
     fires.push({ key, scope, mode: entry.mode || "single" });

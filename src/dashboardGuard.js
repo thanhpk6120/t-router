@@ -48,6 +48,7 @@ const ALWAYS_PROTECTED = [
   "/api/oauth/zed/auto-import",
   "/api/oauth/minimax-code/lease",
   "/api/oauth/minimax-code-global/lease",
+  "/api/oauth/xiaomi-mimo/auto-import",
 ];
 
 // Require auth, but allow through if requireLogin is disabled
@@ -87,6 +88,7 @@ const LOCAL_ONLY_PATHS = [
   "/api/oauth/zed/auto-import",
   "/api/oauth/minimax-code/lease",
   "/api/oauth/minimax-code-global/lease",
+  "/api/oauth/xiaomi-mimo/auto-import",
   "/api/auth/reset-password",
   "/api/headroom/start",
   "/api/headroom/stop",

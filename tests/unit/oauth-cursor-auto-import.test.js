@@ -1,7 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import * as fsPromises from "fs/promises";
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync, rmSync, existsSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
+import { tmpdir } from "node:os";
 import Database from "better-sqlite3";
 
 // Mock next/server
@@ -17,13 +18,17 @@ vi.mock("next/server", () => ({
 
 // The route reads Cursor's db from homedir(); point it at a real temp dir
 // where the tests create a REAL state.vscdb with the real better-sqlite3.
-const TMP_HOME = "/tmp/cursor-autoimport-test";
-const DB_PATH = join(TMP_HOME, "Library/Application Support/Cursor/User/globalStorage/state.vscdb");
+let TMP_HOME = join(tmpdir(), "cursor-autoimport-test");
+let DB_PATH = join(TMP_HOME, "Library/Application Support/Cursor/User/globalStorage/state.vscdb");
 
-vi.mock("os", () => ({
-  default: { homedir: vi.fn(() => TMP_HOME) },
-  homedir: vi.fn(() => TMP_HOME),
-}));
+vi.mock("os", async (importOriginal) => {
+  const actual = await importOriginal();
+  return {
+    ...actual,
+    default: { ...actual, homedir: vi.fn(() => TMP_HOME) },
+    homedir: vi.fn(() => TMP_HOME),
+  };
+});
 
 // Mock fs/promises access only (probing); the db file itself is real.
 vi.mock("fs/promises", () => ({
@@ -50,6 +55,7 @@ let GET;
 
 function createDb(rows) {
   mkdirSync(join(TMP_HOME, "Library/Application Support/Cursor/User/globalStorage"), { recursive: true });
+  try { if (existsSync(DB_PATH)) unlinkSync(DB_PATH); } catch {}
   const db = new Database(DB_PATH);
   db.exec("CREATE TABLE IF NOT EXISTS itemTable (key TEXT, value TEXT)");
   const insert = db.prepare("INSERT INTO itemTable (key, value) VALUES (?, ?)");
@@ -62,7 +68,8 @@ describe("GET /api/oauth/cursor/auto-import", () => {
 
   beforeEach(async () => {
     vi.clearAllMocks();
-    rmSync(TMP_HOME, { recursive: true, force: true });
+    TMP_HOME = join(tmpdir(), `cursor-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    DB_PATH = join(TMP_HOME, "Library/Application Support/Cursor/User/globalStorage/state.vscdb");
     // Force darwin so macOS-specific logic is exercised
     Object.defineProperty(process, "platform", { value: "darwin", writable: true });
     // Re-import to pick up fresh mocks each run
@@ -72,7 +79,7 @@ describe("GET /api/oauth/cursor/auto-import", () => {
 
   afterEach(() => {
     Object.defineProperty(process, "platform", { value: originalPlatform, writable: true });
-    rmSync(TMP_HOME, { recursive: true, force: true });
+    try { rmSync(TMP_HOME, { recursive: true, force: true }); } catch {}
   });
 
   // ── macOS path probing ────────────────────────────────────────────────
