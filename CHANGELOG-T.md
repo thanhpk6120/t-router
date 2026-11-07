@@ -5,7 +5,7 @@ Upstream changelogs (`CHANGELOG.md` and `CHANGELOG-PRO.md`) are kept intact for 
 
 ---
 
-## 0.5.112-pro.23-t.3 (2026-11-08)
+## 0.5.112-pro.23-t.4 (2026-11-08)
 
 - **Vá lỗi và Tối ưu hóa Toàn diện Prompt Injection Engine**:
   - `src/lib/db/repos/promptInjectStatsRepo.js`: sửa lỗi `TypeError: keyModelNames.has is not a function` khi nhận `keyModelNames` là Array từ `chat.js`, giúp việc ghi nhận thống kê (fire stats) của các injection dạng per-model (`byKeyModel`) hoạt động trơn tru. Bổ sung hỗ trợ phân loại thống kê cho cả Rules (`scope: "rule"`, `ruleId`).
