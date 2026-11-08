@@ -5,6 +5,16 @@ Upstream changelogs (`CHANGELOG.md` and `CHANGELOG-PRO.md`) are kept intact for 
 
 ---
 
+## 0.5.112-pro.23-t.6 (2026-11-09)
+
+- **Khắc phục triệt để lỗi ngắt stream giữa chừng (Premature Stream Truncation)**:
+  - `open-sse/services/emptyFailover.js`: Bổ sung kiểm tra wrapper format `parsed.response.candidates` của Antigravity/Gemini trong `inspectSSELine`. Khắc phục tình trạng SSE chunk có nội dung nhưng router ngộ nhận là empty stream dẫn tới kích hoạt failover và ngắt kết nối giữa chừng.
+- **Tối ưu hóa Prompt Caching cho tất cả các Provider**:
+  - `open-sse/handlers/chatCore.js`: Luôn kích hoạt `anchorClaudeCache` cho tất cả request Claude khi `modelTargetFormat === FORMATS.CLAUDE`, đảm bảo các client gửi OpenAI-compatible format (DSH, Cursor, Cline) tự động tận dụng tối đa 4 cache breakpoints (system 1h, tools 1h, assistant turn 5m, tool results 5m) và hưởng lợi caching tối đa.
+  - Đảm bảo cơ chế tự động implicit/prefix caching cho OpenAI, Gemini/Antigravity, DeepSeek và Codex hoạt động chuẩn xác theo tài liệu chính thức của từng hãng.
+
+---
+
 ## 0.5.112-pro.23-t.5 (2026-11-08)
 
 - **Vá lỗi và Tối ưu hóa Toàn diện Prompt Injection Engine**:

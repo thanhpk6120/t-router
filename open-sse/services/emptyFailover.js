@@ -111,6 +111,20 @@ function inspectResponsesEvent(obj) {
 export function inspectSSELine(line) {
   const parsed = parseSSELine(line.trimStart());
   if (!parsed || parsed.done) return { content: false, finishReason: null };
+
+  // Handle Antigravity/Gemini wrapper
+  if (parsed.response && Array.isArray(parsed.response.candidates)) {
+    let content = false;
+    for (const cand of parsed.response.candidates) {
+      if (cand.content && Array.isArray(cand.content.parts)) {
+        for (const part of cand.content.parts) {
+          if (typeof part.text === "string" && part.text.trim().length > 0) content = true;
+        }
+      }
+    }
+    return { content, finishReason: null };
+  }
+
   if (typeof parsed.type === "string" && !Array.isArray(parsed.choices)) {
     return parsed.type.startsWith(RESPONSES_EVENT_PREFIX) ? inspectResponsesEvent(parsed) : inspectClaudeEvent(parsed);
   }
