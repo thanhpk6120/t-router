@@ -7,87 +7,87 @@ Upstream changelogs (`CHANGELOG.md` and `CHANGELOG-PRO.md`) are kept intact for 
 
 ## 0.5.112-pro.23-t.6 (2026-11-09)
 
-- **Khắc phục triệt để lỗi ngắt stream giữa chừng (Premature Stream Truncation)**:
-  - `open-sse/services/emptyFailover.js`: Bổ sung kiểm tra wrapper format `parsed.response.candidates` của Antigravity/Gemini trong `inspectSSELine`. Khắc phục tình trạng SSE chunk có nội dung nhưng router ngộ nhận là empty stream dẫn tới kích hoạt failover và ngắt kết nối giữa chừng.
-- **Tối ưu hóa Prompt Caching cho tất cả các Provider**:
-  - `open-sse/handlers/chatCore.js`: Luôn kích hoạt `anchorClaudeCache` cho tất cả request Claude khi `modelTargetFormat === FORMATS.CLAUDE`, đảm bảo các client gửi OpenAI-compatible format (DSH, Cursor, Cline) tự động tận dụng tối đa 4 cache breakpoints (system 1h, tools 1h, assistant turn 5m, tool results 5m) và hưởng lợi caching tối đa.
-  - Đảm bảo cơ chế tự động implicit/prefix caching cho OpenAI, Gemini/Antigravity, DeepSeek và Codex hoạt động chuẩn xác theo tài liệu chính thức của từng hãng.
+- **Comprehensive Fix for Premature Stream Truncation**:
+  - `open-sse/services/emptyFailover.js`: Added support for inspecting Antigravity/Gemini wrapper format `parsed.response.candidates` in `inspectSSELine`. Fixes the issue where live streaming chunks with valid text content were misidentified as empty streams, which incorrectly triggered combo failovers and prematurely severed client SSE streams mid-generation.
+- **Maximum Prompt Caching Optimization Across All Providers**:
+  - `open-sse/handlers/chatCore.js`: Explicitly enforce `anchorClaudeCache` whenever `modelTargetFormat === FORMATS.CLAUDE` (instead of only applying to native Claude client tools), ensuring OpenAI-compatible clients (DSH, Cursor, Cline) automatically utilize all 4 caching breakpoints (system 1h, tools 1h, assistant turn 5m, tool results 5m) for maximum cache hit rates.
+  - Verified and ensured native prefix/implicit caching alignment for OpenAI, Google Gemini/Antigravity, DeepSeek, and Codex based on official vendor specifications without intrusive parameter alterations.
 
 ---
 
 ## 0.5.112-pro.23-t.5 (2026-11-08)
 
-- **Vá lỗi và Tối ưu hóa Toàn diện Prompt Injection Engine**:
-  - `src/lib/db/repos/promptInjectStatsRepo.js`: sửa lỗi `TypeError: keyModelNames.has is not a function` khi nhận `keyModelNames` là Array từ `chat.js`, giúp việc ghi nhận thống kê (fire stats) của các injection dạng per-model (`byKeyModel`) hoạt động trơn tru. Bổ sung hỗ trợ phân loại thống kê cho cả Rules (`scope: "rule"`, `ruleId`).
-  - `src/lib/db/repos/promptInjectRepo.js`: đính kèm metadata `scope` và `ruleId` cho từng entry trong stack của `selectPromptInjectionsDetailed`.
-  - `src/app/api/prompt-injection/route.js`: hỗ trợ RESTful DELETE cho global injection (`DELETE /api/prompt-injection?global=1`).
-  - `src/app/api/prompt-injection/route.js`: đồng bộ Stack Preview cho Variant bằng cách phân giải backing model (`resolvedModel`, `bareModel`), giúp hiển thị chính xác các Rule nhắm vào backing model đồng nhất với runtime chat (`chat.js`).
-  - `tests/unit/prompt-inject-audit.test.js`: bổ sung bộ test suite toàn diện 20 test cases cho Prompt Injection Engine (classify, select, variants, sampling overrides, wire injections, CRUD repos, API endpoints), chạy cô lập hoàn toàn trong thư mục tạm.
-- **Bảo mật và Khắc phục Lỗi Hệ thống**:
-  - `custom-server.js`: lọc bỏ các header nội bộ giả mạo từ bên ngoài (`x-allow-disabled`, `x-9r-cli-token`).
-  - `src/lib/network/proxyTest.js`: vá triệt để lỗ hổng SSRF khi kiểm tra proxy, chặn đứng mọi request trỏ tới loopback/link-local/metadata IP.
-  - `src/lib/providerConnectionResponse.js`: che giấu bảo mật proxy credentials (`username:password`) và các token nhạy cảm trước khi trả về client.
-  - `scripts/t-router-publisher.js` & `server-monitor-bot-index.js`: kiểm tra định dạng và sanitize nghiêm ngặt ngăn chặn Command Injection / RCE.
-  - `src/shared/components/ChangelogModal.js`: lọc DOM XSS qua `DOMPurify.sanitize` trước khi render markdown.
-  - `open-sse/services/emptyFailover.js`: khắc phục lỗi Anti-Empty Guard chặn nhầm failover khi upstream stream rỗng.
-  - `open-sse/utils/proxyFetch.js`: ngăn ngừa đệ quy vô hạn `RangeError: Maximum call stack size exceeded`.
-  - `src/sse/services/model.js`: loại bỏ hoàn toàn N+1 database queries khi kiểm tra model disabled.
-  - Cấp 8GB heap memory Node.js (`--max-old-space-size=8192`) trong `package.json`, `cli/scripts/build-cli.js` và `sync-and-upgrade.sh` chống tràn RAM khi compile Webpack.
-  - `.github/workflows/ci.yml`: tạo CI workflow chuẩn tự động chạy lint, build và full test suite trên GitHub Actions.
-  - Chuẩn hóa Dockerfile & docker-compose.yml cho t-router độc lập.
-
-## 0.5.112-pro.23-t.2 (2026-11-07)
-
-- **Chặn và lọc toàn diện model đã bị disable (Disabled Models Enforcement)**:
-  - `src/sse/services/model.js`: bổ sung `isModelDisabled(modelStr, options)` hỗ trợ kiểm tra đa tầng (provider alias, providerId, custom node prefix, variant backing model, và combo mà mọi model con đều bị disabled) cùng `filterActiveComboModels(models, options)` lọc sạch danh sách combo member.
-  - `src/sse/handlers/chat.js`: chặn request gọi trực tiếp tới model bị disabled (`handleChat` và `handleSingleModelChat`), trả về HTTP 404 Not Found rõ ràng (bỏ qua nếu có header nội bộ `x-allow-disabled: 1`).
-  - `src/sse/services/comboDispatch.js`: tự động lọc bỏ các model bị disabled khỏi `comboModels` và `augmentedModels`. Nếu tất cả model trong combo đều bị disabled, trả về HTTP 404 `All models in combo are disabled`.
-  - `src/app/api/v1/models/route.js`: ẩn các model bị disabled khỏi danh sách `/v1/models`, ẩn các variant có backing model bị disabled, và ẩn các combo mà toàn bộ model thành viên đều bị disabled; đồng thời tính capabilities combo chỉ dựa trên các thành viên còn active.
-  - `src/app/api/v1/models/info/route.js`: trả về HTTP 404 cho metadata của model bị disabled.
-  - `src/app/api/models/route.js`: lọc bỏ các custom models bị disabled khi query không có cờ `includeDisabled`.
-  - `src/app/api/combos/test/route.js`: đánh dấu status `"disabled"` rõ ràng cho các member bị disable trong combo test mà không gọi probe tốn tài nguyên.
-  - `src/app/(dashboard)/dashboard/combos/page.js`: giao diện Combo Test Modal hiển thị trạng thái `disabled` với icon block và nhãn xám skipped.
-- **Tối ưu layout giao diện Dashboard Usage**:
-  - `src/shared/components/UsageStats.js`: chia đều 2 panel (Providers và Recent Requests) với tỷ lệ 50% / 50% (`lg:grid-cols-2`), đồng thời mở rộng độ rộng cột Model (`max-w-0 w-full`) tránh bị cắt ngắn tên model.
-- **Unit Testing**:
-  - Bổ sung bộ kiểm thử `tests/unit/disabled-models.test.js` kiểm tra đầy đủ 13 kịch bản: phát hiện disabled qua providerAlias, providerId, variants, combos, lọc combo members, và các static guards qua toàn bộ routes.
+- **Prompt Injection Engine Hardening & Enhancements**:
+  - `src/lib/db/repos/promptInjectStatsRepo.js`: Fixed `TypeError: keyModelNames.has is not a function` when receiving `keyModelNames` as an Array from `chat.js`, ensuring per-model fire stats collection operates reliably. Added classification support for Rules (`scope: "rule"`, `ruleId`).
+  - `src/lib/db/repos/promptInjectRepo.js`: Attached `scope` and `ruleId` metadata for each entry in the injection stack returned by `selectPromptInjectionsDetailed`.
+  - `src/app/api/prompt-injection/route.js`: Added RESTful DELETE support for global injections (`DELETE /api/prompt-injection?global=1`).
+  - `src/app/api/prompt-injection/route.js`: Synchronized Stack Preview for Variants by resolving backing models (`resolvedModel`, `bareModel`), ensuring rules targeting backing models match the runtime behavior in `chat.js`.
+  - `tests/unit/prompt-inject-audit.test.js`: Added a comprehensive 20-case test suite covering classify, select, variants, sampling overrides, wire injections, CRUD repositories, and API endpoints running in an isolated environment.
+- **Security & Reliability Hardening**:
+  - `custom-server.js`: Stripped spoofable internal headers from external requests (`x-allow-disabled`, `x-9r-cli-token`).
+  - `src/lib/network/proxyTest.js`: Patched SSRF vulnerability during proxy validation, blocking all requests targeting loopback, link-local, or cloud metadata IPs.
+  - `src/lib/providerConnectionResponse.js`: Redacted sensitive proxy credentials (`username:password`) and authentication tokens before returning responses to the client.
+  - `scripts/t-router-publisher.js` & `server-monitor-bot-index.js`: Enforced strict format validation and sanitization against Command Injection / RCE.
+  - `src/shared/components/ChangelogModal.js`: Sanitized rendered markdown with `DOMPurify.sanitize` to prevent DOM XSS.
+  - `open-sse/services/emptyFailover.js`: Resolved an Anti-Empty Guard edge case that blocked failover when upstream streams were genuinely empty.
+  - `open-sse/utils/proxyFetch.js`: Prevented infinite recursion and `RangeError: Maximum call stack size exceeded`.
+  - `src/sse/services/model.js`: Eliminated N+1 database queries when checking disabled models.
+  - Allocated 8GB Node.js heap memory (`--max-old-space-size=8192`) across `package.json`, `cli/scripts/build-cli.js`, and `sync-and-upgrade.sh` to prevent OOM crashes during Webpack compilation.
+  - `.github/workflows/ci.yml`: Created standard CI workflow running lint, build, and tests on GitHub Actions.
+  - Standardized Dockerfile and docker-compose.yml for standalone T Router deployments.
 
 ---
 
-## Đồng bộ bản vá từ upstream 9router 0.5.112 và 9router-pro 0.5.109-pro.23 (2026-11-06)
+## 0.5.112-pro.23-t.2 (2026-11-07)
+
+- **Disabled Models Multi-Tier Enforcement**:
+  - `src/sse/services/model.js`: Added `isModelDisabled(modelStr, options)` supporting multi-tier checking (provider alias, providerId, custom node prefix, variant backing models, and combos with all child models disabled) alongside `filterActiveComboModels(models, options)` for sanitizing combo members.
+  - `src/sse/handlers/chat.js`: Blocked direct chat requests to disabled models (`handleChat` and `handleSingleModelChat`), returning a clean HTTP 404 Not Found (bypassable only via internal probe header `x-allow-disabled: 1`).
+  - `src/sse/services/comboDispatch.js`: Automatically filtered out disabled models from `comboModels` and `augmentedModels`. If all models in a combo are disabled, returns HTTP 404 `All models in combo are disabled`.
+  - `src/app/api/v1/models/route.js`: Hid disabled models from `/v1/models`, hid variants with disabled backing models, and hid combos whose member models are all disabled. Aggregated combo capabilities based strictly on active members.
+  - `src/app/api/v1/models/info/route.js`: Returned HTTP 404 for disabled model metadata.
+  - `src/app/api/models/route.js`: Filtered out disabled custom models when query lacks `includeDisabled=1`.
+  - `src/app/api/combos/test/route.js`: Explicitly marked disabled members with `"disabled"` status in combo tests without wasting probe resources.
+  - `src/app/(dashboard)/dashboard/combos/page.js`: Updated Combo Test Modal to display `disabled` state with a block icon and gray badge.
+- **Dashboard Usage UI Optimization**:
+  - `src/shared/components/UsageStats.js`: Balanced the two main panels (Providers and Recent Requests) to an equal 50% / 50% split (`lg:grid-cols-2`) and expanded the Model column width (`max-w-0 w-full`) to prevent model names from being truncated.
+- **Unit Testing**:
+  - Added `tests/unit/disabled-models.test.js` covering 13 test scenarios: disabled detection via providerAlias, providerId, variants, combos, member filtering, and route-level guards.
+
+---
+
+## Upstream Sync from 9router 0.5.112 and 9router-pro 0.5.109-pro.23 (2026-11-06)
 
 - **Security & Masking**:
-  - Tích hợp `src/shared/utils/maskApiKey.js` dùng chung giữa usageRepo, webhookEvents và Dashboard, bảo đảm không lộ full API key.
-  - Cập nhật `open-sse/utils/requestLogger.js` (maskSensitiveHeaders) che giấu token/cookie thực tế trong logs (`[REDACTED]`).
-  - Lọc bỏ `mitmSudoEncrypted` khỏi response GET và PATCH trong `src/app/api/settings/route.js`.
-  - Cập nhật `src/app/api/shutdown/route.js` dùng `await headers()` tương thích Next.js 15.
-  - Cập nhật `src/app/api/settings/database/route.js` trả về HTTP 500 khi server restore lỗi.
-  - Cập nhật `src/app/api/notifications/route.js` trả về HTTP 404 khi không tìm thấy notification cần đánh dấu đã đọc.
-  - Cập nhật `src/lib/auth/oidc.js` với hằng số `OIDC_FETCH_TIMEOUT_MS = 15000` (15s timeout cho tất cả OIDC discovery/token/probe calls).
-
+  - Integrated shared `src/shared/utils/maskApiKey.js` across usageRepo, webhookEvents, and Dashboard to prevent full API key exposure.
+  - Updated `open-sse/utils/requestLogger.js` (maskSensitiveHeaders) to redact sensitive tokens/cookies in logs with `[REDACTED]`.
+  - Stripped `mitmSudoEncrypted` from GET and PATCH responses in `src/app/api/settings/route.js`.
+  - Updated `src/app/api/shutdown/route.js` using `await headers()` compatible with Next.js 15.
+  - Updated `src/app/api/settings/database/route.js` to return HTTP 500 upon server restore errors.
+  - Updated `src/app/api/notifications/route.js` to return HTTP 404 when target notification is not found.
+  - Updated `src/lib/auth/oidc.js` with `OIDC_FETCH_TIMEOUT_MS = 15000` (15s timeout for OIDC discovery/token/probe calls).
 - **Executors & Upstream Wire Updates**:
-  - Cập nhật `open-sse/executors/opencode.js` và `opencode-zen.js`: chuẩn hóa User-Agent 2.2.5 (`opencode/latest/2.2.5/cli`), bổ sung cặp session affinity headers (`x-session-affinity`, `x-session-id`), loại bỏ `x-opencode-request` (chống lỗi 403 FreeTierError), cập nhật bộ validator version cho major >= 2.
-  - Cập nhật `open-sse/executors/gemini-web.js`: trả về HTTP 401 khi session hết hạn hoặc trang redirect sang trang đăng nhập Google (accounts.google.com/signin), giúp account fallback chuyển sang tài khoản khác thay vì báo lỗi 400.
-  - Cập nhật `open-sse/executors/base.js`: kiểm tra `connectCtrl.signal.aborted` trước khi thực hiện retry nhằm fail-fast ngay khi gặp connect timeout, tránh lặp lại request làm treo kết nối.
-  - Cập nhật `open-sse/services/lazyRuntime.js`: thêm hàm `normalizeDep` chuẩn hóa import `playwright-core` (xử lý export chromium trên default của CJS module trong môi trường ESM), giữ nguyên tên package và thư mục `t-router-runtime`.
-  - Cập nhật `open-sse/services/webLogin.js`: bổ sung cờ `--no-sandbox` khi khởi chạy browser, hỗ trợ môi trường root/VPS Linux.
-
+  - Updated `open-sse/executors/opencode.js` and `opencode-zen.js`: Standardized User-Agent 2.2.5 (`opencode/latest/2.2.5/cli`), added session affinity headers (`x-session-affinity`, `x-session-id`), removed `x-opencode-request` (preventing 403 FreeTierError), and updated version validator for major >= 2.
+  - Updated `open-sse/executors/gemini-web.js`: Returned HTTP 401 when session expires or redirects to Google login (`accounts.google.com/signin`), allowing account fallback to engage smoothly.
+  - Updated `open-sse/executors/base.js`: Verified `connectCtrl.signal.aborted` before retrying to fail-fast upon connection timeout.
+  - Updated `open-sse/services/lazyRuntime.js`: Added `normalizeDep` to standardize `playwright-core` imports under ESM, maintaining `t-router-runtime` package and directory naming.
+  - Updated `open-sse/services/webLogin.js`: Added `--no-sandbox` browser flag for headless Linux/VPS root environments.
 - **Rotation & Combo Resilience**:
-  - Cập nhật `open-sse/config/runtimeConfig.js`: bổ sung `envMsAllowZero`, cho phép biến `COMBO_FIRST_RESPONSE_TIMEOUT_MS` nhận giá trị `= 0` để tắt timer timeout thành viên.
-  - Cập nhật `open-sse/services/combo.js` và `src/sse/handlers/chat.js`: kết nối `request.signal` của client với timer của từng member thông qua `AbortSignal.any`, ngắt ngay upstream khi client disconnect (trả về 499) thay vì tiếp tục thử phí phạm các model tiếp theo.
-  - Cập nhật `src/sse/services/auth.js` với đầy đủ các bản vá:
-    - **C-3**: Giải phóng sticky selection mutex trước khi sleep trong cơ chế small-fleet rescue để không chặn các request đồng thời khác.
-    - **C-4**: Chỉ xóa sticky current route khi tài khoản thực sự bị khóa sau khi đã xác định `shouldFallback = true`.
-    - **C-5**: Tính cooldown lũy tiến `max(executorResetMs, blindBackoffMs)` và duy trì leo thang cấp độ backoff.
-    - **C-6**: Bỏ qua các account đã bị loại trừ (`excludeSet`) khi tính toán thời gian giải cứu small-fleet rescue.
-    - **C-7**: Ghép đôi connection với thời điểm hết hạn chính xác (`lockedByExpiry`) thay vì lấy phần tử đầu tiên theo thứ tự DB.
-    - **Bảo toàn**: Giữ nguyên vẹn logic Proxy Pools nâng cao của t-router (`rotateLink`, `triggerBackgroundRotate`, proxy pools theo provider/connection, auto-rotate trên 429/403).
-
+  - Updated `open-sse/config/runtimeConfig.js`: Added `envMsAllowZero`, permitting `COMBO_FIRST_RESPONSE_TIMEOUT_MS=0` to disable member timeout timers.
+  - Updated `open-sse/services/combo.js` and `src/sse/handlers/chat.js`: Connected client `request.signal` to individual member timers using `AbortSignal.any`, instantly terminating upstreams upon client disconnect (HTTP 499).
+  - Updated `src/sse/services/auth.js` with comprehensive patches:
+    - **C-3**: Released sticky selection mutex before sleep in small-fleet rescue to avoid blocking concurrent requests.
+    - **C-4**: Cleared sticky current route only when an account is actually locked following `shouldFallback = true`.
+    - **C-5**: Computed progressive cooldown `max(executorResetMs, blindBackoffMs)` and maintained escalated backoff tiers.
+    - **C-6**: Excluded disqualified accounts (`excludeSet`) when calculating rescue delays.
+    - **C-7**: Paired connections with exact expiry timestamps (`lockedByExpiry`) rather than picking the first DB record.
+    - **Preservation**: Retained T Router's advanced Proxy Pools architecture (`rotateLink`, `triggerBackgroundRotate`, per-provider/connection pools, auto-rotate on 429/403).
 - **UI & Routes**:
-  - Cập nhật `src/app/(dashboard)/dashboard/basic-chat/BasicChatPageClient.js`: chuyển hướng gửi chat sang endpoint chuẩn `/v1/chat/completions`, tích hợp dropdown chọn API Key trực tiếp trên giao diện chat, loại bỏ hoàn toàn các thông tin donate/tele/author.
-  - Thêm helper `src/lib/compatibleModels.js` và cập nhật `src/app/api/providers/[id]/models/route.js`, `test-models/route.js`, `compatible-models/route.js` loại bỏ hoàn toàn HTTP self-fetch.
-  - Thêm `src/shared/utils/testErrorStage.js` phân loại trạng thái lỗi kiểm tra nhà cung cấp và model.
-  - Bổ sung `src/app/api/monitoring/route.js` và `src/app/(dashboard)/dashboard/MonitoringPageClient.js` (cùng route `/dashboard/monitoring`) hỗ trợ theo dõi hiệu năng hệ thống, tài nguyên và lưu lượng mạng theo chuẩn Azure theme của t-router.
+  - Updated `src/app/(dashboard)/dashboard/basic-chat/BasicChatPageClient.js`: Directed chat requests to standard `/v1/chat/completions`, integrated inline API Key dropdown selector, and removed third-party donation/channel metadata.
+  - Added helper `src/lib/compatibleModels.js` and updated provider routes to eliminate HTTP self-fetch loops.
+  - Added `src/shared/utils/testErrorStage.js` for granular error classification across providers and models.
+  - Added `src/app/api/monitoring/route.js` and `/dashboard/monitoring` supporting system telemetry, resources, and network monitoring styled with T Router's Azure theme.
+
 
 ---
 
