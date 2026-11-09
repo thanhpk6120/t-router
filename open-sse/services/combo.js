@@ -563,13 +563,19 @@ export async function handleComboChat({
         } catch (peekErr) {
           // peekStreamForContent is written not to throw; if reconstruction/Response
           // construction ever does, result.body is already locked by getReader() and can no
-          // longer be streamed. Returning `result` would hand the client a locked, unreadable
-          // body. Degrade to a clean, valid (empty) SSE stream instead.
-          log.warn("COMBO", `empty-peek error on ${modelStr}, returning empty SSE: ${peekErr?.message || peekErr}`);
-          return new Response("data: [DONE]\n\n", {
-            status: 200,
-            headers: { "Content-Type": "text/event-stream" },
-          });
+          // longer be streamed. If there are more models in the combo, fall through to next.
+          const isLast = i === rotatedModels.length - 1;
+          if (isLast) {
+            log.warn("COMBO", `empty-peek error on ${modelStr}, returning empty SSE: ${peekErr?.message || peekErr}`);
+            return new Response("data: [DONE]\n\n", {
+              status: 200,
+              headers: { "Content-Type": "text/event-stream" },
+            });
+          }
+          log.warn("COMBO", `empty-peek error on ${modelStr}, falling through to next candidate: ${peekErr?.message || peekErr}`);
+          lastError = peekErr?.message || "empty-peek error";
+          lastStatus = 502;
+          continue;
         }
 
         if (!peeked) {
@@ -647,7 +653,17 @@ export async function handleComboChat({
           lastStatus = 504;
           continue;
         }
-        return result;
+        if (signal?.aborted) {
+          return result;
+        }
+        const isLast = i === rotatedModels.length - 1;
+        if (isLast) {
+          return result;
+        }
+        log.warn("COMBO", `Model ${modelStr} connection closed (499) — client still waiting, falling back to next combo model`);
+        lastError = "Upstream connection closed";
+        lastStatus = 502;
+        continue;
       }
 
       // Extract error info from response
@@ -671,61 +687,54 @@ export async function handleComboChat({
         try { errorText = JSON.stringify(errorText); } catch { errorText = String(errorText); }
       }
 
-      // Check if should fallback to next model
+      // Check if error is request-scoped (e.g. 400 validation, unsupported parameter)
       const { provider } = parseModel(modelStr);
-      const { shouldFallback, cooldownMs, requestScoped } = checkFallbackError(result.status, errorText, 0, provider);
+      const { requestScoped } = checkFallbackError(result.status, errorText, 0, provider);
 
-      if (!shouldFallback && !requestScoped) {
-        log.warn("COMBO", `Model ${modelStr} failed (${result.status}${log.describeStatus?.(result.status) ? ` ${log.describeStatus(result.status)}` : ""}) — no fallback`);
-        return result;
-      }
-
-      // A request-scoped 4xx (validation failure, unsupported parameter, context
-      // overflow) says this member cannot serve THIS request — not that the
-      // credential is unhealthy. Members run on different providers with
-      // different validation, so the next member may well serve it. Advance
-      // without a cooldown, and without waiting: there is nothing to recover.
-      // checkFallbackError() reports no account fallback here on purpose (a
-      // request-scoped fault must not evict a healthy account from rotation).
-      if (requestScoped) {
-        log.warn("COMBO", `Model ${modelStr} rejected the request (${result.status}${log.describeStatus?.(result.status) ? ` ${log.describeStatus(result.status)}` : ""}), trying next`);
-        lastError = errorText || String(result.status);
-        // Status and message must come from the SAME (latest) member: the
-        // old `if (!lastStatus)` guard kept the first member's status while
-        // lastError kept being overwritten, pairing e.g. a 400 status with
-        // a 429 message and misfiring status-keyed retries.
-        lastStatus = result.status;
+      // A request-scoped 4xx says this member cannot serve THIS request —
+      // track it so if ALL members fail, the first request-scoped failure
+      // (status and body) is returned to the client.
+      if ((result.status >= 400 && result.status < 500 && result.status !== 429) || requestScoped) {
         if (!requestScopedResult) requestScopedResult = result;
-        continue;
       }
 
-      // For transient errors (503/502/504), wait for cooldown before falling through
-      // so a briefly-overloaded provider gets a chance to recover rather than being
-      // skipped immediately (fixes: combo falls through on transient 503)
-      if (cooldownMs && cooldownMs > 0 && cooldownMs <= 5000 &&
-          (result.status === 503 || result.status === 502 || result.status === 504)) {
-        log.info("COMBO", `Model ${modelStr} busy (${result.status}), waiting ${log.fmtDuration?.(cooldownMs) || `${cooldownMs}ms`} before next`);
-        await new Promise(r => setTimeout(r, cooldownMs));
-      }
-
-      // Fallback to next model
+      // Fallback to next combo model: ANY failure on a non-final candidate
+      // must advance to the next candidate rather than stopping early.
+      const isLast = i === rotatedModels.length - 1;
       lastError = errorText || String(result.status);
       lastStatus = result.status;
-      log.warn("COMBO", `Model ${modelStr} failed (${result.status}${log.describeStatus?.(result.status) ? ` ${log.describeStatus(result.status)}` : ""}), trying next`);
-    } catch (error) {
-      if (error?.name === "AbortError" && !attemptController?.signal.aborted) {
-        return new Response(
-          JSON.stringify({ error: { message: "Request aborted" } }),
-          { status: 499, headers: { "Content-Type": "application/json" } },
-        );
+
+      if (!isLast) {
+        log.warn("COMBO", `Model ${modelStr} failed (${result.status}${log.describeStatus?.(result.status) ? ` ${log.describeStatus(result.status)}` : ""}) — falling back to next combo model`);
+        continue;
       }
-      if (error?.name === "AbortError" && attemptController?.signal.aborted) {
-        if (comboStrategy === "smart" && sessionId && modelStr === activeStickyModel) {
-          clearStickyComboSession(comboName, sessionId);
+    } catch (error) {
+      if (error?.name === "AbortError") {
+        if (attemptController?.signal.aborted) {
+          if (comboStrategy === "smart" && sessionId && modelStr === activeStickyModel) {
+            clearStickyComboSession(comboName, sessionId);
+          }
+          lastError = `First response timed out after ${attemptBudgetMs}ms`;
+          lastStatus = 504;
+          log.warn("COMBO", `Model ${modelStr} first response timed out after ${attemptBudgetMs}ms — trying next`, { error: lastError });
+          continue;
         }
-        lastError = `First response timed out after ${attemptBudgetMs}ms`;
-        lastStatus = 504;
-        log.warn("COMBO", `Model ${modelStr} first response timed out after ${attemptBudgetMs}ms — trying next`, { error: lastError });
+        if (signal?.aborted) {
+          return new Response(
+            JSON.stringify({ error: { message: "Request aborted" } }),
+            { status: 499, headers: { "Content-Type": "application/json" } },
+          );
+        }
+        const isLast = i === rotatedModels.length - 1;
+        if (isLast) {
+          return new Response(
+            JSON.stringify({ error: { message: error.message || "Request aborted" } }),
+            { status: 499, headers: { "Content-Type": "application/json" } },
+          );
+        }
+        lastError = error.message || "Upstream fetch aborted";
+        lastStatus = 502;
+        log.warn("COMBO", `Model ${modelStr} upstream fetch aborted — client still connected, trying next`, { error: lastError });
         continue;
       }
       // Catch unexpected exceptions to ensure fallback continues

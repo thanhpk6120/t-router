@@ -282,7 +282,7 @@ async function handleChatImpl(request, clientRawRequest = null, requestId = null
     return handleComboChat({
       body,
       models: candidates,
-      handleSingleModel: withBreakerSuccess((b, m) => handleSingleModelChat(b, m, clientRawRequest, request, apiKey, null, modelStr, resolveComboMemberAttemptCap(settings))),
+      handleSingleModel: withBreakerSuccess((b, m, sig) => handleSingleModelChat(b, m, clientRawRequest, request, apiKey, null, modelStr, resolveComboMemberAttemptCap(settings), sig || request?.signal)),
       log,
       comboName: modelStr,
       comboStrategy: "fallback",
@@ -336,7 +336,7 @@ async function handleChatImpl(request, clientRawRequest = null, requestId = null
       models: soloAugmented,
       handleSingleModel: withCapacityAdapterStripping(
         withBreakerSuccess(
-          (b, m) => handleSingleModelChat(b, m, clientRawRequest, request, apiKey, null, soloInjectName(m), resolveComboMemberAttemptCap(settings), request?.signal),
+          (b, m, sig) => handleSingleModelChat(b, m, clientRawRequest, request, apiKey, null, soloInjectName(m), resolveComboMemberAttemptCap(settings), sig || request?.signal),
           (m) => soloVariantBacking(m) || m,
         ),
         adapterAdded,

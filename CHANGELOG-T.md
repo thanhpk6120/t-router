@@ -5,6 +5,19 @@ Upstream changelogs (`CHANGELOG.md` and `CHANGELOG-PRO.md`) are kept intact for 
 
 ---
 
+## 0.5.112-pro.23-t.8 (2026-11-09)
+
+- **Universal Model Fallback in Combos**:
+  - `open-sse/services/combo.js`: Removed the restriction that only specific status codes (`shouldFallback`) could trigger a failover in combo execution. Any error code (including 400 Bad Request, 401 Unauthorized, 403 Forbidden, 404 Not Found, 405 Method Not Allowed, 418, 422, 429 Too Many Requests, 500, 502, 503, 504, 520, or network TypeError) on a non-final candidate now immediately fails over to the next candidate model in the combo instead of halting execution.
+  - `open-sse/services/combo.js`: Removed the arbitrary up-to-5s `cooldownMs` sleep delay between candidate attempts on server errors, making failovers instantaneous.
+  - `open-sse/services/combo.js`: Fixed status `499` handling to only abort if the client request was genuinely aborted (`signal?.aborted`). Upstream network drops/hangs on non-final candidates now smoothly advance to the next candidate.
+  - `open-sse/services/combo.js`: Preserved `requestScopedResult` so if every candidate in a combo fails, the first actionable client error (e.g. 400 validation error) is returned to the client for debugging.
+  - `src/sse/services/comboDispatch.js` & `src/sse/handlers/chat.js`: Ensured attempt-scoped `abortSignal` is properly forwarded into `handleSingleModelChat`.
+- **Testing**:
+  - `tests/unit/combo-universal-fallback.test.js`: Added 18 comprehensive tests covering all error status codes, abort handling, network errors, and request-scoped failure reporting.
+
+---
+
 ## 0.5.112-pro.23-t.7 (2026-11-09)
 
 - **Provider Account Fallback & Breaker Isolation**:
