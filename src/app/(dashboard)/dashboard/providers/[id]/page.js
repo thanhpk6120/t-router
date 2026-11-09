@@ -411,7 +411,7 @@ export default function ProviderDetailPage() {
       }
       // Load per-provider strategy override
       const override = (settingsData.providerStrategies || {})[providerId] || {};
-      setProviderStrategy(override.fallbackStrategy || null);
+      setProviderStrategy(override.fallbackStrategy || "fill-first");
       setProviderStickyLimit(override.stickyRoundRobinLimit != null ? String(override.stickyRoundRobinLimit) : "1");
       // Load per-provider thinking config
       const thinkingCfg = (settingsData.providerThinking || {})[providerId] || {};
@@ -500,11 +500,7 @@ export default function ProviderDetailPage() {
 
       // Build override preserving existing proxyPoolId and rotation settings
       const override = { ...(current[providerId] || {}) };
-      if (strategy) {
-        override.fallbackStrategy = strategy;
-      } else {
-        delete override.fallbackStrategy;
-      }
+      override.fallbackStrategy = strategy || "fill-first";
       if (strategy === "round-robin" && stickyLimit !== "") {
         override.stickyRoundRobinLimit = Number(stickyLimit) || 3;
       } else {
@@ -512,11 +508,7 @@ export default function ProviderDetailPage() {
       }
 
       const updated = { ...current };
-      if (Object.keys(override).length === 0) {
-        delete updated[providerId];
-      } else {
-        updated[providerId] = override;
-      }
+      updated[providerId] = override;
 
       await fetch("/api/settings", {
         method: "PATCH",
@@ -529,7 +521,7 @@ export default function ProviderDetailPage() {
   };
 
   const handleRoundRobinToggle = (enabled) => {
-    const strategy = enabled ? "round-robin" : null;
+    const strategy = enabled ? "round-robin" : "fill-first";
     const sticky = enabled ? (providerStickyLimit || "1") : providerStickyLimit;
     if (enabled && !providerStickyLimit) setProviderStickyLimit("1");
     setProviderStrategy(strategy);
@@ -1091,21 +1083,21 @@ export default function ProviderDetailPage() {
     // Optimistic update state
     const newConnections = [...connections];
     [newConnections[index1], newConnections[index2]] = [newConnections[index2], newConnections[index1]];
+    // Explicitly update priority property on items
+    newConnections.forEach((conn, idx) => {
+      conn.priority = idx + 1;
+    });
     setConnections(newConnections);
 
     try {
-      await Promise.all([
-        fetch(`/api/providers/${newConnections[index1].id}`, {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ priority: index1 }),
+      await fetch("/api/providers/reorder", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          provider: providerId,
+          connectionIds: newConnections.map((c) => c.id),
         }),
-        fetch(`/api/providers/${newConnections[index2].id}`, {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ priority: index2 }),
-        }),
-      ]);
+      });
     } catch (error) {
       console.log("Error swapping priority:", error);
       await fetchConnections();

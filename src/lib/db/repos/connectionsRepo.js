@@ -112,7 +112,12 @@ export async function getProviderConnections(filter = {}) {
   const sql = `SELECT * FROM providerConnections${where.length ? ` WHERE ${where.join(" AND ")}` : ""}`;
   const rows = db.all(sql, params);
   const list = rows.map(rowToConn);
-  list.sort((a, b) => (a.priority || 999) - (b.priority || 999));
+  list.sort((a, b) => {
+    const pA = a.priority != null ? a.priority : 999;
+    const pB = b.priority != null ? b.priority : 999;
+    if (pA !== pB) return pA - pB;
+    return new Date(a.createdAt || 0) - new Date(b.createdAt || 0);
+  });
   return list;
 }
 
@@ -132,7 +137,12 @@ export async function getUsageEligibleConnections(usageProviders, apikeyProvider
     : `SELECT * FROM providerConnections WHERE provider IN (${usagePlaceholders}) AND authType = 'oauth'`;
   const rows = db.all(sql, [...usage, ...apikey]);
   const list = rows.map(rowToConn);
-  list.sort((a, b) => (a.priority || 999) - (b.priority || 999));
+  list.sort((a, b) => {
+    const pA = a.priority != null ? a.priority : 999;
+    const pB = b.priority != null ? b.priority : 999;
+    if (pA !== pB) return pA - pB;
+    return new Date(a.createdAt || 0) - new Date(b.createdAt || 0);
+  });
   return list;
 }
 
@@ -206,7 +216,7 @@ export async function getProviderConnectionsPage({ provider, page = 1, pageSize 
   const safePage = Math.max(1, Math.floor(page) || 1);
   const safeSize = Math.min(500, Math.max(1, Math.floor(pageSize) || 100));
   const rows = db.all(
-    `SELECT * FROM providerConnections${whereSql} ORDER BY priority ASC, createdAt ASC LIMIT ? OFFSET ?`,
+    `SELECT * FROM providerConnections${whereSql} ORDER BY CASE WHEN priority IS NULL THEN 999 ELSE priority END ASC, createdAt ASC LIMIT ? OFFSET ?`,
     [...params, safeSize, (safePage - 1) * safeSize],
   );
   return { connections: rows.map(rowToConn), total, page: safePage, pageSize: safeSize };
@@ -312,13 +322,14 @@ export async function getBoundProxyPoolIds() {
 function reorderInTx(db, providerId) {
   const list = db.all(`SELECT * FROM providerConnections WHERE provider = ?`, [providerId]).map(rowToConn);
   list.sort((a, b) => {
-    const pDiff = (a.priority || 0) - (b.priority || 0);
-    if (pDiff !== 0) return pDiff;
-    return new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0);
+    const pA = a.priority != null ? a.priority : 999;
+    const pB = b.priority != null ? b.priority : 999;
+    if (pA !== pB) return pA - pB;
+    return new Date(a.createdAt || 0) - new Date(b.createdAt || 0);
   });
   list.forEach((c, i) => {
     const want = i + 1;
-    if ((c.priority || 0) !== want) {
+    if (c.priority !== want) {
       db.run(`UPDATE providerConnections SET priority = ? WHERE id = ?`, [want, c.id]);
     }
   });
@@ -514,9 +525,38 @@ export async function deleteProviderConnectionsByProvider(providerId) {
   return deleted;
 }
 
-export async function reorderProviderConnections(providerId) {
+export async function reorderProviderConnections(providerId, orderedConnectionIds = null) {
   const db = await getAdapter();
-  db.transaction(() => reorderInTx(db, providerId));
+  let updatedCount = 0;
+  db.transaction(() => {
+    if (Array.isArray(orderedConnectionIds) && orderedConnectionIds.length > 0) {
+      const now = new Date().toISOString();
+      orderedConnectionIds.forEach((id, index) => {
+        const priority = index + 1;
+        const res = db.run(
+          `UPDATE providerConnections SET priority = ?, updatedAt = ? WHERE id = ? AND provider = ?`,
+          [priority, now, id, providerId]
+        );
+        if ((res?.changes ?? 0) > 0) updatedCount++;
+      });
+      const placeholders = orderedConnectionIds.map(() => "?").join(",");
+      const remaining = db.all(
+        `SELECT id FROM providerConnections WHERE provider = ? AND id NOT IN (${placeholders}) ORDER BY CASE WHEN priority IS NULL THEN 999 ELSE priority END ASC, createdAt ASC`,
+        [providerId, ...orderedConnectionIds]
+      );
+      remaining.forEach((row, i) => {
+        const priority = orderedConnectionIds.length + i + 1;
+        db.run(
+          `UPDATE providerConnections SET priority = ?, updatedAt = ? WHERE id = ?`,
+          [priority, now, row.id]
+        );
+      });
+    } else {
+      reorderInTx(db, providerId);
+    }
+  });
+  invalidateModelsListCache();
+  return updatedCount;
 }
 
 export async function cleanupProviderConnections() {

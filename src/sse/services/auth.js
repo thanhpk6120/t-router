@@ -134,7 +134,7 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
   const providerId = resolveProviderId(provider);
   const settings = await getSettings();
   const providerOverride = (settings.providerStrategies || {})[providerId] || {};
-  const strategy = providerOverride.fallbackStrategy || settings.fallbackStrategy || "balanced";
+  const strategy = providerOverride.fallbackStrategy || settings.fallbackStrategy || "fill-first";
   let resolveStickyMutex;
   if (strategy === "round-robin" || strategy === "sticky-random") {
     const currentMutex = stickySelectionMutex;
@@ -220,13 +220,15 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
     const isAvailable = (c) => {
       if (excludeSet.has(c.id)) return false;
       if (isModelLockActive(c, model)) return false;
-      // Provider breaker (P3-27, layer 1): a tripped provider contributes
-      // nothing until its probe window. Half-open reads as available —
-      // the first probe failure re-opens immediately.
+      // Provider breaker (P3-27, layer 1): protect upstream when the whole provider fleet fails broadly.
+      // But NEVER block a healthy, untried account from serving just because another account failed!
+      // If a connection has never failed or is not in cooldown, it should be given a chance to serve.
       if (providerBreakerGate(providerId) === "skip") {
-        // opt46: breaker skips are operationally significant — warn, not debug.
-        log.warn("AUTH", `${c.id?.slice(0, 8)} | provider breaker open for ${providerId} — skip`);
-        return false;
+        const hasRecentError = c.lastErrorAt && (Date.now() - new Date(c.lastErrorAt).getTime() < 300000);
+        if (hasRecentError || (c.backoffLevel || 0) > 0) {
+          log.warn("AUTH", `${c.id?.slice(0, 8)} | provider breaker open for ${providerId} — skip (failing account)`);
+          return false;
+        }
       }
       // Kiro: an account whose profileArn could not be resolved (refresh
       // proved it, no ARN stored) must not be picked for OAuth/social
@@ -437,7 +439,13 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
         scheduleLastUsedFlush(connection.id, new Date(now).toISOString(), 1);
       }
     } else {
-      // fill-first (already sorted by priority in getProviderConnections)
+      // fill-first: strictly pick lowest priority number available
+      availableConnections.sort((a, b) => {
+        const pA = a.priority != null ? a.priority : 999;
+        const pB = b.priority != null ? b.priority : 999;
+        if (pA !== pB) return pA - pB;
+        return new Date(a.createdAt || 0) - new Date(b.createdAt || 0);
+      });
       connection = availableConnections[0];
     }
 
@@ -598,13 +606,14 @@ export async function markAccountUnavailable(connectionId, status, errorText, pr
     if (stickyCurrentByRoute.get(routeKey) === connectionId) stickyCurrentByRoute.delete(routeKey);
   }
 
-  // Provider breaker (P3-27): only genuine outages count — 429, 5xx, or a
-  // missing status (network failure). Auth failures (401/403) are
-  // credential problems handled by quarantine; 402/404 are request-scoped
-  // and never reach here (shouldFallback is false for them).
+  // Provider breaker (P3-27): only genuine server outages count — 5xx, or a
+  // missing status (network failure). 429 is per-account rate limit/quota,
+  // NOT a provider outage — each account has its own rate limit.
+  // Auth failures (401/403) are credential problems handled by quarantine;
+  // 402/404 are request-scoped and never reach here (shouldFallback is false for them).
   if (provider) {
     const s = Number(status);
-    const isOutage = status == null || s === 429 || (Number.isFinite(s) && s >= 500);
+    const isOutage = status == null || (Number.isFinite(s) && s >= 500);
     if (isOutage) recordProviderFailure(resolveProviderId(provider), connectionId);
   }
 

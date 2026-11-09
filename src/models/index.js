@@ -9,6 +9,7 @@ export {
   getApikeyConnectionNames,
   updateProviderConnection,
   deleteProviderConnection,
+  reorderProviderConnections,
   getProviderNodes,
   getProviderNodeById,
   createProviderNode,

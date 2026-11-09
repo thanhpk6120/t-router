@@ -5,6 +5,22 @@ Upstream changelogs (`CHANGELOG.md` and `CHANGELOG-PRO.md`) are kept intact for 
 
 ---
 
+## 0.5.112-pro.23-t.7 (2026-11-09)
+
+- **Provider Account Fallback & Breaker Isolation**:
+  - `src/sse/services/auth.js`: Fixed `markAccountUnavailable` to exclude HTTP 429 (per-account rate limit/quota) from tripping the provider breaker. Only genuine server outages (5xx, network failures) count toward provider breaker trip thresholds.
+  - `src/sse/services/auth.js`: Updated `isAvailable` to ensure open provider breakers only skip connections with recent errors or active backoff, never blocking healthy, untried accounts from serving.
+- **Provider Connection Priority Reordering & Fallback Strategy**:
+  - `src/lib/db/repos/connectionsRepo.js`: Added atomic `reorderProviderConnections(providerId, orderedConnectionIds)` executing priority normalization in a single SQLite transaction and invalidating model caches.
+  - `src/lib/db/repos/connectionsRepo.js` & `src/sse/services/auth.js`: Standardized priority sorting to treat `null`/missing priorities as lowest priority (`999`) and secondary sort by `createdAt ASC`.
+  - `src/app/api/providers/reorder/route.js`: Created dedicated atomic API route for bulk connection priority reordering.
+  - `src/app/(dashboard)/dashboard/providers/[id]/page.js` & `ConnectionsCard.js`: Fixed fallback strategy persistence to save `override.fallbackStrategy = "fill-first"` instead of deleting the key when Round Robin is toggled off, ensuring Priority mode strictly applies.
+  - `src/app/(dashboard)/dashboard/providers/[id]/page.js` & `ConnectionsCard.js`: Updated UI state to immediately reflect updated `#1`, `#2` priority badges upon reordering.
+- **Testing**:
+  - `tests/unit/account-fallback-priority.test.js`: Added dedicated test suite verifying atomic reordering, priority-based sorting with nulls last, provider breaker isolation on 429s, and healthy account preservation during breaker trips.
+
+---
+
 ## 0.5.112-pro.23-t.6 (2026-11-09)
 
 - **Comprehensive Fix for Premature Stream Truncation**:

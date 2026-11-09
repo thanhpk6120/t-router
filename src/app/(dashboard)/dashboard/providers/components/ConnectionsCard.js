@@ -320,7 +320,7 @@ export default function ConnectionsCard({ providerId, isOAuth, loginProviderId =
       if (connRes.ok) setConnections((connData.connections || []).filter((c) => c.provider === providerId));
       if (proxyRes.ok) setProxyPools(proxyData.proxyPools || []);
       const override = (settingsData.providerStrategies || {})[providerId] || {};
-      setProviderStrategy(override.fallbackStrategy || null);
+      setProviderStrategy(override.fallbackStrategy || "fill-first");
       setProviderStickyLimit(override.stickyRoundRobinLimit != null ? String(override.stickyRoundRobinLimit) : "1");
     } catch (e) { console.log("ConnectionsCard fetch error:", e); }
     finally { setLoading(false); }
@@ -335,19 +335,14 @@ export default function ConnectionsCard({ providerId, isOAuth, loginProviderId =
       const current = data.providerStrategies || {};
       // Build override preserving existing proxyPoolId and rotation settings
       const override = { ...(current[providerId] || {}) };
-      if (strategy) {
-        override.fallbackStrategy = strategy;
-      } else {
-        delete override.fallbackStrategy;
-      }
+      override.fallbackStrategy = strategy || "fill-first";
       if (strategy === "round-robin" && stickyLimit !== "") {
         override.stickyRoundRobinLimit = Number(stickyLimit) || 3;
       } else {
         delete override.stickyRoundRobinLimit;
       }
       const updated = { ...current };
-      if (Object.keys(override).length === 0) delete updated[providerId];
-      else updated[providerId] = override;
+      updated[providerId] = override;
       await fetch("/api/settings", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ providerStrategies: updated }) });
     } catch (e) { console.log("saveStrategy error:", e); }
   };
@@ -355,12 +350,19 @@ export default function ConnectionsCard({ providerId, isOAuth, loginProviderId =
   const handleSwapPriority = async (i1, i2) => {
     const next = [...connections];
     [next[i1], next[i2]] = [next[i2], next[i1]];
+    next.forEach((conn, idx) => {
+      conn.priority = idx + 1;
+    });
     setConnections(next);
     try {
-      await Promise.all([
-        fetch(`/api/providers/${next[i1].id}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ priority: i1 }) }),
-        fetch(`/api/providers/${next[i2].id}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ priority: i2 }) }),
-      ]);
+      await fetch("/api/providers/reorder", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          provider: providerId,
+          connectionIds: next.map((c) => c.id),
+        }),
+      });
     } catch { await fetch_(); }
   };
 
@@ -418,7 +420,7 @@ export default function ConnectionsCard({ providerId, isOAuth, loginProviderId =
             <select
               value={providerStrategy || "fill-first"}
               onChange={(e) => {
-                const strat = e.target.value === "fill-first" ? null : e.target.value;
+                const strat = e.target.value;
                 setProviderStrategy(strat);
                 if (strat === "round-robin" && !providerStickyLimit) setProviderStickyLimit("1");
                 saveStrategy(strat, strat === "round-robin" ? (providerStickyLimit || "1") : providerStickyLimit);
