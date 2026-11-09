@@ -493,8 +493,11 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
 
   while (true) {
     if (signal?.aborted) {
+      // 499, not 503: the client is gone, so this member did not fail — a 503 makes
+      // the combo read a departed caller as an upstream outage and burn the rest of
+      // the rotation on members that abort instantly too. combo.js stops on 499.
       log.warn("CHAT", `[${provider}/${model}] client aborted, stopping account loop`);
-      return errorResponse(HTTP_STATUS.SERVICE_UNAVAILABLE, "Request aborted by client");
+      return errorResponse(499, "Request aborted by client");
     }
     const credentials = await getProviderCredentials(provider, excludeConnectionIds, model, { requestedModel: requestedModel || model, preferredConnectionId: pinnedConnectionId || undefined });
 

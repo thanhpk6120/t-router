@@ -98,6 +98,14 @@ export function createSSEStream(options = {}) {
   let openAIResponsesDoneSent = false;
   let streamDoneSent = false;  // track duplicate [DONE] across transform + flush
   let openAIFinishReasonSeen = false;
+  // Passthrough has no translator state, so the Anthropic terminal pair has to be
+  // tracked here: an upstream that closes mid-turn never sends message_stop, and
+  // an Anthropic SDK client then waits for it until its own timeout.
+  let claudeTerminalSeen = false;
+  // Anthropic passthrough: a tool_use block means the turn closes with stop_reason
+  // "tool_use", not "end_turn". Tracked from content_block_start, the only place
+  // that names the block type.
+  let claudeToolUseSeen = false;
   let finalized = false;
   let completionFlushTimer = null;
 
@@ -180,6 +188,15 @@ export function createSSEStream(options = {}) {
           let output;
           let injectedUsage = false;
           let responsesTerminal = false;
+
+          // Anthropic terminal pair is emitted as its own two SSE events, so it can
+          // arrive on an `event:` line, a `data:` line, or both.
+          if (sourceFormat === FORMATS.CLAUDE && (trimmed === "event: message_stop" || trimmed.includes('"type":"message_stop"'))) {
+            claudeTerminalSeen = true;
+          }
+          if (sourceFormat === FORMATS.CLAUDE && trimmed.includes('"type":"tool_use"')) {
+            claudeToolUseSeen = true;
+          }
 
           if (trimmed.startsWith("data:") && trimmed.slice(5).trim() !== "[DONE]") {
             try {
@@ -546,7 +563,10 @@ export function createSSEStream(options = {}) {
           // Ensure OpenAI clients always receive a chunk with finish_reason before [DONE]
           const isOpenAIClient = targetFormat === FORMATS.OPENAI || sourceFormat === FORMATS.OPENAI;
           if (isOpenAIClient && !openAIFinishReasonSeen) {
-            const fallbackFinish = (state?.geminiToolCallCount > 0 || state?.toolCalls?.size > 0 || state?.hadToolCalls) ? "tool_calls" : "stop";
+            // Passthrough has no translator state, so the tool-call signal has to come
+            // from what actually reached the client (seenToolCallIds). Reporting "stop"
+            // after tool calls makes strict clients end the turn instead of running them.
+            const fallbackFinish = seenToolCallIds.size > 0 ? "tool_calls" : "stop";
             const finishChunk = {
               id: `chatcmpl-${Date.now()}`,
               object: "chat.completion.chunk",
@@ -567,6 +587,22 @@ export function createSSEStream(options = {}) {
           // Gemini-family clients (Antigravity, Vertex, Gemini) reject this sentinel with 400 syntax errors.
           const isGeminiFamily = provider === "antigravity" || provider === "gemini" || provider === "vertex";
           const isClaudeClient = targetFormat === FORMATS.CLAUDE || sourceFormat === FORMATS.CLAUDE;
+          if (isClaudeClient && !claudeTerminalSeen) {
+            // Upstream closed without message_delta/message_stop (mid-turn cut).
+            // Synthesize both so an Anthropic SDK client finishes instead of hanging.
+            const stopReason = claudeToolUseSeen ? "tool_use" : "end_turn";
+            const messageDelta = formatSSE({
+              type: "message_delta",
+              delta: { stop_reason: stopReason },
+              usage: { output_tokens: 0 }
+            }, FORMATS.CLAUDE);
+            reqLogger?.appendConvertedChunk?.(messageDelta);
+            controller.enqueue(sharedEncoder.encode(messageDelta));
+            const messageStop = formatSSE({ type: "message_stop" }, FORMATS.CLAUDE);
+            reqLogger?.appendConvertedChunk?.(messageStop);
+            controller.enqueue(sharedEncoder.encode(messageStop));
+            claudeTerminalSeen = true;
+          }
           if (!streamDoneSent && !isGeminiFamily && !isClaudeClient) {
             const doneOutput = "data: [DONE]\n\n";
             reqLogger?.appendConvertedChunk?.(doneOutput);

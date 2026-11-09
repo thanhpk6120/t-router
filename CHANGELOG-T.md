@@ -5,6 +5,17 @@ Upstream changelogs (`CHANGELOG.md` and `CHANGELOG-PRO.md`) are kept intact for 
 
 ---
 
+## 0.5.112-pro.23-t.11 (2026-11-09)
+
+- **Fix Passthrough Terminal Frames on Mid-Turn Upstream Cuts**:
+  - `open-sse/utils/stream.js` (passthrough flush): Anthropic clients now always receive `message_delta` + `message_stop`. The passthrough branch previously only *suppressed* the OpenAI `[DONE]` sentinel for Claude clients and never synthesized the Anthropic terminal pair, so an upstream closing mid-turn left an Anthropic SDK client waiting until its own timeout. `stop_reason` is `tool_use` when a `tool_use` block was streamed, otherwise `end_turn`; already-terminated streams are not double-closed.
+  - `open-sse/utils/stream.js` (passthrough flush): the synthesized OpenAI `finish_reason` now derives from `seenToolCallIds` instead of the translator `state`, which is `null` in passthrough mode. A turn that emitted tool calls but was cut before the upstream `finish_reason` chunk used to report `"stop"`, making strict OpenAI clients end the turn instead of executing the calls. Upstream `finish_reason` chunks still pass through untouched.
+- **Client Disconnect No Longer Poisons the Combo Rotation**:
+  - `src/sse/handlers/chat.js`: a departed client now yields `499` instead of `503` from the account loop. `open-sse/services/combo.js` treats 499 as "caller gone, stop now", but read 503 as an upstream outage and walked every remaining combo member, each aborting instantly and logging a spurious fallback.
+- **Tests**: added `tests/unit/passthrough-terminal.test.js` (5 cases) covering the tool-call finish reason, the synthetic Anthropic terminal pair, the `tool_use` stop reason, the no-double-close path and the untouched normal path.
+
+---
+
 ## 0.5.112-pro.23-t.10 (2026-11-09)
 
 - **Fix Premature Stream Termination and Missing Completion Events**:
