@@ -5,7 +5,7 @@ Upstream changelogs (`CHANGELOG.md` and `CHANGELOG-PRO.md`) are kept intact for 
 
 ---
 
-## 0.5.112-pro.23-t.9 (2026-11-09)
+## 0.5.112-pro.23-t.10 (2026-11-09)
 
 - **Fix Premature Stream Termination and Missing Completion Events**:
   - `open-sse/services/emptyFailover.js`: Extended `inspectSSELine` to correctly recognize tool calls (`part.functionCall`, `part.function_call`, `part.inlineData`) and candidate finish reasons (`cand.finishReason`) for Gemini and Antigravity wrapper and raw formats. Added `delta.function_call` support to `deltaHasClientContent`.
