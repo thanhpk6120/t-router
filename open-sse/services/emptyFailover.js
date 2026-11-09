@@ -39,6 +39,7 @@ export function deltaHasClientContent(delta) {
   if (typeof c === "string" && c.trim().length > 0) return true;
   if (Array.isArray(c) && c.length > 0) return true;
   if (Array.isArray(delta.tool_calls) && delta.tool_calls.length > 0) return true;
+  if (delta.function_call && typeof delta.function_call === "object") return true;
   // OpenAI "Responses" style / non-chat deltas occasionally use output_text
   if (typeof delta.output_text === "string" && delta.output_text.length > 0) return true;
   return false;
@@ -112,17 +113,25 @@ export function inspectSSELine(line) {
   const parsed = parseSSELine(line.trimStart());
   if (!parsed || parsed.done) return { content: false, finishReason: null };
 
-  // Handle Antigravity/Gemini wrapper
-  if (parsed.response && Array.isArray(parsed.response.candidates)) {
+  // Handle Antigravity / Gemini candidate shapes (wrapped or raw)
+  const candidates = parsed.response?.candidates || (Array.isArray(parsed.candidates) ? parsed.candidates : null);
+  if (Array.isArray(candidates)) {
     let content = false;
-    for (const cand of parsed.response.candidates) {
+    let finishReason = null;
+    for (const cand of candidates) {
       if (cand.content && Array.isArray(cand.content.parts)) {
         for (const part of cand.content.parts) {
-          if (typeof part.text === "string" && part.text.trim().length > 0) content = true;
+          if (!part) continue;
+          if (part.functionCall || part.function_call) content = true;
+          if (typeof part.text === "string" && part.thought !== true && part.text.trim().length > 0) content = true;
+          if (part.inlineData || part.inline_data) content = true;
         }
       }
+      if (cand.finishReason) {
+        finishReason = toOpenAIFinish(cand.finishReason, FORMATS.GEMINI);
+      }
     }
-    return { content, finishReason: null };
+    return { content, finishReason };
   }
 
   if (typeof parsed.type === "string" && !Array.isArray(parsed.choices)) {

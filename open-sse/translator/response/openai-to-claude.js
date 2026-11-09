@@ -100,7 +100,38 @@ function stopTextBlock(state, results) {
 
 // Convert OpenAI stream chunk to Claude format
 export function openaiToClaudeResponse(chunk, state) {
-  if (!chunk || !chunk.choices?.[0]) return null;
+  if (!chunk) {
+    if (!state || typeof state !== "object" || state.messageStopSent) return null;
+    const results = [];
+    if (state.nextBlockIndex === 0) {
+      const emptyBlockIdx = state.nextBlockIndex++;
+      results.push({
+        type: "content_block_start",
+        index: emptyBlockIdx,
+        content_block: { type: "text", text: "" }
+      });
+      results.push({
+        type: "content_block_delta",
+        index: emptyBlockIdx,
+        delta: { type: "text_delta", text: " " }
+      });
+      results.push({
+        type: "content_block_stop",
+        index: emptyBlockIdx
+      });
+    }
+    const stopReason = state.finishReason ? convertFinishReason(state.finishReason) : (state.hadToolCalls || state.toolCalls?.size > 0 ? "tool_use" : "end_turn");
+    const finalUsage = state.usage || { input_tokens: 0, output_tokens: 0 };
+    results.push({
+      type: "message_delta",
+      delta: { stop_reason: stopReason },
+      usage: finalUsage
+    });
+    results.push({ type: "message_stop" });
+    state.messageStopSent = true;
+    return results;
+  }
+  if (!chunk.choices?.[0]) return null;
 
   const results = [];
   const choice = chunk.choices[0];
@@ -368,6 +399,7 @@ export function openaiToClaudeResponse(chunk, state) {
       usage: finalUsage
     });
     results.push({ type: "message_stop" });
+    state.messageStopSent = true;
   }
 
   return results.length > 0 ? results : null;

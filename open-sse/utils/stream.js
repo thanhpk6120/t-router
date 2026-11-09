@@ -2,6 +2,7 @@ import { translateResponse, initState } from "../translator/index.js";
 import { FORMATS } from "../translator/formats.js";
 import { PROVIDERS } from "../config/providers.js";
 import { liftReasoningAliases } from "../translator/concerns/reasoning.js";
+import { fromOpenAIFinish } from "../translator/concerns/finishReason.js";
 import { trackPendingRequest, appendRequestLog } from "@/lib/usageDb.js";
 import { extractUsage, mergeUsage, hasValidUsage, estimateUsage, logUsage, addBufferToUsage, filterUsageForFormat, COLORS } from "./usageTracking.js";
 import { parseSSELine, hasValuableContent, fixInvalidId, formatSSE, ensureStreamToolCallIds } from "./streamHelpers.js";
@@ -390,6 +391,21 @@ export function createSSEStream(options = {}) {
             streamDoneSent = true;
           }
 
+          if (sourceFormat === FORMATS.CLAUDE && !state?.messageStopSent) {
+            const fallbackFinish = state?.finishReason ? fromOpenAIFinish(state.finishReason, "claude") : (state?.hadToolCalls || state?.toolCalls?.size > 0 ? "tool_use" : "end_turn");
+            const messageDelta = formatSSE({
+              type: "message_delta",
+              delta: { stop_reason: fallbackFinish },
+              usage: state?.usage || { output_tokens: 0 }
+            }, FORMATS.CLAUDE);
+            reqLogger?.appendConvertedChunk?.(messageDelta);
+            controller.enqueue(sharedEncoder.encode(messageDelta));
+            const messageStop = formatSSE({ type: "message_stop" }, FORMATS.CLAUDE);
+            reqLogger?.appendConvertedChunk?.(messageStop);
+            controller.enqueue(sharedEncoder.encode(messageStop));
+            state.messageStopSent = true;
+          }
+
           if (keepsOpenAIResponsesFormat && !streamDoneSent) {
             const doneOutput = "data: [DONE]\n\n";
             reqLogger?.appendConvertedChunk?.(doneOutput);
@@ -550,10 +566,12 @@ export function createSSEStream(options = {}) {
           // Without it they can hang until timeout and trigger failover.
           // Gemini-family clients (Antigravity, Vertex, Gemini) reject this sentinel with 400 syntax errors.
           const isGeminiFamily = provider === "antigravity" || provider === "gemini" || provider === "vertex";
-          if (!streamDoneSent && !isGeminiFamily) {
+          const isClaudeClient = targetFormat === FORMATS.CLAUDE || sourceFormat === FORMATS.CLAUDE;
+          if (!streamDoneSent && !isGeminiFamily && !isClaudeClient) {
             const doneOutput = "data: [DONE]\n\n";
             reqLogger?.appendConvertedChunk?.(doneOutput);
             controller.enqueue(sharedEncoder.encode(doneOutput));
+            streamDoneSent = true;
           }
 
           finalizeStream();
@@ -641,6 +659,23 @@ export function createSSEStream(options = {}) {
           streamDoneSent = true;
         }
 
+        // Ensure Claude clients in translate mode always receive message_stop
+        const isClaudeClient = sourceFormat === FORMATS.CLAUDE;
+        if (isClaudeClient && !state?.messageStopSent) {
+          const fallbackFinish = state?.finishReason ? fromOpenAIFinish(state.finishReason, "claude") : (state?.hadToolCalls || state?.toolCalls?.size > 0 ? "tool_use" : "end_turn");
+          const messageDelta = formatSSE({
+            type: "message_delta",
+            delta: { stop_reason: fallbackFinish },
+            usage: state?.usage || { output_tokens: 0 }
+          }, FORMATS.CLAUDE);
+          reqLogger?.appendConvertedChunk?.(messageDelta);
+          controller.enqueue(sharedEncoder.encode(messageDelta));
+          const messageStop = formatSSE({ type: "message_stop" }, FORMATS.CLAUDE);
+          reqLogger?.appendConvertedChunk?.(messageStop);
+          controller.enqueue(sharedEncoder.encode(messageStop));
+          state.messageStopSent = true;
+        }
+
         // Synthesize response.failed if a Responses passthrough stream never reached a terminal event
         const keepsOpenAIResponsesFormat = targetFormat === FORMATS.OPENAI_RESPONSES && sourceFormat === FORMATS.OPENAI_RESPONSES;
         if (keepsOpenAIResponsesFormat && !openAIResponsesTerminalSeen) {
@@ -685,7 +720,7 @@ export function createSSETransformStreamWithLogger(targetFormat, sourceFormat, p
   });
 }
 
-export function createPassthroughStreamWithLogger(provider = null, reqLogger = null, model = null, connectionId = null, body = null, onStreamComplete = null, apiKey = null, toolNameMap = null) {
+export function createPassthroughStreamWithLogger(provider = null, reqLogger = null, model = null, connectionId = null, body = null, onStreamComplete = null, apiKey = null, toolNameMap = null, targetFormat = null, sourceFormat = null) {
   return createSSEStream({
     mode: STREAM_MODE.PASSTHROUGH,
     provider,
@@ -695,6 +730,8 @@ export function createPassthroughStreamWithLogger(provider = null, reqLogger = n
     connectionId,
     body,
     onStreamComplete,
-    apiKey
+    apiKey,
+    targetFormat,
+    sourceFormat
   });
 }

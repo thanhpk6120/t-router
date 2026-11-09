@@ -5,6 +5,19 @@ Upstream changelogs (`CHANGELOG.md` and `CHANGELOG-PRO.md`) are kept intact for 
 
 ---
 
+## 0.5.112-pro.23-t.9 (2026-11-09)
+
+- **Fix Premature Stream Termination and Missing Completion Events**:
+  - `open-sse/services/emptyFailover.js`: Extended `inspectSSELine` to correctly recognize tool calls (`part.functionCall`, `part.function_call`, `part.inlineData`) and candidate finish reasons (`cand.finishReason`) for Gemini and Antigravity wrapper and raw formats. Added `delta.function_call` support to `deltaHasClientContent`.
+  - `open-sse/services/combo.js`: Fixed `peekComboResponse` to return stream errors (`error: peeked.error`) and fall through to the next combo candidate when stream reading fails, preventing unhandled truncated streams. Guaranteed clean fallback finish chunks (`finish_reason: "stop"` + `[DONE]`) on empty stream peek failures on the final candidate.
+  - `open-sse/utils/stream.js`: Forwarded `targetFormat` and `sourceFormat` into `createPassthroughStreamWithLogger`. Enforced synthesis of terminal completion frames (`message_delta` with stop reason + `message_stop` for Claude clients, `choices[0].finish_reason` + `[DONE]` for OpenAI clients) upon EOF in both translate and passthrough streaming modes. Prevented invalid `[DONE]` sentinels from reaching Claude clients.
+  - `open-sse/handlers/chatCore/streamingHandler.js`: Passed `targetFormat` and `sourceFormat` to `createPassthroughStreamWithLogger`.
+  - `open-sse/translator/response/openai-to-claude.js`: Implemented `!chunk` handling on flush to guarantee `message_delta` and `message_stop` are emitted if not yet sent.
+  - `src/sse/handlers/chat.js`: Updated `respondWithKeepalive` to enqueue a terminal error frame when stream reading is interrupted mid-flight, and preserved actual upstream JSON error messages on non-200 responses.
+  - `src/lib/db/repos/connectionsRepo.js`: Fixed priority sorting tie-breaker to prefer `updatedAt DESC` before `createdAt ASC` when priorities match, ensuring immediate reordering taking effect.
+
+---
+
 ## 0.5.112-pro.23-t.8 (2026-11-09)
 
 - **Universal Model Fallback in Combos**:

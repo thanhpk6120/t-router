@@ -29,7 +29,7 @@ async function peekComboResponse(result, log) {
     statusText: result.statusText,
     headers: result.headers,
   });
-  return { outcome: peeked.outcome, finishReason: peeked.finishReason, timedOut: peeked.timedOut, response };
+  return { outcome: peeked.outcome, finishReason: peeked.finishReason, timedOut: peeked.timedOut, error: peeked.error, response };
 }
 
 // Hard capabilities = input modalities; missing one drops request data (e.g. image
@@ -567,7 +567,14 @@ export async function handleComboChat({
           const isLast = i === rotatedModels.length - 1;
           if (isLast) {
             log.warn("COMBO", `empty-peek error on ${modelStr}, returning empty SSE: ${peekErr?.message || peekErr}`);
-            return new Response("data: [DONE]\n\n", {
+            const errorFinishChunk = {
+              id: `chatcmpl-err-${Date.now()}`,
+              object: "chat.completion.chunk",
+              created: Math.floor(Date.now() / 1000),
+              model: modelStr || "unknown",
+              choices: [{ index: 0, delta: {}, finish_reason: "stop" }]
+            };
+            return new Response(`data: ${JSON.stringify(errorFinishChunk)}\n\ndata: [DONE]\n\n`, {
               status: 200,
               headers: { "Content-Type": "text/event-stream" },
             });
@@ -604,6 +611,16 @@ export async function handleComboChat({
 
           log.info("COMBO", `Model ${modelStr} succeeded`);
           return result;
+        }
+        if (peeked.error) {
+          const isLast = i === rotatedModels.length - 1;
+          if (!isLast) {
+            log.warn("COMBO", `Model ${modelStr} stream errored during peek — falling through to next candidate: ${peeked.error?.message || peeked.error}`);
+            peeked.response.body?.cancel?.().catch(() => {});
+            lastError = peeked.error?.message || "Stream read error";
+            lastStatus = 502;
+            continue;
+          }
         }
 
         if (peeked.outcome === "content") {

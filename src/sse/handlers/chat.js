@@ -119,12 +119,19 @@ async function respondWithKeepalive(work, clientBody) {
               if (done) break;
               controller.enqueue(value);
             }
-          } catch { /* upstream closed */ }
+          } catch (streamErr) {
+            try { controller.enqueue(terminal(502, streamErr?.message || "upstream stream interrupted")); } catch { /* closed */ }
+          }
           try { controller.close(); } catch { /* already closed */ }
           return;
         }
-        // Non-SSE outcome: one format-correct terminal frame.
-        try { controller.enqueue(terminal(res.status, "upstream returned non-stream response")); } catch { /* closed */ }
+        // Non-SSE outcome: try to extract actual error message from body if JSON
+        let errMsg = "upstream returned non-stream response";
+        try {
+          const errorJson = await res.clone().json();
+          errMsg = errorJson?.error?.message || errorJson?.message || errMsg;
+        } catch {}
+        try { controller.enqueue(terminal(res.status || 502, errMsg)); } catch { /* closed */ }
         try { controller.close(); } catch { /* already closed */ }
       }).catch((err) => {
         stop();

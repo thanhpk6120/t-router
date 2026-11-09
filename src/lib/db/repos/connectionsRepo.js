@@ -116,6 +116,8 @@ export async function getProviderConnections(filter = {}) {
     const pA = a.priority != null ? a.priority : 999;
     const pB = b.priority != null ? b.priority : 999;
     if (pA !== pB) return pA - pB;
+    const uDiff = new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0);
+    if (uDiff !== 0) return uDiff;
     return new Date(a.createdAt || 0) - new Date(b.createdAt || 0);
   });
   return list;
@@ -141,6 +143,8 @@ export async function getUsageEligibleConnections(usageProviders, apikeyProvider
     const pA = a.priority != null ? a.priority : 999;
     const pB = b.priority != null ? b.priority : 999;
     if (pA !== pB) return pA - pB;
+    const uDiff = new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0);
+    if (uDiff !== 0) return uDiff;
     return new Date(a.createdAt || 0) - new Date(b.createdAt || 0);
   });
   return list;
@@ -325,6 +329,8 @@ function reorderInTx(db, providerId) {
     const pA = a.priority != null ? a.priority : 999;
     const pB = b.priority != null ? b.priority : 999;
     if (pA !== pB) return pA - pB;
+    const uDiff = new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0);
+    if (uDiff !== 0) return uDiff;
     return new Date(a.createdAt || 0) - new Date(b.createdAt || 0);
   });
   list.forEach((c, i) => {
