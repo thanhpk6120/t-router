@@ -7,7 +7,7 @@ Upstream changelogs (`CHANGELOG.md` and `CHANGELOG-PRO.md`) are kept intact for 
 
 ---
 
-## 0.5.112-pro.23-t.12 (2026-11-10)
+## 0.5.112-pro.23-t.13 (2026-11-10)
 
 - **Auto-Failover for Dead/Stale Custom Provider Node IDs**:
   - `src/sse/services/auth.js` (`getProviderCredentials`): when a request targets an `openai-compatible-chat-<uuid>` or other custom provider ID that has no active connections (e.g. node was deleted/recreated or stale in a combo/session), t-router now automatically falls back to any active custom provider node of the same family with active connections rather than failing immediately with 404 `No active credentials`.
