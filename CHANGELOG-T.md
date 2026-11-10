@@ -5,6 +5,21 @@ Upstream changelogs (`CHANGELOG.md` and `CHANGELOG-PRO.md`) are kept intact for 
 
 ---
 
+---
+
+## 0.5.112-pro.23-t.12 (2026-11-10)
+
+- **Auto-Failover for Dead/Stale Custom Provider Node IDs**:
+  - `src/sse/services/auth.js` (`getProviderCredentials`): when a request targets an `openai-compatible-chat-<uuid>` or other custom provider ID that has no active connections (e.g. node was deleted/recreated or stale in a combo/session), t-router now automatically falls back to any active custom provider node of the same family with active connections rather than failing immediately with 404 `No active credentials`.
+  - `src/sse/services/model.js` (`getModelInfo`): if a model address contains a deleted custom provider node ID, it now resolves directly to the first active custom node of that type.
+- **Auto-Rotation on Stream Interruption Before Content**:
+  - `src/sse/handlers/chat.js` (`handleSingleModelChat`): integrated `peekStreamForContent` into streaming dispatch. If an upstream connection drops, resets, or dies empty before any content tokens are emitted, t-router now intercepts the failure before sending HTTP 200 headers to the client, excludes the failing connection, and automatically rotates to the next active account in the pool.
+  - `open-sse/utils/streamHelpers.js` (`buildStreamErrorBytes`): changed synthetic aborted error frame `finish_reason` from `"stop"` to `"error"` so clients (such as DSH) do not falsely treat an aborted stream as a completed turn.
+- **Configurable Combo Member Attempt Cap**:
+  - `src/sse/services/memberFailover.js`: updated default `DEFAULT_COMBO_MEMBER_ATTEMPT_CAP` to 10 (was 3).
+  - `src/lib/db/repos/settingsRepo.js`: added `comboMemberAttemptCap: 10` to default settings.
+  - `src/app/(dashboard)/dashboard/profile/page.js`: added input control in the Routing Strategy card allowing users to configure the combo member attempt cap directly from the UI (0 = unlimited / try all accounts).
+
 ## 0.5.112-pro.23-t.11 (2026-11-09)
 
 - **Fix Passthrough Terminal Frames on Mid-Turn Upstream Cuts**:

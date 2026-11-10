@@ -9,10 +9,10 @@ import {
 
 describe("resolveComboMemberAttemptCap", () => {
   it("defaults to 3 when the setting is absent", () => {
-    expect(resolveComboMemberAttemptCap({})).toBe(3);
-    expect(resolveComboMemberAttemptCap(null)).toBe(3);
-    expect(resolveComboMemberAttemptCap(undefined)).toBe(3);
-    expect(DEFAULT_COMBO_MEMBER_ATTEMPT_CAP).toBe(3);
+    expect(resolveComboMemberAttemptCap({})).toBe(10);
+    expect(resolveComboMemberAttemptCap(null)).toBe(10);
+    expect(resolveComboMemberAttemptCap(undefined)).toBe(10);
+    expect(DEFAULT_COMBO_MEMBER_ATTEMPT_CAP).toBe(10);
   });
 
   it("honours an explicit setting", () => {
@@ -33,8 +33,8 @@ describe("resolveComboMemberAttemptCap", () => {
   });
 
   it("falls back to the default for garbage values", () => {
-    expect(resolveComboMemberAttemptCap({ comboMemberAttemptCap: "abc" })).toBe(3);
-    expect(resolveComboMemberAttemptCap({ comboMemberAttemptCap: "" })).toBe(3);
-    expect(resolveComboMemberAttemptCap({ comboMemberAttemptCap: NaN })).toBe(3);
+    expect(resolveComboMemberAttemptCap({ comboMemberAttemptCap: "abc" })).toBe(10);
+    expect(resolveComboMemberAttemptCap({ comboMemberAttemptCap: "" })).toBe(10);
+    expect(resolveComboMemberAttemptCap({ comboMemberAttemptCap: NaN })).toBe(10);
   });
 });

@@ -386,6 +386,24 @@ export default function ProfilePage() {
     }
   };
 
+  const updateComboMemberAttemptCap = async (cap) => {
+    const numCap = parseInt(cap, 10);
+    if (isNaN(numCap) || numCap < 0 || numCap > 10) return;
+
+    try {
+      const res = await fetch("/api/settings", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ comboMemberAttemptCap: numCap }),
+      });
+      if (res.ok) {
+        setSettings(prev => ({ ...prev, comboMemberAttemptCap: numCap }));
+      }
+    } catch (err) {
+      console.error("Failed to update combo member attempt cap:", err);
+    }
+  };
+
   const updateRequireLogin = async (requireLogin) => {
     try {
       const res = await fetch("/api/settings", {
@@ -1934,6 +1952,25 @@ export default function ProfilePage() {
                 />
               </div>
             )}
+
+            {/* Combo Member Attempt Cap */}
+            <div className="flex items-start sm:items-center justify-between gap-4 pt-4 border-t border-border/50">
+              <div className="flex-1 min-w-0">
+                <p className="font-medium text-sm sm:text-base">Combo Member Attempt Cap</p>
+                <p className="text-xs sm:text-sm text-text-muted">
+                  Max accounts to try per combo member before moving to next (0 = unlimited, try all accounts; default: 10)
+                </p>
+              </div>
+              <Input
+                type="number"
+                min="0"
+                max="10"
+                value={settings.comboMemberAttemptCap !== undefined ? settings.comboMemberAttemptCap : 10}
+                onChange={(e) => updateComboMemberAttemptCap(e.target.value)}
+                disabled={loading}
+                className="w-16 sm:w-20 text-center shrink-0"
+              />
+            </div>
 
             <p className="text-xs text-text-muted italic pt-2 border-t border-border/50">
               {settings.fallbackStrategy === "balanced"

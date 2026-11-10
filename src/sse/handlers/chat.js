@@ -35,6 +35,8 @@ import { getKeyAccessContext, enforceKeyAccess, filterAdapterModels } from "../s
 import { resolveAntiFlakyConfig, inspectChatResponse, inspectChatResponseFull } from "open-sse/rtk/flakyGuard.js";
 import { withKeyAdmission, recheckKeyQuotaAfterCompletion } from "../services/keyAdmission.js";
 import { buildStreamErrorBytes } from "open-sse/utils/streamHelpers.js";
+import { peekStreamForContent, reconstructStream, isNoRetryFinish } from "open-sse/services/emptyFailover.js";
+import { EMPTY_PEEK_DEADLINE_MS } from "open-sse/config/runtimeConfig.js";
 import { detectFormat } from "open-sse/services/provider.js";
 import { requestIdFromRequest, attachRequestId } from "../utils/requestId.js";
 
@@ -627,6 +629,39 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
     });
 
     if (result.success) {
+      // Peek stream for actual content before committing 200 headers to client.
+      // If the connection drops or returns empty before tokens start flowing,
+      // failover to the next active account seamlessly.
+      if (body?.stream === true && result.response?.body) {
+        let peeked = null;
+        try {
+          peeked = await peekStreamForContent(result.response.body, { deadlineMs: EMPTY_PEEK_DEADLINE_MS });
+        } catch (peekErr) {
+          log.warn("STREAM_PEEK", `[${provider}/${model}] stream peek threw: ${peekErr?.message || peekErr}`);
+        }
+
+        if (peeked && peeked.outcome === "empty" && !isNoRetryFinish(peeked.finishReason)) {
+          log.warn("STREAM_PEEK", `[${provider}/${model}] account ${credentials.connectionName || credentials.connectionId} stream died or ended empty (${peeked.finishReason || "empty"}) — rotating to next account`);
+          excludeConnectionIds.add(credentials.connectionId);
+          lastError = `Stream ended empty (${peeked.finishReason || "disconnected"})`;
+          lastStatus = HTTP_STATUS.BAD_GATEWAY;
+          memberFallbackFailures++;
+          if (comboMemberAttemptCap !== null && memberFallbackFailures >= comboMemberAttemptCap) {
+            log.warn("COMBO", `Member ${provider}/${model} failed ${memberFallbackFailures} accounts — moving to next combo member`);
+            return result.response;
+          }
+          continue;
+        }
+
+        if (peeked) {
+          result.response = new Response(reconstructStream(peeked.head, peeked.reader, peeked.pendingRead), {
+            status: result.response.status,
+            statusText: result.response.statusText,
+            headers: result.response.headers,
+          });
+        }
+      }
+
       // Anti-Flaky Guard (9Router Pro): an HTTP 200 whose body is empty
       // or a degenerate repetition loop is retried on another account
       // instead of reaching the client. Fail-open: retries are capped by

@@ -10,14 +10,14 @@ import {
 } from "../../src/sse/services/memberFailover.js";
 
 describe("resolveComboMemberAttemptCap", () => {
-  it("defaults to 3, clamps to 1..10, and maps 0 to null (disabled)", () => {
-    assert.equal(resolveComboMemberAttemptCap({}), 3);
-    assert.equal(resolveComboMemberAttemptCap(undefined), 3);
+  it("defaults to 10, clamps to 1..10, and maps 0 to null (disabled)", () => {
+    assert.equal(resolveComboMemberAttemptCap({}), 10);
+    assert.equal(resolveComboMemberAttemptCap(undefined), 10);
     assert.equal(resolveComboMemberAttemptCap({ comboMemberAttemptCap: 0 }), null);
     assert.equal(resolveComboMemberAttemptCap({ comboMemberAttemptCap: 99 }), 10);
     assert.equal(resolveComboMemberAttemptCap({ comboMemberAttemptCap: -5 }), 1);
     assert.equal(resolveComboMemberAttemptCap({ comboMemberAttemptCap: "5" }), 5);
-    assert.equal(resolveComboMemberAttemptCap({ comboMemberAttemptCap: "" }), 3);
+    assert.equal(resolveComboMemberAttemptCap({ comboMemberAttemptCap: "" }), 10);
   });
 });
 

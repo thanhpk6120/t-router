@@ -202,8 +202,22 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
       };
     }
 
-    const connections = await getProviderConnections({ provider: providerId, isActive: true });
+    let connections = await getProviderConnections({ provider: providerId, isActive: true });
     log.debug("AUTH", `${provider} | total connections: ${connections.length}, excludeIds: ${excludeSet.size > 0 ? [...excludeSet].join(",") : "none"}, model: ${model || "any"}`);
+
+    if (connections.length === 0) {
+      if (providerId?.startsWith("openai-compatible-chat-") || providerId?.startsWith("anthropic-compatible-chat-") || providerId?.startsWith("custom-")) {
+        const familyPrefix = providerId.startsWith("openai-compatible-chat-")
+          ? "openai-compatible-chat-"
+          : (providerId.startsWith("anthropic-compatible-chat-") ? "anthropic-compatible-chat-" : "custom-");
+        const allActive = await getProviderConnections({ isActive: true });
+        const fallbackConns = allActive.filter(c => c.provider?.startsWith(familyPrefix));
+        if (fallbackConns.length > 0) {
+          log.warn("AUTH", `Custom provider ${providerId} has no active credentials, auto-falling back to active custom provider: ${fallbackConns[0].provider}`);
+          connections = fallbackConns;
+        }
+      }
+    }
 
     if (connections.length === 0) {
       log.warn("AUTH", `No credentials for ${provider}`);

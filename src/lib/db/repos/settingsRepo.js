@@ -29,9 +29,10 @@ const DEFAULT_SETTINGS = {
   comboStrategies: {},
   // Per-combo member pins (P3-28): { [comboName]: { [member]: { id, label } | id } }
   comboMemberPins: {},
+  comboMemberAttemptCap: 10,
   // Per-provider/per-model member attempt cap override (P3-30):
   // { [providerId]: cap, ["provider/model"]: cap }. Resolution is
-  // per-model > per-provider > global comboMemberAttemptCap > 3; a value
+  // per-model > per-provider > global comboMemberAttemptCap > 10; a value
   // of 0 disables the cap for that provider/model. Empty by default, so
   // existing installs keep exactly their global behaviour.
   comboMemberAttemptCapOverrides: {},

@@ -3,7 +3,7 @@ import { resolveComboMemberAttemptCap } from "../../src/sse/services/memberFailo
 
 describe("per-provider/per-model cap override", () => {
   it("keeps the old global behaviour with no provider and no overrides", () => {
-    expect(resolveComboMemberAttemptCap({})).toBe(3);
+    expect(resolveComboMemberAttemptCap({})).toBe(10);
     expect(resolveComboMemberAttemptCap({ comboMemberAttemptCap: 5 })).toBe(5);
     expect(resolveComboMemberAttemptCap({ comboMemberAttemptCap: 0 })).toBeNull();
   });

@@ -8,7 +8,7 @@ import { HTTP_STATUS } from "open-sse/config/runtimeConfig.js";
 //
 // Configured via the `comboMemberAttemptCap` setting. Default 3, clamped to
 // 1..10. An explicit 0 disables the cap (the old exhaustive behaviour).
-export const DEFAULT_COMBO_MEMBER_ATTEMPT_CAP = 3;
+export const DEFAULT_COMBO_MEMBER_ATTEMPT_CAP = 10;
 const MAX_COMBO_MEMBER_ATTEMPT_CAP = 10;
 
 // Parse one cap value with the shared rules: 0 disables (null), a

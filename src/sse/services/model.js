@@ -62,6 +62,23 @@ export async function getModelInfo(modelStr) {
         return { provider: matchedEmbedding.id, model: parsed.model };
       }
     }
+
+    // Fallback for stale/deleted custom node IDs in modelStr (e.g. openai-compatible-chat-<old-uuid>/<model>)
+    if (parsed.provider?.startsWith("openai-compatible-chat-")) {
+      const openaiNodes = await getProviderNodes({ type: "openai-compatible" });
+      const exists = openaiNodes.some((n) => n.id === parsed.provider);
+      if (!exists && openaiNodes.length > 0) {
+        return { provider: openaiNodes[0].id, model: parsed.model };
+      }
+    }
+    if (parsed.provider?.startsWith("anthropic-compatible-chat-")) {
+      const anthropicNodes = await getProviderNodes({ type: "anthropic-compatible" });
+      const exists = anthropicNodes.some((n) => n.id === parsed.provider);
+      if (!exists && anthropicNodes.length > 0) {
+        return { provider: anthropicNodes[0].id, model: parsed.model };
+      }
+    }
+
     return {
       provider: parsed.provider,
       model: parsed.model

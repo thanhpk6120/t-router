@@ -209,7 +209,7 @@ export function buildStreamErrorBytes(statusCode, message, clientFormat) {
       choices: [{
         index: 0,
         delta: { content: `\n\n[Error ${statusCode}: ${message}]` },
-        finish_reason: "stop"
+        finish_reason: "error"
       }],
       error
     };
