@@ -7,6 +7,16 @@ Upstream changelogs (`CHANGELOG.md` and `CHANGELOG-PRO.md`) are kept intact for 
 
 ---
 
+---
+
+## 0.5.112-pro.23-t.15 (2026-11-11)
+
+- **Auto-Recovery on 502/503 Failures**:
+  - `src/sse/services/autoRecovery.js`: Added an automated exponential recovery loop with progressive delays: 5s, 15s, 30s, 1m, 3m, 5m when an account encounters 502 or 503 errors.
+  - Test probes automatically pick an active candidate model that differs from the previously tested/failed model.
+  - Once the probe succeeds, the connection's locks and error states are cleared, and the account is reactivated (`testStatus: "active"`, `isActive: true`).
+  - `src/sse/services/auth.js` (`markAccountUnavailable`): Trigger auto-recovery scheduling on HTTP 502/503 statuses.
+
 ## 0.5.112-pro.23-t.14 (2026-11-10)
 
 - **Auto-Failover for Dead/Stale Custom Provider Node IDs**:

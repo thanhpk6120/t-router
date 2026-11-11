@@ -7,6 +7,7 @@ import { resolveProviderId, FREE_PROVIDERS } from "@/shared/constants/providers.
 import { getAntigravityQuotaCache, getAntigravityModelQuota } from "./antigravityQuota.js";
 import { providerBreakerGate, recordProviderFailure } from "./providerBreaker.js";
 import * as log from "../utils/logger.js";
+import { registerFailure } from "./autoRecovery.js";
 
 // Dedicated mutex chain for round-robin / sticky-random account selection
 // (they mutate shared sticky state). It is a SEPARATE chain that no other
@@ -556,6 +557,8 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
  * @returns {{ shouldFallback: boolean, cooldownMs: number }}
  */
 export async function markAccountUnavailable(connectionId, status, errorText, provider = null, model = null, resetsAtMs = null) {
+  const sNum = Number(status);
+  if (sNum === 502 || sNum === 503) registerFailure(connectionId, model);
   if (!connectionId || connectionId === "noauth") {
     if (connectionId === "noauth" && (status === 429 || status === 403) && provider) {
       try {
