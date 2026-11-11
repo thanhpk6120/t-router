@@ -1,7 +1,7 @@
 // Re-export from open-sse with localDb integration
-import { getModelAliases, getComboByName, getProviderNodes, getInjectVariants } from "@/lib/localDb";
+import { getModelAliases, getComboByName, getProviderNodes, getInjectVariants, getSettings, getProviderConnections } from "@/lib/localDb";
 import { getDisabledModels } from "@/lib/disabledModelsDb";
-import { getProviderAlias, ALIAS_TO_ID } from "@/shared/constants/providers";
+import { getProviderAlias, ALIAS_TO_ID, FREE_PROVIDERS, resolveProviderId } from "@/shared/constants/providers";
 import { parseModel as parseModelCore, resolveModelAliasFromMap, getModelInfoCore } from "open-sse/services/model.js";
 import REGISTRY from "open-sse/providers/registry/index.js";
 
@@ -202,7 +202,8 @@ export async function isModelDisabled(modelStr, options = {}) {
 }
 
 /**
- * Filter an array of combo models, removing any that are disabled.
+ * Filter an array of combo models, removing any that are disabled or whose
+ * provider is disabled or has all accounts disabled.
  * @param {string[]} models
  * @param {object} [options]
  * @returns {Promise<string[]>}
@@ -210,10 +211,41 @@ export async function isModelDisabled(modelStr, options = {}) {
 export async function filterActiveComboModels(models, options = {}) {
   if (!Array.isArray(models) || models.length === 0) return [];
   const disabledByAlias = options.disabledByAlias || (await getDisabledModels().catch(() => ({})));
+  const settings = options.settings || (await getSettings().catch(() => ({})));
+  const connections = options.connections || (await getProviderConnections().catch(() => []));
+
   const results = await Promise.all(
     models.map(async (m) => {
-      const disabled = await isModelDisabled(m, { disabledByAlias });
-      return disabled ? null : m;
+      // 1. Model explicitly disabled in disabledModels
+      const disabled = await isModelDisabled(m, { disabledByAlias, settings, connections });
+      if (disabled) return null;
+
+      // 2. Check provider status
+      const info = await getModelInfo(m).catch(() => null);
+      const rawProvider = info?.provider || parseModel(m)?.provider;
+      if (rawProvider) {
+        const providerId = resolveProviderId(rawProvider);
+
+        // a. Provider disabled in settings (strategies or overrides)
+        const strat = settings?.providerStrategies?.[providerId] || settings?.providerStrategies?.[rawProvider] || {};
+        const over = settings?.providerOverrides?.[providerId] || settings?.providerOverrides?.[rawProvider] || {};
+        if (strat.disabled === true || strat.isActive === false || over.disabled === true || over.isActive === false) {
+          return null;
+        }
+
+        // b. All accounts in provider disabled (only when provider has registered accounts)
+        if (!FREE_PROVIDERS[providerId]?.noAuth && Array.isArray(connections) && connections.length > 0) {
+          const provConns = connections.filter((c) => c.provider === providerId || c.provider === rawProvider);
+          if (provConns.length > 0) {
+            const hasActiveAccount = provConns.some((c) => c.isActive === true || c.isActive === 1);
+            if (!hasActiveAccount) {
+              return null; // All accounts for this provider are disabled
+            }
+          }
+        }
+      }
+
+      return m;
     })
   );
   return results.filter(Boolean);

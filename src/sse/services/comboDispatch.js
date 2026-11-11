@@ -17,6 +17,7 @@ import { resolveSmartChoice } from "./systemoneRouter.js";
 import { filterAdapterModels } from "./keyAccess.js";
 import { recordProviderSuccess } from "./providerBreaker.js";
 import { parseModel, filterActiveComboModels } from "./model.js";
+import { getSettings } from "@/lib/localDb";
 import { errorResponse } from "open-sse/utils/error.js";
 import { HTTP_STATUS } from "open-sse/config/runtimeConfig.js";
 import { handleComboChat, handleFusionChat } from "open-sse/services/combo.js";

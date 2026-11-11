@@ -9,6 +9,14 @@ Upstream changelogs (`CHANGELOG.md` and `CHANGELOG-PRO.md`) are kept intact for 
 
 ---
 
+## 0.5.112-pro.23-t.18 (2026-11-11)
+
+- **Skip Combo Members with Disabled Provider or Inactive Accounts**:
+  - `src/sse/services/model.js` (`filterActiveComboModels`): Enhanced combo filtering to automatically check provider status from Settings (`providerStrategies` / `providerOverrides` with `disabled: true` or `isActive: false`) and account status from `providerConnections`.
+  - When all accounts of a provider are disabled (or no active connection exists), all models of that provider in a combo are cleanly skipped without error, advancing straight to the next active candidate.
+  - `src/sse/services/comboDispatch.js`: Passed live connection and settings snapshots into `filterActiveComboModels` during combo dispatch for zero-overhead validation.
+  - Added unit test `tests/unit/combo-filter-disabled-providers.test.js`.
+
 ## 0.5.112-pro.23-t.15 (2026-11-11)
 
 - **Auto-Recovery on 502/503 Failures**:
