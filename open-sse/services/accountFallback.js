@@ -35,7 +35,11 @@ function applyRule(rule, backoffLevel) {
     const newLevel = Math.min(backoffLevel + 1, BACKOFF_CONFIG.maxLevel);
     return { shouldFallback: true, cooldownMs: getQuotaCooldown(newLevel), newBackoffLevel: newLevel };
   }
-  return { shouldFallback: true, cooldownMs: rule.cooldownMs };
+  return {
+    shouldFallback: true,
+    cooldownMs: rule.cooldownMs,
+    modelScoped: Boolean(rule.modelScoped),
+  };
 }
 
 export function checkFallbackError(status, errorText, backoffLevel = 0, provider = null) {

@@ -1,9 +1,9 @@
-// T Router — Prompt Injection + injector tests (vitest, upstream harness).
+// 9Router Pro — Prompt Injection + injector tests (vitest, upstream harness).
 // Run from tests/: npx vitest run pro/prompt-injection.test.js
 import assert from "node:assert";
 import { injectSystemPrompt, injectChatTurns } from "open-sse/rtk/systemInject.js";
 import { FORMATS } from "open-sse/translator/formats.js";
-import { selectPromptInjections, cleanTemplate, cleanRule } from "@/lib/db/repos/promptInjectRepo.js";
+import { selectPromptInjections, cleanTemplate } from "@/lib/db/repos/promptInjectRepo.js";
 
 describe("injectSystemPrompt — OpenAI chat", () => {
   it("append goes after existing system text", () => {
@@ -135,18 +135,18 @@ describe("selectPromptInjections", () => {
       global: null,
       byKey: {},
       byModel: {},
-      byKeyModel: { k1: { "prov/mycombo": single("KM") } },
+      byKeyModel: { k1: { mycombo: single("KM") } },
     };
     assert.deepEqual(
-      selectPromptInjections(data, { apiKeyId: "other", resolvedModel: "prov/mycombo" }),
+      selectPromptInjections(data, { apiKeyId: "other", requestedModel: "mycombo" }),
       []
     );
     assert.deepEqual(
-      selectPromptInjections(data, { apiKeyId: "k1", resolvedModel: "prov/othermodel" }),
+      selectPromptInjections(data, { apiKeyId: "k1", requestedModel: "othermodel" }),
       []
     );
     assert.deepEqual(
-      selectPromptInjections(data, { resolvedModel: "prov/mycombo" }),
+      selectPromptInjections(data, { requestedModel: "mycombo" }),
       []
     );
     // Resolved provider/model hit inside the scope too.
@@ -229,162 +229,5 @@ describe("selectPromptInjections", () => {
     // A nameless or empty template is rejected.
     assert.equal(cleanTemplate({ id: "x", name: " ", content: "L" }), null);
     assert.equal(cleanTemplate({ id: "x", name: "N", content: "  " }), null);
-  });
-
-  it("rules: matches multiple models and multiple API keys with wildcard support", () => {
-    const rules = [
-      {
-        id: "r1",
-        name: "Multi-Model Rule",
-        enabled: true,
-        mode: "single",
-        content: "FOR_MODELS",
-        position: "prepend",
-        models: ["openai/gpt-4o", "anthropic/claude-3-5-sonnet"],
-        apiKeys: ["*"],
-      },
-      {
-        id: "r2",
-        name: "Multi-Key Rule",
-        enabled: true,
-        mode: "single",
-        content: "FOR_KEYS",
-        position: "append",
-        models: ["*"],
-        apiKeys: ["key_a", "key_b"],
-      },
-    ];
-
-    // Matches r1 (model in list, wildcard key)
-    const out1 = selectPromptInjections({ rules }, { apiKeyId: "key_c", resolvedModel: "openai/gpt-4o" });
-    assert.deepEqual(out1.map((p) => p.text), ["FOR_MODELS"]);
-
-    // Matches r2 (wildcard model, key in list)
-    const out2 = selectPromptInjections({ rules }, { apiKeyId: "key_a", resolvedModel: "other/model" });
-    assert.deepEqual(out2.map((p) => p.text), ["FOR_KEYS"]);
-
-    // Matches both r1 and r2
-    const outBoth = selectPromptInjections({ rules }, { apiKeyId: "key_b", resolvedModel: "anthropic/claude-3-5-sonnet" });
-    assert.deepEqual(outBoth.map((p) => p.text), ["FOR_MODELS", "FOR_KEYS"]);
-
-    // Matches neither
-    const outNone = selectPromptInjections({ rules }, { apiKeyId: "key_c", resolvedModel: "other/model" });
-    assert.deepEqual(outNone, []);
-  });
-
-  it("rules: matches model when using alias prefix or bare model name", () => {
-    const rules = [
-      {
-        id: "r_alias",
-        name: "Alias Match",
-        enabled: true,
-        mode: "single",
-        content: "MATCHED_ALIAS",
-        models: ["cc/claude-sonnet-4-5"],
-        apiKeys: ["*"],
-      },
-    ];
-
-    // Request routed through combo with resolvedModel "claude/claude-sonnet-4-5" and bare "claude-sonnet-4-5"
-    const out = selectPromptInjections({ rules }, {
-      requestedModel: "my-combo",
-      resolvedModel: "claude/claude-sonnet-4-5",
-      bareModel: "claude-sonnet-4-5",
-    });
-    assert.deepEqual(out.map((p) => p.text), ["MATCHED_ALIAS"]);
-  });
-
-  it("rules: stacks strictly in array order", () => {
-    const ruleA = { id: "ra", name: "A", enabled: true, mode: "single", content: "AAA", models: ["*"], apiKeys: ["*"] };
-    const ruleB = { id: "rb", name: "B", enabled: true, mode: "single", content: "BBB", models: ["*"], apiKeys: ["*"] };
-    const ruleC = { id: "rc", name: "C", enabled: true, mode: "single", content: "CCC", models: ["*"], apiKeys: ["*"] };
-
-    const out1 = selectPromptInjections({ rules: [ruleA, ruleB, ruleC] }, { resolvedModel: "m1" });
-    assert.deepEqual(out1.map((p) => p.text), ["AAA", "BBB", "CCC"]);
-
-    const out2 = selectPromptInjections({ rules: [ruleC, ruleA, ruleB] }, { resolvedModel: "m1" });
-    assert.deepEqual(out2.map((p) => p.text), ["CCC", "AAA", "BBB"]);
-  });
-
-  it("rules: live reference dynamically pulls from templates", () => {
-    const templates = [
-      { id: "tpl_1", name: "Security Persona", mode: "single", content: "You are security bot v1.", enabled: true },
-      { id: "tpl_2", name: "Chat Script", mode: "chat", turns: [{ role: "user", content: "hi" }, { role: "assistant", content: "hello" }], enabled: true },
-    ];
-
-    const rules = [
-      { id: "r_live", name: "Rule Live", enabled: true, templateId: "tpl_1", models: ["*"], apiKeys: ["*"] },
-      { id: "r_chat", name: "Rule Chat", enabled: true, templateId: "tpl_2", models: ["*"], apiKeys: ["*"] },
-    ];
-
-    const out1 = selectPromptInjections({ rules, templates }, { resolvedModel: "m1" });
-    assert.equal(out1.length, 2);
-    assert.equal(out1[0].text, "You are security bot v1.");
-    assert.equal(out1[1].mode, "chat");
-    assert.equal(out1[1].turns.length, 2);
-
-    // When template content changes dynamically, rule reflects it immediately
-    templates[0].content = "You are security bot v2 (UPDATED).";
-    const out2 = selectPromptInjections({ rules, templates }, { resolvedModel: "m1" });
-    assert.equal(out2[0].text, "You are security bot v2 (UPDATED).");
-  });
-
-  it("rules: dangling template reference falls back safely without throwing", () => {
-    const rules = [
-      { id: "r_dangling", name: "Dangling", enabled: true, templateId: "non_existent_tpl", content: "FALLBACK", models: ["*"], apiKeys: ["*"] },
-      { id: "r_broken", name: "Broken", enabled: true, templateId: "missing_no_content", models: ["*"], apiKeys: ["*"] },
-    ];
-    const out = selectPromptInjections({ rules, templates: [] }, { resolvedModel: "m1" });
-    assert.equal(out.length, 1);
-    assert.equal(out[0].text, "FALLBACK");
-  });
-
-  it("cleanRule normalizes models, keys, positions, and live template references", () => {
-    const rule = cleanRule({
-      name: "  Security Guard  ",
-      templateId: "tpl_123",
-      position: "prepend",
-      models: ["openai/gpt-4o", "  *  ", "openai/gpt-4o"],
-      apiKeys: ["  key_1  ", "key_2"],
-    });
-    assert.equal(rule.name, "Security Guard");
-    assert.equal(rule.templateId, "tpl_123");
-    assert.equal(rule.position, "prepend");
-    assert.ok(rule.models.includes("*"));
-    assert.ok(rule.models.includes("openai/gpt-4o"));
-    assert.deepEqual(rule.apiKeys, ["key_1", "key_2"]);
-    assert.ok(rule.id.startsWith("rule-"));
-  });
-});
-
-describe("rules with an explicitly empty target list", () => {
-  it("cleanRule keeps [] instead of widening it to the wildcard", () => {
-    const rule = cleanRule({ name: "Applies nowhere", mode: "single", content: "X", models: [], apiKeys: [] });
-    assert.deepEqual(rule.models, []);
-    assert.deepEqual(rule.apiKeys, []);
-  });
-
-  it("an empty list matches nothing, while a missing list stays legacy match-all", () => {
-    const none = [{
-      id: "r_none", name: "none", enabled: true, mode: "single",
-      content: "NONE", models: [], apiKeys: [],
-    }];
-    assert.deepEqual(
-      selectPromptInjections(
-        { rules: none, templates: [] },
-        { apiKeyId: "key_1", resolvedModel: "m1", requestedModel: "m1" }
-      ),
-      []
-    );
-
-    const legacy = [{
-      id: "r_legacy", name: "legacy", enabled: true, mode: "single", content: "ALL",
-    }];
-    const out = selectPromptInjections(
-      { rules: legacy, templates: [] },
-      { apiKeyId: "key_1", resolvedModel: "m1", requestedModel: "m1" }
-    );
-    assert.equal(out.length, 1);
-    assert.equal(out[0].text, "ALL");
   });
 });

@@ -1,6 +1,7 @@
 "use server";
 
 import { NextResponse } from "next/server";
+import { apiErrorResponse } from "@/lib/apiError";
 import fs from "fs/promises";
 import path from "path";
 import os from "os";
@@ -15,7 +16,7 @@ const getConfigPath = () => path.join(getJcodeConfigDir(), "config.toml");
 
 const getProviderEnvPath = () => {
   const configDir = process.env.XDG_CONFIG_HOME || path.join(os.homedir(), ".config");
-  return path.join(configDir, "jcode", "provider-trouter.env");
+  return path.join(configDir, "jcode", "provider-9router.env");
 };
 
 const checkJcodeInstalled = async () => {
@@ -44,12 +45,12 @@ const readConfig = async () => {
   }
 };
 
-const hasTRouterConfig = (config) => {
+const has9RouterConfig = (config) => {
   if (!config || !config.providers) return false;
 
   const providers = config.providers;
 
-  if (providers["trouter"]) return true;
+  if (providers["9router"]) return true;
 
   for (const [name, provider] of Object.entries(providers)) {
     if (provider.base_url && provider.base_url.includes("localhost:20126")) {
@@ -118,13 +119,12 @@ export async function GET() {
   }
 
   const config = await readConfig();
-  const hasTRouter = hasTRouterConfig(config);
+  const has9Router = has9RouterConfig(config);
 
   return NextResponse.json({
     installed: true,
     config,
-    hasTRouter,
-    hasTRouter: hasTRouter, has9Router: hasTRouter,
+    has9Router,
     configPath: getConfigPath(),
   });
 }
@@ -150,12 +150,12 @@ export async function POST(request) {
       config.providers = {};
     }
 
-    config.providers["trouter"] = {
+    config.providers["9router"] = {
       type: "openai-compatible",
       base_url: normalizedBaseUrl,
       auth: "bearer",
-      api_key_env: "JCODE_TROUTER_API_KEY",
-      env_file: "provider-trouter.env",
+      api_key_env: "JCODE_9ROUTER_API_KEY",
+      env_file: "provider-9router.env",
       default_model: models && models.length > 0 ? models[0] : "cc/claude-opus-4-7",
       requires_api_key: true,
     };
@@ -170,20 +170,17 @@ export async function POST(request) {
     await fs.mkdir(jcodeConfigDir, { recursive: true });
 
     const env = await readProviderEnv();
-    env.JCODE_TROUTER_API_KEY = apiKey;
+    env.JCODE_9ROUTER_API_KEY = apiKey;
     await writeProviderEnv(env);
 
     return NextResponse.json({
       success: true,
-      message: "jcode configured successfully. Use: jcode --provider-profile trouter",
+      message: "jcode configured successfully. Use: jcode --provider-profile 9router",
       configPath: getConfigPath(),
     });
   } catch (error) {
     console.error("Error configuring jcode:", error);
-    return NextResponse.json(
-      { error: error.message },
-      { status: 500 }
-    );
+    return apiErrorResponse(error, { code: "jcode_configure_failed", message: "Failed to configure jcode" });
   }
 }
 
@@ -195,12 +192,12 @@ export async function DELETE() {
       return NextResponse.json({ success: true, message: "No configuration to remove" });
     }
 
-    delete config.providers["trouter"];
+    delete config.providers["9router"];
 
     await writeConfig(config);
 
     const env = await readProviderEnv();
-    delete env.JCODE_TROUTER_API_KEY;
+    delete env.JCODE_9ROUTER_API_KEY;
     await writeProviderEnv(env);
 
     return NextResponse.json({
@@ -209,9 +206,6 @@ export async function DELETE() {
     });
   } catch (error) {
     console.error("Error removing jcode configuration:", error);
-    return NextResponse.json(
-      { error: error.message },
-      { status: 500 }
-    );
+    return apiErrorResponse(error, { code: "jcode_remove_failed", message: "Failed to remove jcode configuration" });
   }
 }

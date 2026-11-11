@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getModelAliases, setModelAlias, getCustomModels } from "@/models";
 import { getDisabledModels } from "@/lib/disabledModelsDb";
+import { sanitizeModelCapsOverride } from "@/shared/constants/models";
 import { AI_MODELS } from "@/shared/constants/config";
 import { getProviderAlias, ALIAS_TO_ID } from "@/shared/constants/providers";
 import { getCapabilitiesForModel } from "open-sse/providers/capabilities.js";
@@ -74,33 +75,39 @@ export async function GET(request) {
     // resolve the survivors' provider id, not the UI alias: the capability
     // tables are keyed by provider id, and an alias like `ocg` misses the
     // provider-scoped entries and falls back to the generic patterns.
-    const seenFull = new Set(models.map((m) => m.fullModel));
-    const routedEntry = new Map(models.map((m) => [m.routedModel, m]));
-    const customModels = (await getCustomModels()).filter((m) => {
-      if (!m?.id || (m.kind || m.type || "llm") !== "llm") return false;
+    //
+    // Exception: a shadow row carrying an editor override (`capsOverride`,
+    // sparse — only the fields the user set) is NOT dropped. Its override
+    // merges onto the listed entry instead, so editing a detected model
+    // publishes the edited numbers (contextWindow/maxOutput included) to
+    // clients that read /api/models. Legacy rows have no capsOverride, so
+    // their drop behavior is unchanged.
+    const customRows = (await getCustomModels()).filter((m) => m?.id && (m.kind || m.type || "llm") === "llm");
+    const byRouted = new Map(models.map((m) => [m.routedModel, m]));
+    const byFull = new Map(models.map((m) => [m.fullModel, m]));
+    const customModels = [];
+    for (const m of customRows) {
       if (!includeDisabled) {
         const aliasList = disabled[m.providerAlias] || [];
         const idList = (ALIAS_TO_ID[m.providerAlias] && disabled[ALIAS_TO_ID[m.providerAlias]]) || [];
-        if (aliasList.includes(m.id) || idList.includes(m.id)) return false;
+        if (aliasList.includes(m.id) || idList.includes(m.id)) continue;
       }
       const key = `${m.providerAlias}/${m.id}`;
-      const isKnown = routedEntry.has(key) || seenFull.has(key);
-      // A custom row carrying explicit caps for an existing built-in model is
-      // a caps OVERRIDE, not a shadow — keep it so the merge below applies.
-      // Without this, the shadow drop discarded every hand-set capability and
-      // a built-in model could never be marked vision for a combo pool.
-      const hasCaps = !!(m.caps && Object.keys(m.caps).length);
-      return isKnown ? hasCaps : true;
-    });
-    for (const m of customModels) {
-      const fullModel = `${m.providerAlias}/${m.id}`;
-      const builtIn = routedEntry.get(fullModel);
-      if (builtIn) {
-        // Merge onto the built-in entry in place; the client's last-write-wins
-        // cap map then serves the overridden value.
-        builtIn.caps = { ...(builtIn.caps || {}), ...(m.caps || {}) };
+      const target = byRouted.get(key) || byFull.get(key);
+      if (target) {
+        const override = sanitizeModelCapsOverride(m.capsOverride);
+        if (override && Object.keys(override).length > 0) {
+          target.caps = { ...target.caps, ...override };
+        }
+        if (m.caps && Object.keys(m.caps).length > 0) {
+          target.caps = { ...target.caps, ...m.caps };
+        }
         continue;
       }
+      customModels.push(m);
+    }
+    for (const m of customModels) {
+      const fullModel = `${m.providerAlias}/${m.id}`;
       const providerId = ALIAS_TO_ID[m.providerAlias] || m.providerAlias;
       const c = getCapabilitiesForModel(providerId, m.id);
       models.push({
@@ -117,6 +124,7 @@ export async function GET(request) {
           contextWindow: c.contextWindow,
           maxOutput: c.maxOutput,
           ...(m.caps || {}),
+          ...(sanitizeModelCapsOverride(m.capsOverride) || {}),
         },
       });
     }

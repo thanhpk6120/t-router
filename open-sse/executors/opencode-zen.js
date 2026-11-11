@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import { parseOpencodeRateLimitReset } from "../utils/opencodeResetTime.js";
 import { DefaultExecutor } from "./default.js";
 import { resolveSessionId } from "../utils/sessionManager.js";
 import { isMuseSparkModel, isOpencodeFreeTierModel } from "../providers/models/helpers.js";
@@ -238,6 +239,14 @@ function sanitizeResponsesItems(body) {
 export class OpenCodeZenExecutor extends DefaultExecutor {
   constructor() {
     super("opencode-zen");
+  }
+
+  // Same upstream free-tier 429 shape as the main opencode executor — parse
+  // the precise resetsAtMs; fallback to default otherwise
+  parseError(response, bodyText) {
+    const reset = parseOpencodeRateLimitReset(response, bodyText);
+    if (reset) return { status: 429, message: reset.message, resetsAtMs: reset.resetsAtMs };
+    return super.parseError(response, bodyText);
   }
 
   buildUrl(model, stream, urlIndex = 0, credentials = null) {

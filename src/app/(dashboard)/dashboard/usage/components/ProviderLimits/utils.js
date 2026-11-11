@@ -1,6 +1,7 @@
 import { getModelsByProviderId } from "open-sse/config/providerModels.js";
 
 // ─── Constants ───────────────────────────────────────────────────────────────
+export const QUOTA_CACHE_KEY = "quotaCacheData";
 export const REFRESH_INTERVAL_MS = 60000;
 // Claude usage/quota endpoint rate-limits; poll it less often than other providers
 export const CLAUDE_REFRESH_INTERVAL_MS = 600000;
@@ -117,7 +118,7 @@ export function getConnectionsPageRange(pagination) {
   return { start, end };
 }
 
-export function getConnectionsEmptyMessage(totals, providerFilter, accountFilter, providerLabelText) {
+export function getConnectionsEmptyMessage(totals, providerFilter, accountFilter) {
   if (!totals.eligibleConnections) {
     return {
       icon: "cloud_off",
@@ -133,7 +134,7 @@ export function getConnectionsEmptyMessage(totals, providerFilter, accountFilter
       description:
         providerFilter === "all"
           ? "Try changing the account status filter to see more quota trackers."
-          : `No ${accountFilter === "inactive" ? "turned off" : accountFilter === "active" ? "active" : "matching"} accounts found for ${providerLabelText || providerFilter}.`,
+          : `No ${accountFilter === "inactive" ? "turned off" : accountFilter === "active" ? "active" : "matching"} accounts found for ${providerFilter}.`,
     };
   }
   return {
@@ -191,6 +192,31 @@ export function getProviderOptions(dataProviderOptions) {
 
 export async function reconcileConnectionsPage(fetchConnections, targetPage) {
   return await fetchConnections(targetPage);
+}
+
+export function getQuotaCache() {
+  if (typeof window === "undefined") return {};
+  try {
+    const cached = window.localStorage.getItem(QUOTA_CACHE_KEY);
+    return cached ? JSON.parse(cached) : {};
+  } catch (error) {
+    console.error("Error reading quota cache:", error);
+    return {};
+  }
+}
+
+export function setQuotaCache(connectionId, quotaEntry) {
+  if (typeof window === "undefined") return;
+  try {
+    const cache = getQuotaCache();
+    cache[connectionId] = {
+      ...quotaEntry,
+      cachedAt: new Date().toISOString(),
+    };
+    window.localStorage.setItem(QUOTA_CACHE_KEY, JSON.stringify(cache));
+  } catch (error) {
+    console.error("Error writing quota cache:", error);
+  }
 }
 
 /**
@@ -356,10 +382,11 @@ export function parseQuotaData(provider, data) {
       case "antigravity":
         if (data.quotas) {
           const entries = Object.entries(data.quotas);
-          const weeklyKeys = new Set(["gemini_weekly", "claude_gpt_weekly"]);
-          const sessionKeys = new Set(["gemini_session", "claude_gpt_session"]);
+          const weeklyKeys = new Set(["gemini_weekly", "claude_gpt_weekly", "gemini_argon_weekly"]);
+          const sessionKeys = new Set(["gemini_session", "claude_gpt_session", "gemini_argon_session"]);
           const summaryKeys = new Set([...weeklyKeys, ...sessionKeys]);
-          const geminiModels = entries.filter(([k]) => k.startsWith("gemini-") && !k.includes("image"));
+          const argonModels = entries.filter(([k]) => k.startsWith("gemini-") && k.includes("argon"));
+          const geminiModels = entries.filter(([k]) => k.startsWith("gemini-") && !k.includes("image") && !k.includes("argon"));
           const claudeModels = entries.filter(([k]) => k.startsWith("claude-"));
           const imageModels = entries.filter(([k]) => k.includes("image"));
           const summaryModels = entries.filter(([k]) => summaryKeys.has(k));
@@ -368,10 +395,12 @@ export function parseQuotaData(provider, data) {
           // Summary keys from retrieveUserQuotaSummary
           const hasGeminiWeekly = Boolean(data.quotas.gemini_weekly);
           const hasGeminiSession = Boolean(data.quotas.gemini_session);
+          const hasArgonWeekly = Boolean(data.quotas.gemini_argon_weekly);
+          const hasArgonSession = Boolean(data.quotas.gemini_argon_session);
           const hasClaudeWeekly = Boolean(data.quotas.claude_gpt_weekly);
           const hasClaudeSession = Boolean(data.quotas.claude_gpt_session);
 
-          // 1. Gemini Family:
+          // 1. Gemini Family (Flash / Pro):
           if (hasGeminiSession) {
             summaryModels.filter(([k]) => k === "gemini_session").forEach(([modelKey, quota]) => {
               normalizedQuotas.push({
@@ -406,6 +435,53 @@ export function parseQuotaData(provider, data) {
           // Show Gemini weekly row if present
           if (hasGeminiWeekly) {
             summaryModels.filter(([k]) => k === "gemini_weekly").forEach(([modelKey, quota]) => {
+              normalizedQuotas.push({
+                name: quota.displayName || modelKey,
+                modelKey,
+                used: quota.used || 0,
+                total: quota.total || 0,
+                resetAt: quota.resetAt || null,
+                remainingPercentage: quota.remainingPercentage,
+              });
+            });
+          }
+
+          // 1b. Gemini 4 Argon Family (separate quota bucket on Pro plans):
+          if (hasArgonSession) {
+            summaryModels.filter(([k]) => k === "gemini_argon_session").forEach(([modelKey, quota]) => {
+              normalizedQuotas.push({
+                name: quota.displayName || modelKey,
+                modelKey,
+                used: quota.used || 0,
+                total: quota.total || 0,
+                resetAt: quota.resetAt || null,
+                remainingPercentage: quota.remainingPercentage,
+              });
+            });
+          } else if (!hasArgonWeekly && argonModels.length > 0) {
+            const rep = argonModels.reduce((min, cur) =>
+              (cur[1].remainingPercentage ?? 100) < (min[1].remainingPercentage ?? 100) ? cur : min
+            )[1];
+            const geminiSessionResetAt = data.quotas.gemini_session?.resetAt;
+            const geminiWeeklyResetAt = data.quotas.gemini_weekly?.resetAt;
+            const sharesMainGeminiPool =
+              (hasGeminiSession && rep.resetAt === geminiSessionResetAt && rep.remainingPercentage === data.quotas.gemini_session?.remainingPercentage) ||
+              (hasGeminiWeekly && rep.resetAt === geminiWeeklyResetAt && rep.remainingPercentage === data.quotas.gemini_weekly?.remainingPercentage);
+
+            if (!sharesMainGeminiPool) {
+              normalizedQuotas.push({
+                name: "Gemini 4 Argon",
+                modelKey: "gemini_argon",
+                used: rep.used || 0,
+                total: rep.total || 0,
+                resetAt: rep.resetAt || null,
+                remainingPercentage: rep.remainingPercentage,
+              });
+            }
+          }
+
+          if (hasArgonWeekly) {
+            summaryModels.filter(([k]) => k === "gemini_argon_weekly").forEach(([modelKey, quota]) => {
               normalizedQuotas.push({
                 name: quota.displayName || modelKey,
                 modelKey,
@@ -734,6 +810,22 @@ export function parseQuotaData(provider, data) {
         }
         break;
 
+      case "clinepass":
+        // five_hour / weekly / monthly percentUsed windows from
+        // /api/v1/users/me/plan/usage-limits. remainingPercentage only.
+        if (data.quotas) {
+          Object.entries(data.quotas).forEach(([name, quota]) => {
+            normalizedQuotas.push({
+              name,
+              used: quota.used || 0,
+              total: quota.total || 0,
+              resetAt: quota.resetAt || null,
+              remainingPercentage: quota.remainingPercentage,
+            });
+          });
+        }
+        break;
+
       case "zed":
         // Edit predictions + optional hosted model_requests; unlimited uses remainingPercentage.
         if (data.quotas) {
@@ -815,8 +907,10 @@ export function parseQuotaData(provider, data) {
       // Use modelKey for antigravity (mapped to family anchor), otherwise use name
       let keyA = a.modelKey || a.name;
       let keyB = b.modelKey || b.name;
+      if (keyA === "gemini_argon" || keyA === "gemini_argon_session") keyA = "gemini-4-argon-high";
       if (keyA === "gemini" || keyA === "gemini_session") keyA = "gemini-3.8-flash-high";
       if (keyA === "claude" || keyA === "claude_gpt_session") keyA = "claude-sonnet-4-6";
+      if (keyB === "gemini_argon" || keyB === "gemini_argon_session") keyB = "gemini-4-argon-high";
       if (keyB === "gemini" || keyB === "gemini_session") keyB = "gemini-3.8-flash-high";
       if (keyB === "claude" || keyB === "claude_gpt_session") keyB = "claude-sonnet-4-6";
       const orderA = orderMap.get(keyA) ?? 999;

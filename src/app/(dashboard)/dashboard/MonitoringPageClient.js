@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import Link from "next/link";
 import dynamic from "next/dynamic";
 import Card from "@/shared/components/Card";
 import OverviewCards from "@/app/(dashboard)/dashboard/usage/components/OverviewCards";
@@ -104,6 +105,11 @@ export default function MonitoringPageClient() {
     ? (sys.disk.usedBytes / sys.disk.totalBytes) * 100
     : null;
 
+  // Brand-new instance (no providers, no API keys yet): show the three first steps
+  const isFreshInstall = !loading && !!mon
+    && (mon.providers?.total || 0) === 0
+    && (mon.keys?.total || 0) === 0;
+
   return (
     <div className="flex min-w-0 flex-col gap-4 p-4 sm:p-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -119,6 +125,37 @@ export default function MonitoringPageClient() {
           Refresh
         </button>
       </div>
+
+      {isFreshInstall ? (
+        <Card className="p-4 sm:p-5">
+          <div className="flex items-start gap-3">
+            <span className="material-symbols-outlined text-[22px] text-primary">rocket_launch</span>
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-semibold text-white">Bắt đầu nhanh trong 1 phút — không cần thiết lập provider</p>
+              <p className="mt-1 text-sm leading-6 text-text-muted">
+                Router đã có thể trả lời thông qua luồng miễn phí (OpenCode Free). Bạn không cần có API key của provider nào để trải nghiệm.
+              </p>
+              <ol className="mt-3 flex flex-col gap-2 text-sm leading-6 text-text-muted">
+                <li>
+                  <span className="font-semibold text-white">1.</span>{" "}
+                  <Link href="/dashboard/basic-chat" className="font-semibold text-primary underline">Trải nghiệm chat tại Basic Chat</Link>
+                  {" "}— chọn model OpenCode Free và gửi tin nhắn đầu tiên.
+                </li>
+                <li>
+                  <span className="font-semibold text-white">2.</span>{" "}
+                  <Link href="/dashboard/endpoint" className="font-semibold text-primary underline">Tạo API key</Link>
+                  {" "}— đoạn mã curl mẫu sẵn sàng sử dụng tại trang Endpoint &amp; Key.
+                </li>
+                <li>
+                  <span className="font-semibold text-white">3.</span>{" "}
+                  <Link href="/dashboard/providers" className="font-semibold text-primary underline">Kết nối nhà cung cấp</Link>
+                  {" "}— khi bạn muốn sử dụng các model trả phí hoặc tài khoản riêng.
+                </li>
+              </ol>
+            </div>
+          </div>
+        </Card>
+      ) : null}
 
       {stats ? (
         <OverviewCards stats={stats} series={series} />

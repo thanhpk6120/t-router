@@ -4,14 +4,14 @@ import { adjustMaxTokens } from "../formats/maxTokens.js";
 import { encodeDataUri } from "../concerns/image.js";
 import { ROLE, OPENAI_BLOCK, CLAUDE_BLOCK } from "../schema/index.js";
 import { collapseTextParts } from "../concerns/message.js";
-import { gateAndPruneTools } from "../concerns/dynamicToolGating.js";
+
 function stripAnthropicBillingHeader(text) {
   if (typeof text !== "string") return "";
   return text.replace(/^x-anthropic-billing-header:[^\n]*(?:\r?\n)?/i, "");
 }
 
 // Convert Claude request to OpenAI format
-export function claudeToOpenAIRequest(model, body, stream) {
+export function claudeToOpenAIRequest(model, body, stream, credentials, opts = {}) {
   const result = {
     model: model,
     messages: [],
@@ -30,11 +30,28 @@ export function claudeToOpenAIRequest(model, body, stream) {
 
   // System message
   if (body.system) {
-    const systemContent = Array.isArray(body.system)
+    let systemContent = Array.isArray(body.system)
       ? body.system.map(s => stripAnthropicBillingHeader(s.text || "")).filter(Boolean).join("\n")
       : stripAnthropicBillingHeader(body.system);
+
+    if (opts.preserveCacheControl && Array.isArray(body.system) && body.system.some(s => s.cache_control)) {
+      const systemParts = [];
+      for (const block of body.system) {
+        const text = stripAnthropicBillingHeader(block.text || "");
+        if (text) {
+          systemParts.push({ type: OPENAI_BLOCK.TEXT, text,
+            ...(block.cache_control ? { cache_control: block.cache_control } : {}),
+          });
+        } else if (block.cache_control && systemParts.length) {
+          // Removing a billing-only block must not remove its prefix cache boundary.
+          systemParts[systemParts.length - 1].cache_control = block.cache_control;
+        }
+      }
+      systemContent = systemParts.some(s => s.cache_control)
+        ? systemParts : systemParts.map(s => s.text).join("\n");
+    }
     
-    if (systemContent) {
+    if (Array.isArray(systemContent) ? systemContent.length > 0 : systemContent) {
       result.messages.push({
         role: ROLE.SYSTEM,
         content: systemContent
@@ -46,7 +63,7 @@ export function claudeToOpenAIRequest(model, body, stream) {
   if (body.messages && Array.isArray(body.messages)) {
     for (let i = 0; i < body.messages.length; i++) {
       const msg = body.messages[i];
-      const converted = convertClaudeMessage(msg);
+      const converted = convertClaudeMessage(msg, opts);
       if (converted) {
         // Handle array of messages (multiple tool results)
         if (Array.isArray(converted)) {
@@ -63,25 +80,16 @@ export function claudeToOpenAIRequest(model, body, stream) {
   // (distinct from the global immediate-next check in concerns/toolCall, runs on the openai leg).
   fixMissingToolResponsesOpenAI(result.messages);
 
-  // Tools (gated & sanitized for OpenAI/non-Anthropic limits)
+  // Tools
   if (body.tools && Array.isArray(body.tools)) {
-    const gatedTools = gateAndPruneTools(body.tools, {
-      messages: body.messages,
-      toolChoice: body.tool_choice,
-    });
-    result.tools = gatedTools
-      .filter(tool => {
-        const name = tool.name || tool.function?.name;
-        return typeof name === "string" && name.trim().length > 0;
-      })
-      .map(tool => ({
-        type: OPENAI_BLOCK.FUNCTION,
-        function: {
-          name: (tool.name || tool.function?.name).trim(),
-          description: String(tool.description || tool.function?.description || ""),
-          parameters: tool.input_schema || tool.function?.parameters || tool.parameters || { type: "object", properties: {} }
-        }
-      }));
+    result.tools = body.tools.map(tool => ({
+      type: OPENAI_BLOCK.FUNCTION,
+      function: {
+        name: tool.name,
+        description: String(tool.description || ""),
+        parameters: tool.input_schema || { type: "object", properties: {} }
+      }
+    }));
   }
 
   // Tool choice
@@ -91,6 +99,8 @@ export function claudeToOpenAIRequest(model, body, stream) {
 
   if (body.reasoning_effort !== undefined) {
     result.reasoning_effort = body.reasoning_effort;
+  } else if (body.output_config?.effort !== undefined) {
+    result.reasoning_effort = body.output_config.effort;
   } else if (body.reasoning?.effort !== undefined) {
     result.reasoning_effort = body.reasoning.effort;
   }
@@ -150,7 +160,7 @@ function systemReminderText(content) {
 }
 
 // Convert single Claude message - returns single message or array of messages
-function convertClaudeMessage(msg) {
+function convertClaudeMessage(msg, opts = {}) {
   // Some clients send content as a single block object; normalize to the
   // one-element array every branch below (the system-reminder fold included)
   // expects. Must run BEFORE the role branch: systemReminderText only reads
@@ -180,7 +190,9 @@ function convertClaudeMessage(msg) {
     for (const block of msg.content) {
       switch (block.type) {
         case CLAUDE_BLOCK.TEXT:
-          parts.push({ type: OPENAI_BLOCK.TEXT, text: block.text });
+          parts.push({ type: OPENAI_BLOCK.TEXT, text: block.text,
+            ...(opts.preserveCacheControl && block.cache_control ? { cache_control: block.cache_control } : {}),
+          });
           break;
 
         case CLAUDE_BLOCK.IMAGE:
@@ -246,7 +258,7 @@ function convertClaudeMessage(msg) {
     // If has tool results, return array of tool messages
     if (toolResults.length > 0) {
       if (parts.length > 0) {
-        return [...toolResults, { role: ROLE.USER, content: collapseTextParts(parts) }];
+        return [...toolResults, { role: ROLE.USER, content: collapseTextParts(parts, opts) }];
       }
       return toolResults;
     }
@@ -255,7 +267,7 @@ function convertClaudeMessage(msg) {
     if (toolCalls.length > 0) {
       const result = { role: ROLE.ASSISTANT };
       if (parts.length > 0) {
-        result.content = collapseTextParts(parts);
+        result.content = collapseTextParts(parts, opts);
       }
       result.tool_calls = toolCalls;
       return result;
@@ -265,7 +277,7 @@ function convertClaudeMessage(msg) {
     if (parts.length > 0) {
       return {
         role,
-        content: collapseTextParts(parts)
+        content: collapseTextParts(parts, opts)
       };
     }
     

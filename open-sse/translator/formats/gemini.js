@@ -1,13 +1,13 @@
 // Gemini helper functions for translator
 
 import { safeParseJSON } from "../concerns/json.js";
-import { OPENAI_BLOCK } from "../schema/index.js";
+import { DEFAULT_IMAGE_MIME, OPENAI_BLOCK } from "../schema/index.js";
 import { isGemini4Model } from "../../providers/capabilities.js";
 
 // Unsupported JSON Schema constraints that should be removed for Antigravity
 export const UNSUPPORTED_SCHEMA_CONSTRAINTS = [
   // Basic constraints (not supported by Gemini API)
-  "minimum", "maximum", "minLength", "maxLength", "exclusiveMinimum", "exclusiveMaximum",
+  "minLength", "maxLength", "exclusiveMinimum", "exclusiveMaximum",
   "minItems", "maxItems", "format", "multipleOf",
   // Array keywords the Gemini schema proto has no field for. Agent tool
   // schemas set these routinely, and one occurrence rejects the whole request
@@ -30,7 +30,7 @@ export const UNSUPPORTED_SCHEMA_CONSTRAINTS = [
   // Dependency keywords (not supported)
   "dependencies", "dependentSchemas", "dependentRequired",
   // Other unsupported keywords
-  "title", "optional", "deprecated", "if", "then", "else", "contentMediaType", "contentEncoding",
+  "title", "optional", "~optional", "deprecated", "if", "then", "else", "contentMediaType", "contentEncoding",
   // UI/Styling properties (from Cursor tools - NOT JSON Schema standard)
   "cornerRadius", "fillColor", "fontFamily", "fontSize", "fontWeight",
   "gap", "padding", "strokeColor", "strokeThickness", "textColor",
@@ -51,6 +51,17 @@ export const DEFAULT_SAFETY_SETTINGS = [
   { category: "HARM_CATEGORY_HARASSMENT", threshold: "OFF" },
   { category: "HARM_CATEGORY_CIVIC_INTEGRITY", threshold: "OFF" }
 ];
+
+function remoteImageMimeType(url) {
+  let pathname;
+  try { pathname = new URL(url).pathname.toLowerCase(); }
+  catch { return DEFAULT_IMAGE_MIME; }
+  if (pathname.endsWith(".jpg") || pathname.endsWith(".jpeg")) return "image/jpeg";
+  if (pathname.endsWith(".webp")) return "image/webp";
+  if (pathname.endsWith(".gif")) return "image/gif";
+  if (pathname.endsWith(".bmp")) return "image/bmp";
+  return DEFAULT_IMAGE_MIME;
+}
 
 // Convert OpenAI content to Gemini parts
 export function convertOpenAIContentToParts(content) {
@@ -76,7 +87,7 @@ export function convertOpenAIContentToParts(content) {
         }
       } else if (item.type === OPENAI_BLOCK.IMAGE_URL && item.image_url?.url && (item.image_url.url.startsWith("http://") || item.image_url.url.startsWith("https://"))) {
         parts.push({
-          fileData: { fileUri: item.image_url.url, mimeType: "image/*" }
+          fileData: { fileUri: item.image_url.url, mimeType: remoteImageMimeType(item.image_url.url) }
         });
       } else if (item.type === OPENAI_BLOCK.INPUT_AUDIO && item.input_audio?.data) {
         const format = item.input_audio.format || "wav";
@@ -156,10 +167,6 @@ function removeUnsupportedKeywords(obj, keywords) {
   }
 
   for (const key of Object.keys(obj)) {
-    if (!key || typeof key !== "string" || !key.trim()) {
-      delete obj[key];
-      continue;
-    }
     if (keywords.includes(key) || key.startsWith("x-")) {
       delete obj[key];
       continue;

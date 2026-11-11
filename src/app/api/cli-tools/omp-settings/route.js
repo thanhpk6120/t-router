@@ -1,6 +1,7 @@
 "use server";
 
 import { NextResponse } from "next/server";
+import { apiErrorResponse } from "@/lib/apiError";
 import { resolveCliApiKey } from "../resolveApiKey.js";
 import fs from "fs/promises";
 import path from "path";
@@ -10,7 +11,7 @@ import { promisify } from "util";
 
 const execAsync = promisify(exec);
 
-const PROVIDER_ID = "trouter";
+const PROVIDER_ID = "9router";
 const getOmpDir = () => path.join(os.homedir(), ".omp", "agent");
 const getOmpDbPath = () => path.join(getOmpDir(), "agent.db");
 const getOmpModelsYmlPath = () => path.join(getOmpDir(), "models.yml");
@@ -44,12 +45,12 @@ const readModelsYml = async () => {
   }
 };
 
-const hasTRouterInYml = (content) => {
+const has9RouterInYml = (content) => {
   if (!content) return false;
   return content.includes("9router:") || content.includes("localhost:20126");
 };
 
-// Build standard T routervider block for models.yml
+// Build standard 9Router provider block for models.yml
 const buildOmpProviderYaml = (baseUrl, apiKey) => {
   const normalizedBaseUrl = baseUrl.endsWith("/v1") ? baseUrl : `${baseUrl}/v1`;
   const key = apiKey || "";
@@ -75,16 +76,15 @@ export async function GET() {
     }
 
     const ymlContent = await readModelsYml();
-    const hasTRouter = hasTRouterInYml(ymlContent);
+    const has9Router = has9RouterInYml(ymlContent);
 
     return NextResponse.json({
       installed: true,
-      hasTRouter,
-      hasTRouter: hasTRouter, has9Router: hasTRouter,
+      has9Router,
       configPath: getOmpModelsYmlPath(),
     });
   } catch (err) {
-    return NextResponse.json({ error: { message: err.message } }, { status: 500 });
+    return apiErrorResponse(err, { code: "omp_settings_failed", message: "Failed to load or save OMP settings" });
   }
 }
 
@@ -109,7 +109,7 @@ export async function POST(request) {
     let ymlContent = await readModelsYml();
     const providerBlock = buildOmpProviderYaml(baseUrl, resolvedKey);
 
-    // Remove existing t routervider if present
+    // Remove existing 9router provider if present
     const regex = new RegExp(`\\s*${PROVIDER_ID}:[\\s\\S]*?(?=\\n\\s*\\w+:|$)`, "g");
     ymlContent = ymlContent.replace(regex, "");
 
@@ -153,11 +153,11 @@ export async function POST(request) {
 
     return NextResponse.json({
       success: true,
-      message: "Oh My Pi settings applied! Run 'omp' and all T-Router models appear under 9router in /model.",
+      message: "Oh My Pi settings applied! Run 'omp' and all 9Router models appear under 9router in /model.",
       configPath: getOmpModelsYmlPath(),
     });
   } catch (err) {
-    return NextResponse.json({ error: { message: err.message } }, { status: 500 });
+    return apiErrorResponse(err, { code: "omp_settings_failed", message: "Failed to load or save OMP settings" });
   }
 }
 
@@ -175,9 +175,9 @@ export async function DELETE() {
 
     return NextResponse.json({
       success: true,
-      message: "T-Router removed from Oh My Pi",
+      message: "9Router removed from Oh My Pi",
     });
   } catch (err) {
-    return NextResponse.json({ error: { message: err.message } }, { status: 500 });
+    return apiErrorResponse(err, { code: "omp_settings_failed", message: "Failed to load or save OMP settings" });
   }
 }

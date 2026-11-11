@@ -2,7 +2,6 @@ import { translateResponse, initState } from "../translator/index.js";
 import { FORMATS } from "../translator/formats.js";
 import { PROVIDERS } from "../config/providers.js";
 import { liftReasoningAliases } from "../translator/concerns/reasoning.js";
-import { fromOpenAIFinish } from "../translator/concerns/finishReason.js";
 import { trackPendingRequest, appendRequestLog } from "@/lib/usageDb.js";
 import { extractUsage, mergeUsage, hasValidUsage, estimateUsage, logUsage, addBufferToUsage, filterUsageForFormat, COLORS } from "./usageTracking.js";
 import { parseSSELine, hasValuableContent, fixInvalidId, formatSSE, ensureStreamToolCallIds } from "./streamHelpers.js";
@@ -97,15 +96,6 @@ export function createSSEStream(options = {}) {
   let openAIResponsesTerminalSeen = false;
   let openAIResponsesDoneSent = false;
   let streamDoneSent = false;  // track duplicate [DONE] across transform + flush
-  let openAIFinishReasonSeen = false;
-  // Passthrough has no translator state, so the Anthropic terminal pair has to be
-  // tracked here: an upstream that closes mid-turn never sends message_stop, and
-  // an Anthropic SDK client then waits for it until its own timeout.
-  let claudeTerminalSeen = false;
-  // Anthropic passthrough: a tool_use block means the turn closes with stop_reason
-  // "tool_use", not "end_turn". Tracked from content_block_start, the only place
-  // that names the block type.
-  let claudeToolUseSeen = false;
   let finalized = false;
   let completionFlushTimer = null;
 
@@ -189,14 +179,8 @@ export function createSSEStream(options = {}) {
           let injectedUsage = false;
           let responsesTerminal = false;
 
-          // Anthropic terminal pair is emitted as its own two SSE events, so it can
-          // arrive on an `event:` line, a `data:` line, or both.
-          if (sourceFormat === FORMATS.CLAUDE && (trimmed === "event: message_stop" || trimmed.includes('"type":"message_stop"'))) {
-            claudeTerminalSeen = true;
-          }
-          if (sourceFormat === FORMATS.CLAUDE && trimmed.includes('"type":"tool_use"')) {
-            claudeToolUseSeen = true;
-          }
+          // Upstream already sent the sentinel; flush() must not append a second one.
+          if (trimmed.startsWith("data:") && trimmed.slice(5).trim() === "[DONE]") streamDoneSent = true;
 
           if (trimmed.startsWith("data:") && trimmed.slice(5).trim() !== "[DONE]") {
             try {
@@ -295,19 +279,6 @@ export function createSSEStream(options = {}) {
               responsesTerminal = isOpenAIResponsesTerminalEvent(currentOpenAIResponsesEvent, parsed);
 
               const isFinishChunk = parsed.choices?.[0]?.finish_reason;
-              if (isFinishChunk) {
-                openAIFinishReasonSeen = true;
-              }
-              // DeepSeek-family lanes end a turn that DID emit tool calls with
-              // finish_reason "stop". OpenAI clients gate tool execution on
-              // "tool_calls", so they read the turn as a finished answer and
-              // never run the calls. Mirror the non-streaming handlers.
-              if (isFinishChunk === "stop" && seenToolCallIds.size > 0) {
-                for (const choice of parsed.choices) {
-                  if (choice.finish_reason === "stop") choice.finish_reason = "tool_calls";
-                }
-                fieldsInjected = true;
-              }
               if (isFinishChunk && !hasValidUsage(parsed.usage)) {
                 const estimated = estimateUsage(body, totalContentLength, FORMATS.OPENAI);
                 parsed.usage = filterUsageForFormat(estimated, FORMATS.OPENAI);
@@ -381,46 +352,6 @@ export function createSSEStream(options = {}) {
             controller.enqueue(sharedEncoder.encode(failedOutput));
             openAIResponsesTerminalSeen = true;
             sseEmittedCount++;
-          }
-
-          if (sourceFormat === FORMATS.OPENAI && !openAIFinishReasonSeen) {
-            const fallbackFinish = state?.finishReason || ((state?.geminiToolCallCount > 0 || state?.toolCalls?.size > 0 || state?.hadToolCalls) ? "tool_calls" : "stop");
-            const finishChunk = {
-              id: state?.messageId ? `chatcmpl-${state.messageId}` : `chatcmpl-${Date.now()}`,
-              object: "chat.completion.chunk",
-              created: Math.floor(Date.now() / 1000),
-              model: model || state?.model || "unknown",
-              choices: [{ index: 0, delta: {}, finish_reason: fallbackFinish, logprobs: null }]
-            };
-            if (state?.usage) {
-              finishChunk.usage = state.usage;
-            }
-            const finishOutput = `data: ${JSON.stringify(finishChunk)}\n\n`;
-            reqLogger?.appendConvertedChunk?.(finishOutput);
-            controller.enqueue(sharedEncoder.encode(finishOutput));
-            openAIFinishReasonSeen = true;
-          }
-
-          if (sourceFormat === FORMATS.OPENAI && !streamDoneSent) {
-            const doneOutput = "data: [DONE]\n\n";
-            reqLogger?.appendConvertedChunk?.(doneOutput);
-            controller.enqueue(sharedEncoder.encode(doneOutput));
-            streamDoneSent = true;
-          }
-
-          if (sourceFormat === FORMATS.CLAUDE && !state?.messageStopSent) {
-            const fallbackFinish = state?.finishReason ? fromOpenAIFinish(state.finishReason, "claude") : (state?.hadToolCalls || state?.toolCalls?.size > 0 ? "tool_use" : "end_turn");
-            const messageDelta = formatSSE({
-              type: "message_delta",
-              delta: { stop_reason: fallbackFinish },
-              usage: state?.usage || { output_tokens: 0 }
-            }, FORMATS.CLAUDE);
-            reqLogger?.appendConvertedChunk?.(messageDelta);
-            controller.enqueue(sharedEncoder.encode(messageDelta));
-            const messageStop = formatSSE({ type: "message_stop" }, FORMATS.CLAUDE);
-            reqLogger?.appendConvertedChunk?.(messageStop);
-            controller.enqueue(sharedEncoder.encode(messageStop));
-            state.messageStopSent = true;
           }
 
           if (keepsOpenAIResponsesFormat && !streamDoneSent) {
@@ -509,14 +440,11 @@ export function createSSEStream(options = {}) {
 
             // Inject estimated usage if finish chunk has no valid usage
             const isFinishChunk = item.type === "message_delta" || item.choices?.[0]?.finish_reason;
-            if (item.choices?.[0]?.finish_reason || state?.finishReasonSent) {
-              openAIFinishReasonSeen = true;
-            }
-            if (state?.finishReason && isFinishChunk && !hasValidUsage(item.usage) && totalContentLength > 0) {
+            if (state.finishReason && isFinishChunk && !hasValidUsage(item.usage) && totalContentLength > 0) {
               const estimated = estimateUsage(body, totalContentLength, sourceFormat);
               item.usage = filterUsageForFormat(estimated, sourceFormat); // Filter + already has buffer
-              if (state && typeof state === "object") state.usage = estimated;
-            } else if (state?.finishReason && isFinishChunk && state?.usage) {
+              state.usage = estimated;
+            } else if (state.finishReason && isFinishChunk && state.usage) {
               // Add buffer and filter usage for client (but keep original in state.usage for logging)
               const buffered = addBufferToUsage(state.usage);
               item.usage = filterUsageForFormat(buffered, sourceFormat);
@@ -552,32 +480,18 @@ export function createSSEStream(options = {}) {
         if (remaining) buffer += remaining;
 
         if (mode === STREAM_MODE.PASSTHROUGH) {
-          if (buffer) {
+          // An unterminated trailing "data: [DONE]" is the upstream sentinel: don't
+          // forward it raw (it would glue onto the properly framed one appended
+          // below, #5592).
+          const tail = buffer.trim();
+          const tailIsDone = tail.startsWith("data:") && tail.slice(5).trim() === "[DONE]";
+          if (!tailIsDone && buffer) {
             let output = buffer;
             if (buffer.startsWith("data:") && !buffer.startsWith("data: ")) {
               output = "data: " + buffer.slice(5);
             }
             reqLogger?.appendConvertedChunk?.(output);
             controller.enqueue(sharedEncoder.encode(output));
-          }
-          // Ensure OpenAI clients always receive a chunk with finish_reason before [DONE]
-          const isOpenAIClient = targetFormat === FORMATS.OPENAI || sourceFormat === FORMATS.OPENAI;
-          if (isOpenAIClient && !openAIFinishReasonSeen) {
-            // Passthrough has no translator state, so the tool-call signal has to come
-            // from what actually reached the client (seenToolCallIds). Reporting "stop"
-            // after tool calls makes strict clients end the turn instead of running them.
-            const fallbackFinish = seenToolCallIds.size > 0 ? "tool_calls" : "stop";
-            const finishChunk = {
-              id: `chatcmpl-${Date.now()}`,
-              object: "chat.completion.chunk",
-              created: Math.floor(Date.now() / 1000),
-              model: model || "unknown",
-              choices: [{ index: 0, delta: {}, finish_reason: fallbackFinish, logprobs: null }]
-            };
-            const finishOutput = `data: ${JSON.stringify(finishChunk)}\n\n`;
-            reqLogger?.appendConvertedChunk?.(finishOutput);
-            controller.enqueue(sharedEncoder.encode(finishOutput));
-            openAIFinishReasonSeen = true;
           }
 
           // IMPORTANT: In passthrough mode we still must terminate the SSE stream.
@@ -586,28 +500,10 @@ export function createSSEStream(options = {}) {
           // Without it they can hang until timeout and trigger failover.
           // Gemini-family clients (Antigravity, Vertex, Gemini) reject this sentinel with 400 syntax errors.
           const isGeminiFamily = provider === "antigravity" || provider === "gemini" || provider === "vertex";
-          const isClaudeClient = targetFormat === FORMATS.CLAUDE || sourceFormat === FORMATS.CLAUDE;
-          if (isClaudeClient && !claudeTerminalSeen) {
-            // Upstream closed without message_delta/message_stop (mid-turn cut).
-            // Synthesize both so an Anthropic SDK client finishes instead of hanging.
-            const stopReason = claudeToolUseSeen ? "tool_use" : "end_turn";
-            const messageDelta = formatSSE({
-              type: "message_delta",
-              delta: { stop_reason: stopReason },
-              usage: { output_tokens: 0 }
-            }, FORMATS.CLAUDE);
-            reqLogger?.appendConvertedChunk?.(messageDelta);
-            controller.enqueue(sharedEncoder.encode(messageDelta));
-            const messageStop = formatSSE({ type: "message_stop" }, FORMATS.CLAUDE);
-            reqLogger?.appendConvertedChunk?.(messageStop);
-            controller.enqueue(sharedEncoder.encode(messageStop));
-            claudeTerminalSeen = true;
-          }
-          if (!streamDoneSent && !isGeminiFamily && !isClaudeClient) {
+          if (!streamDoneSent && !isGeminiFamily) {
             const doneOutput = "data: [DONE]\n\n";
             reqLogger?.appendConvertedChunk?.(doneOutput);
             controller.enqueue(sharedEncoder.encode(doneOutput));
-            streamDoneSent = true;
           }
 
           finalizeStream();
@@ -668,50 +564,6 @@ export function createSSEStream(options = {}) {
           }
         }
 
-        // Ensure OpenAI clients in translate mode always receive a finish_reason chunk and sentinel [DONE]
-        const isOpenAIClient = sourceFormat === FORMATS.OPENAI;
-        if (isOpenAIClient && !openAIFinishReasonSeen) {
-          const fallbackFinish = state?.finishReason || ((state?.geminiToolCallCount > 0 || state?.toolCalls?.size > 0 || state?.hadToolCalls) ? "tool_calls" : "stop");
-          const finishChunk = {
-            id: state?.messageId ? `chatcmpl-${state.messageId}` : `chatcmpl-${Date.now()}`,
-            object: "chat.completion.chunk",
-            created: Math.floor(Date.now() / 1000),
-            model: model || state?.model || "unknown",
-            choices: [{ index: 0, delta: {}, finish_reason: fallbackFinish, logprobs: null }]
-          };
-          if (state?.usage) {
-            finishChunk.usage = state.usage;
-          }
-          const finishOutput = `data: ${JSON.stringify(finishChunk)}\n\n`;
-          reqLogger?.appendConvertedChunk?.(finishOutput);
-          controller.enqueue(sharedEncoder.encode(finishOutput));
-          openAIFinishReasonSeen = true;
-        }
-
-        if (isOpenAIClient && !streamDoneSent) {
-          const doneOutput = "data: [DONE]\n\n";
-          reqLogger?.appendConvertedChunk?.(doneOutput);
-          controller.enqueue(sharedEncoder.encode(doneOutput));
-          streamDoneSent = true;
-        }
-
-        // Ensure Claude clients in translate mode always receive message_stop
-        const isClaudeClient = sourceFormat === FORMATS.CLAUDE;
-        if (isClaudeClient && !state?.messageStopSent) {
-          const fallbackFinish = state?.finishReason ? fromOpenAIFinish(state.finishReason, "claude") : (state?.hadToolCalls || state?.toolCalls?.size > 0 ? "tool_use" : "end_turn");
-          const messageDelta = formatSSE({
-            type: "message_delta",
-            delta: { stop_reason: fallbackFinish },
-            usage: state?.usage || { output_tokens: 0 }
-          }, FORMATS.CLAUDE);
-          reqLogger?.appendConvertedChunk?.(messageDelta);
-          controller.enqueue(sharedEncoder.encode(messageDelta));
-          const messageStop = formatSSE({ type: "message_stop" }, FORMATS.CLAUDE);
-          reqLogger?.appendConvertedChunk?.(messageStop);
-          controller.enqueue(sharedEncoder.encode(messageStop));
-          state.messageStopSent = true;
-        }
-
         // Synthesize response.failed if a Responses passthrough stream never reached a terminal event
         const keepsOpenAIResponsesFormat = targetFormat === FORMATS.OPENAI_RESPONSES && sourceFormat === FORMATS.OPENAI_RESPONSES;
         if (keepsOpenAIResponsesFormat && !openAIResponsesTerminalSeen) {
@@ -756,7 +608,7 @@ export function createSSETransformStreamWithLogger(targetFormat, sourceFormat, p
   });
 }
 
-export function createPassthroughStreamWithLogger(provider = null, reqLogger = null, model = null, connectionId = null, body = null, onStreamComplete = null, apiKey = null, toolNameMap = null, targetFormat = null, sourceFormat = null) {
+export function createPassthroughStreamWithLogger(provider = null, reqLogger = null, model = null, connectionId = null, body = null, onStreamComplete = null, apiKey = null, toolNameMap = null) {
   return createSSEStream({
     mode: STREAM_MODE.PASSTHROUGH,
     provider,
@@ -766,8 +618,6 @@ export function createPassthroughStreamWithLogger(provider = null, reqLogger = n
     connectionId,
     body,
     onStreamComplete,
-    apiKey,
-    targetFormat,
-    sourceFormat
+    apiKey
   });
 }

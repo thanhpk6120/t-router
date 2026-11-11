@@ -1,18 +1,19 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback } from "react";
 import Card from "@/shared/components/Card";
 import Button from "@/shared/components/Button";
 import Drawer from "@/shared/components/Drawer";
 import Pagination from "@/shared/components/Pagination";
 import { cn } from "@/shared/utils/cn";
 import { AI_PROVIDERS, getProviderByAlias } from "@/shared/constants/providers";
+import { getInputTokens, getOutputTokens, getCachedTokens, getCacheCreationTokens } from "./tokenDisplay";
 
 let providerNameCache = null;
 let providerNodesCache = null;
 
-async function fetchProviderNames(force = false) {
-  if (!force && providerNameCache && providerNodesCache) {
+async function fetchProviderNames() {
+  if (providerNameCache && providerNodesCache) {
     return { providerNameCache, providerNodesCache };
   }
 
@@ -82,32 +83,6 @@ function CollapsibleSection({ title, children, defaultOpen = false, icon = null 
   );
 }
 
-function getCachedTokens(tokens) {
-  return tokens?.cached_tokens || tokens?.cache_read_input_tokens || 0;
-}
-
-function getCacheCreationTokens(tokens) {
-  return tokens?.cache_creation_input_tokens || 0;
-}
-
-function getInputTokens(tokens) {
-  const prompt = tokens?.prompt_tokens || tokens?.input_tokens || 0;
-  // Canonical storage keeps prompt cache-inclusive. Legacy Claude rows may have
-  // stored prompt cache-exclusive; fall back to cache when it's larger so old
-  // rows don't under-report input.
-  const cache = getCachedTokens(tokens);
-  return prompt < cache ? cache : prompt;
-}
-
-// Same rule as the router's done-line formatter: raw ms is hard to read
-// ("12345ms"), so render seconds/minutes once the value grows.
-function fmtMs(n) {
-  const v = Number(n) || 0;
-  if (v < 1000) return `${Math.round(v)}ms`;
-  if (v < 60000) return `${(v / 1000).toFixed(1)}s`;
-  return `${Math.floor(v / 60000)}m ${String(Math.round((v % 60000) / 1000)).padStart(2, "0")}s`;
-}
-
 export default function RequestDetailsTab() {
   const [details, setDetails] = useState([]);
   const [pagination, setPagination] = useState({
@@ -120,107 +95,48 @@ export default function RequestDetailsTab() {
   const [selectedDetail, setSelectedDetail] = useState(null);
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const [providers, setProviders] = useState([]);
-  const [observabilityEnabled, setObservabilityEnabled] = useState(null);
   const [providerNameCache, setProviderNameCache] = useState(null);
-  const [fetchError, setFetchError] = useState("");
-  // Model input text updates instantly for typing, but the fetch uses this
-  // debounced value — otherwise every keystroke fires a request and a slow
-  // stale response can overwrite a newer one.
-  const [debouncedModel, setDebouncedModel] = useState("");
-  const abortRef = useRef(null);
   const [filters, setFilters] = useState({
     provider: "",
-    model: "",
-    status: "",
     startDate: "",
     endDate: ""
   });
-
-  useEffect(() => {
-    const t = setTimeout(() => setDebouncedModel(filters.model.trim()), 400);
-    return () => clearTimeout(t);
-  }, [filters.model]);
-
-  useEffect(() => () => abortRef.current?.abort(), []);
 
   const fetchProviders = useCallback(async () => {
     try {
       const res = await fetch("/api/usage/providers");
       const data = await res.json();
-      const cache = await fetchProviderNames(true);
-      setProviderNameCache(cache.providerNameCache);
+      setProviders(data.providers || []);
 
-      // Dropdown options = every provider a user could filter by, not only
-      // providers that already have detail rows (which is empty until the
-      // first request lands). Union of the node list + built-in aliases +
-      // distinct row values, deduped by stored id, sorted by display name.
-      const byId = new Map();
-      for (const [id, name] of Object.entries(cache.providerNodesCache || {})) byId.set(id, name);
-      for (const p of Object.values(AI_PROVIDERS)) {
-        if (p.hidden) continue;
-        const id = p.alias || p.id;
-        if (id && !byId.has(id)) byId.set(id, p.name || id);
-      }
-      for (const p of data.providers || []) {
-        if (!byId.has(p.id)) byId.set(p.id, p.name || p.id);
-      }
-      setProviders([...byId.entries()]
-        .map(([id, name]) => ({ id, name }))
-        .sort((a, b) => a.name.localeCompare(b.name)));
+      const cache = await fetchProviderNames();
+      setProviderNameCache(cache.providerNameCache);
     } catch (error) {
       console.error("Failed to fetch providers:", error);
     }
   }, []);
 
   const fetchDetails = useCallback(async () => {
-    // Abort the previous in-flight fetch: without this a slow stale response
-    // can overwrite newer results after a filter change.
-    abortRef.current?.abort();
-    const controller = new AbortController();
-    abortRef.current = controller;
     setLoading(true);
-    // Inverted range: explain inline instead of fetching a guaranteed-empty page.
-    if (filters.startDate && filters.endDate && new Date(filters.startDate) > new Date(filters.endDate)) {
-      setDetails([]);
-      setFetchError("Start date is after end date — swap them to see results.");
-      setLoading(false);
-      return;
-    }
     try {
       const params = new URLSearchParams({
         page: pagination.page.toString(),
         pageSize: pagination.pageSize.toString()
       });
       if (filters.provider) params.append("provider", filters.provider);
-      if (debouncedModel) params.append("model", debouncedModel);
-      if (filters.status) params.append("status", filters.status);
       if (filters.startDate) params.append("startDate", filters.startDate);
       if (filters.endDate) params.append("endDate", filters.endDate);
 
-      const res = await fetch(`/api/usage/request-details?${params}`, { signal: controller.signal });
+      const res = await fetch(`/api/usage/request-details?${params}`);
       const data = await res.json();
-      if (controller.signal.aborted) return;
-      if (!res.ok) {
-        setDetails([]);
-        setFetchError(data.error || "Failed to load request details.");
-        return;
-      }
 
       setDetails(data.details || []);
-      setFetchError("");
-      if (typeof data.observabilityEnabled === "boolean") {
-        setObservabilityEnabled(data.observabilityEnabled);
-      }
       setPagination(prev => ({ ...prev, ...data.pagination }));
     } catch (error) {
-      if (error?.name === "AbortError") return;
       console.error("Failed to fetch request details:", error);
-      setDetails([]);
-      setFetchError("Failed to load request details — check your connection and try again.");
     } finally {
-      if (abortRef.current === controller) setLoading(false);
+      setLoading(false);
     }
-  }, [pagination.page, pagination.pageSize, filters.provider, filters.status, filters.startDate, filters.endDate, debouncedModel]);
+  }, [pagination.page, pagination.pageSize, filters]);
 
   useEffect(() => {
     fetchProviders();
@@ -243,31 +159,20 @@ export default function RequestDetailsTab() {
     setPagination(prev => ({ ...prev, pageSize: newPageSize, page: 1 }));
   };
 
-  // Any filter change restarts from page 1 — otherwise a new filter set can
-  // land on an empty out-of-range page while matches exist on page 1.
-  const updateFilter = (patch) => {
-    setFilters(prev => ({ ...prev, ...patch }));
-    setPagination(prev => ({ ...prev, page: 1 }));
-  };
-
   const handleClearFilters = () => {
-    setFilters({ provider: "", model: "", status: "", startDate: "", endDate: "" });
-    // Cleared filters must restart from page 1 — otherwise a stale page
-    // beyond the new totalPages renders an empty table with a misleading
-    // "no results match the filters" message even though filters are empty.
-    setPagination(prev => ({ ...prev, page: 1 }));
+    setFilters({ provider: "", startDate: "", endDate: "" });
   };
 
   return (
     <div className="flex min-w-0 flex-col gap-6">
       <Card padding="md">
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
           <div className="flex min-w-0 flex-col gap-2">
             <label htmlFor="provider-filter" className="text-sm font-medium text-text-main">Provider</label>
             <select
               id="provider-filter"
               value={filters.provider}
-              onChange={(e) => updateFilter({ provider: e.target.value })}
+              onChange={(e) => setFilters({ ...filters, provider: e.target.value })}
               className={cn(
                 "h-9 px-3 rounded-lg border border-black/10 dark:border-white/10 bg-surface",
                 "text-sm text-text-main focus:outline-none focus:ring-2 focus:ring-primary/20",
@@ -283,48 +188,14 @@ export default function RequestDetailsTab() {
               ))}
             </select>
           </div>
-
-          <div className="flex min-w-0 flex-col gap-2">
-            <label htmlFor="model-filter" className="text-sm font-medium text-text-main">Model</label>
-            <input
-              id="model-filter"
-              type="text"
-              value={filters.model}
-              onChange={(e) => updateFilter({ model: e.target.value })}
-              placeholder="Search model name"
-              className={cn(
-                "h-9 px-3 rounded-lg border border-black/10 dark:border-white/10 bg-surface",
-                "w-full min-w-0 text-sm text-text-main focus:outline-none focus:ring-2 focus:ring-primary/20"
-              )}
-            />
-          </div>
-
-          <div className="flex min-w-0 flex-col gap-2">
-            <label htmlFor="status-filter" className="text-sm font-medium text-text-main">Status</label>
-            <select
-              id="status-filter"
-              value={filters.status}
-              onChange={(e) => updateFilter({ status: e.target.value })}
-              className={cn(
-                "h-9 px-3 rounded-lg border border-black/10 dark:border-white/10 bg-surface",
-                "text-sm text-text-main focus:outline-none focus:ring-2 focus:ring-primary/20",
-                "w-full min-w-0 cursor-pointer"
-              )}
-              style={{ colorScheme: 'auto' }}
-            >
-              <option value="">All Statuses</option>
-              <option value="success">Success</option>
-              <option value="error">Error</option>
-            </select>
-          </div>
-
+          
           <div className="flex min-w-0 flex-col gap-2">
             <label htmlFor="start-date-filter" className="text-sm font-medium text-text-main">Start Date</label>
             <input
               id="start-date-filter"
               type="datetime-local"
               value={filters.startDate}
-              onChange={(e) => updateFilter({ startDate: e.target.value })}
+              onChange={(e) => setFilters({ ...filters, startDate: e.target.value })}
               className={cn(
                 "h-9 px-3 rounded-lg border border-black/10 dark:border-white/10 bg-surface",
                 "w-full min-w-0 text-sm text-text-main focus:outline-none focus:ring-2 focus:ring-primary/20"
@@ -338,7 +209,7 @@ export default function RequestDetailsTab() {
               id="end-date-filter"
               type="datetime-local"
               value={filters.endDate}
-              onChange={(e) => updateFilter({ endDate: e.target.value })}
+              onChange={(e) => setFilters({ ...filters, endDate: e.target.value })}
               className={cn(
                 "h-9 px-3 rounded-lg border border-black/10 dark:border-white/10 bg-surface",
                 "w-full min-w-0 text-sm text-text-main focus:outline-none focus:ring-2 focus:ring-primary/20"
@@ -346,30 +217,18 @@ export default function RequestDetailsTab() {
             />
           </div>
           
-          <div className="flex min-w-0 flex-col gap-2">
-            <span className="hidden text-sm font-medium text-text-main opacity-0 lg:block" aria-hidden="true">Actions</span>
-            <div className="flex gap-2">
-              <Button
-                variant="outline"
-                onClick={fetchDetails}
-                disabled={loading}
-                className="flex-1"
-              >
-                <span className={cn("material-symbols-outlined text-[16px]", loading && "animate-spin")}>refresh</span>
-                Refresh
-              </Button>
-              <Button
-                variant="ghost"
-                onClick={handleClearFilters}
-                disabled={!filters.provider && !filters.model && !filters.status && !filters.startDate && !filters.endDate}
-                className="flex-1"
-              >
-                Clear Filters
-              </Button>
-            </div>
+          <div className="flex min-w-0 flex-col gap-2 sm:col-span-2 lg:col-span-1">
+            <span className="hidden text-sm font-medium text-text-main opacity-0 lg:block" aria-hidden="true">Clear</span>
+            <Button 
+              variant="ghost" 
+              onClick={handleClearFilters}
+              disabled={!filters.provider && !filters.startDate && !filters.endDate}
+              className="w-full"
+            >
+              Clear Filters
+            </Button>
           </div>
         </div>
-        <p className="mt-3 text-xs text-text-muted">Date filters use the server timezone; table times use your browser timezone.</p>
       </Card>
 
       <Card padding="none">
@@ -380,7 +239,6 @@ export default function RequestDetailsTab() {
                 <th className="text-left p-4 text-sm font-semibold text-text-main">Timestamp</th>
                 <th className="text-left p-4 text-sm font-semibold text-text-main">Model</th>
                 <th className="text-left p-4 text-sm font-semibold text-text-main">Provider</th>
-                <th className="text-left p-4 text-sm font-semibold text-text-main">Status</th>
                 <th className="text-right p-4 text-sm font-semibold text-text-main">Input Tokens</th>
                 <th className="text-right p-4 text-sm font-semibold text-text-main">Cached</th>
                 <th className="text-right p-4 text-sm font-semibold text-text-main">Cache Creation</th>
@@ -392,7 +250,7 @@ export default function RequestDetailsTab() {
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan="10" className="p-8 text-center text-text-muted">
+                  <td colSpan="7" className="p-8 text-center text-text-muted">
                     <div className="flex items-center justify-center gap-2">
                       <span className="material-symbols-outlined animate-spin text-[20px]">progress_activity</span>
                       Loading...
@@ -401,26 +259,8 @@ export default function RequestDetailsTab() {
                 </tr>
               ) : details.length === 0 ? (
                 <tr>
-                  <td colSpan="10" className="p-8 text-center text-text-muted">
-                    {fetchError ? (
-                      <p className="text-red-500">{fetchError}</p>
-                    ) : observabilityEnabled === false ? (
-                      <div className="flex flex-col items-center gap-2">
-                        <p>
-                          Request details are <span className="font-semibold text-text-main">off</span> — nothing is
-                          being recorded, so this tab stays empty.
-                        </p>
-                        <p>
-                          Turn on <span className="font-medium text-text-main">Observability</span> in{" "}
-                          <a href="/dashboard/profile" className="font-medium text-primary underline">
-                            Profile
-                          </a>{" "}
-                          and new requests will appear here.
-                        </p>
-                      </div>
-                    ) : (
-                      "No request details match the current filters — send a request through the router, or clear the filters above."
-                    )}
+                  <td colSpan="7" className="p-8 text-center text-text-muted">
+                    No request details found
                   </td>
                 </tr>
               ) : (
@@ -432,22 +272,14 @@ export default function RequestDetailsTab() {
                     <td className="whitespace-nowrap p-4 text-sm text-text-main">
                       {new Date(detail.timestamp).toLocaleString()}
                     </td>
-                    <td className="max-w-[260px] truncate p-4 font-mono text-sm text-text-main" title={detail.model}>
+                    <td className="max-w-[260px] truncate p-4 font-mono text-sm text-text-main">
                       {detail.model}
                     </td>
-                    <td className="max-w-[180px] truncate p-4 text-sm text-text-main" title={getProviderName(detail.provider, providerNameCache)}>
+                    <td className="max-w-[180px] truncate p-4 text-sm text-text-main">
                        <span className="font-medium">
                          {getProviderName(detail.provider, providerNameCache)}
                        </span>
                      </td>
-                    <td className="p-4 text-sm">
-                      <span className={cn(
-                        "font-medium",
-                        detail.status === "success" ? "text-green-600" : "text-red-600"
-                      )}>
-                        {detail.status || "—"}
-                      </span>
-                    </td>
                     <td className="p-4 text-sm text-text-main text-right font-mono">
                       {getInputTokens(detail.tokens).toLocaleString()}
                     </td>
@@ -458,12 +290,12 @@ export default function RequestDetailsTab() {
                       {getCacheCreationTokens(detail.tokens) > 0 ? getCacheCreationTokens(detail.tokens).toLocaleString() : "—"}
                     </td>
                     <td className="p-4 text-sm text-text-main text-right font-mono">
-                      {detail.tokens?.completion_tokens?.toLocaleString() || 0}
+                      {getOutputTokens(detail.tokens).toLocaleString()}
                     </td>
                     <td className="p-4 text-sm text-text-muted">
                       <div className="flex flex-col gap-0.5">
-                        <div>TTFT: <span className="font-mono">{fmtMs(detail.latency?.ttft)}</span></div>
-                        <div>Total: <span className="font-mono">{fmtMs(detail.latency?.total)}</span></div>
+                        <div>TTFT: <span className="font-mono">{detail.latency?.ttft || 0}ms</span></div>
+                        <div>Total: <span className="font-mono">{detail.latency?.total || 0}ms</span></div>
                       </div>
                     </td>
                     <td className="p-4 text-center">
@@ -532,7 +364,7 @@ export default function RequestDetailsTab() {
               <div>
                 <span className="text-text-muted">Latency:</span>{" "}
                 <span className="text-text-main font-mono">
-                  TTFT {fmtMs(selectedDetail.latency?.ttft)} / Total {fmtMs(selectedDetail.latency?.total)}
+                  TTFT {selectedDetail.latency?.ttft || 0}ms / Total {selectedDetail.latency?.total || 0}ms
                 </span>
               </div>
               <div>
@@ -560,7 +392,7 @@ export default function RequestDetailsTab() {
               <div>
                 <span className="text-text-muted">Output Tokens:</span>{" "}
                 <span className="text-text-main font-mono">
-                  {selectedDetail.tokens?.completion_tokens?.toLocaleString() || 0}
+                  {getOutputTokens(selectedDetail.tokens).toLocaleString()}
                 </span>
               </div>
             </div>
@@ -607,12 +439,6 @@ export default function RequestDetailsTab() {
               </div>
             )}
 
-            {selectedDetail.request?.redacted || selectedDetail.response?.redacted ? (
-              <div className="rounded-lg border border-black/5 p-4 text-sm text-text-muted dark:border-white/5">
-                Request and response payloads are redacted for privacy — only the
-                metadata above is available here.
-              </div>
-            ) : (
             <div className="space-y-4">
               <CollapsibleSection title="1. Client Request (Input)" defaultOpen={true} icon="input">
                 <pre className="max-h-[300px] max-w-full overflow-auto rounded-lg border border-black/5 bg-black/5 p-3 font-mono text-xs text-text-main dark:border-white/5 dark:bg-white/5 sm:p-4">
@@ -660,7 +486,6 @@ export default function RequestDetailsTab() {
                 </pre>
               </CollapsibleSection>
             </div>
-            )}
           </div>
         )}
       </Drawer>

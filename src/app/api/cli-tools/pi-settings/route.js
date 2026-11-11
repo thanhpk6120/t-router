@@ -1,6 +1,7 @@
 "use server";
 
 import { NextResponse } from "next/server";
+import { apiErrorResponse } from "@/lib/apiError";
 import { resolveCliApiKey } from "../resolveApiKey.js";
 import fs from "fs/promises";
 import path from "path";
@@ -38,9 +39,9 @@ const checkPiInstalled = async () => {
   }
 };
 
-const hasTRouterConfig = (settings) => {
+const has9RouterConfig = (settings) => {
   if (!settings || !settings.providers) return false;
-  const p = settings.providers["trouter"];
+  const p = settings.providers["9router"];
   if (p && p.baseUrl) return true;
   for (const prov of Object.values(settings.providers)) {
     if (prov.baseUrl && prov.baseUrl.includes("20126")) return true;
@@ -91,11 +92,11 @@ export async function GET() {
     return NextResponse.json({
       installed: true,
       config,
-      hasTRouter: hasTRouterConfig(config),
+      has9Router: has9RouterConfig(config),
       configPath,
     });
   } catch (err) {
-    return NextResponse.json({ error: { message: err.message } }, { status: 500 });
+    return apiErrorResponse(err, { code: "pi_settings_failed", message: "Failed to load or save Pi settings" });
   }
 }
 
@@ -126,7 +127,7 @@ export async function POST(request) {
 
     if (!existing.providers) existing.providers = {};
 
-    const existingProvider = existing.providers["trouter"] || {};
+    const existingProvider = existing.providers["9router"] || {};
     const prevModels = new Map(
       (Array.isArray(existingProvider.models) ? existingProvider.models : [])
         .map((m) => (typeof m === "string" ? { id: m } : m))
@@ -165,7 +166,7 @@ export async function POST(request) {
       modelList = [withDefaults({ id: modelId })];
     }
 
-    existing.providers["trouter"] = {
+    existing.providers["9router"] = {
       ...existingProvider,
       baseUrl: normalizedBaseUrl,
       apiKey: apiKey || existingProvider.apiKey || await resolveCliApiKey(null),
@@ -177,11 +178,11 @@ export async function POST(request) {
 
     return NextResponse.json({
       success: true,
-      message: "Pi settings applied! Use /model in Pi to select the T-Router model.",
+      message: "Pi settings applied! Use /model in Pi to select the 9Router model.",
       configPath,
     });
   } catch (err) {
-    return NextResponse.json({ error: { message: err.message } }, { status: 500 });
+    return apiErrorResponse(err, { code: "pi_settings_failed", message: "Failed to load or save Pi settings" });
   }
 }
 
@@ -196,14 +197,14 @@ export async function DELETE() {
       return NextResponse.json({ success: true, message: "No config file to reset" });
     }
 
-    if (existing.providers && existing.providers["trouter"]) {
-      delete existing.providers["trouter"];
+    if (existing.providers && existing.providers["9router"]) {
+      delete existing.providers["9router"];
       if (Object.keys(existing.providers).length === 0) delete existing.providers;
       await fs.writeFile(configPath, JSON.stringify(existing, null, 2), "utf-8");
     }
 
-    return NextResponse.json({ success: true, message: "T-Router removed from Pi" });
+    return NextResponse.json({ success: true, message: "9Router removed from Pi" });
   } catch (err) {
-    return NextResponse.json({ error: { message: err.message } }, { status: 500 });
+    return apiErrorResponse(err, { code: "pi_settings_failed", message: "Failed to load or save Pi settings" });
   }
 }

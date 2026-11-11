@@ -3,8 +3,8 @@ set -eo pipefail
 
 export PATH="/home/thanhpk/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 export HOME="/home/thanhpk"
-export ANTHROPIC_BASE_URL="http://127.0.0.1:20130/v1"
-export ANTHROPIC_AUTH_TOKEN="${ANTHROPIC_AUTH_TOKEN:-}"
+export ANTHROPIC_BASE_URL="${ANTHROPIC_BASE_URL:-http://127.0.0.1:20128/v1}"
+export ANTHROPIC_AUTH_TOKEN="${ANTHROPIC_AUTH_TOKEN:-sk-api-key-060120}"
 export CLAUDE_DANGEROUSLY_SKIP_PERMISSIONS=1
 export NODE_OPTIONS="--max-old-space-size=8192"
 
@@ -42,18 +42,22 @@ fi
 
 log "Current upstream versions: 9router=${LATEST_9ROUTER:-unknown}, 9router-pro=${LATEST_PRO:-unknown}"
 
-# 2. Read stored baseline versions
+# 2. Read stored baseline versions and commit hashes
 SAVED_9ROUTER=""
 SAVED_PRO=""
 SAVED_TROUTER=""
+SAVED_9ROUTER_COMMIT=""
+SAVED_PRO_COMMIT=""
 
 if [ -f "$VERSIONS_FILE" ]; then
   SAVED_9ROUTER=$(node -e "try { const d=require('$VERSIONS_FILE'); console.log(d.upstream_9router||''); } catch {}" 2>/dev/null || echo "")
   SAVED_PRO=$(node -e "try { const d=require('$VERSIONS_FILE'); console.log(d.upstream_pro||''); } catch {}" 2>/dev/null || echo "")
   SAVED_TROUTER=$(node -e "try { const d=require('$VERSIONS_FILE'); console.log(d.t_router||''); } catch {}" 2>/dev/null || echo "")
+  SAVED_9ROUTER_COMMIT=$(node -e "try { const d=require('$VERSIONS_FILE'); console.log(d.commit_9router||d.upstream_9router_commit||''); } catch {}" 2>/dev/null || echo "")
+  SAVED_PRO_COMMIT=$(node -e "try { const d=require('$VERSIONS_FILE'); console.log(d.commit_pro||d.upstream_pro_commit||''); } catch {}" 2>/dev/null || echo "")
 fi
 
-log "Saved baseline versions: 9router=$SAVED_9ROUTER, 9router-pro=$SAVED_PRO, t-router=$SAVED_TROUTER"
+log "Saved baseline versions: 9router=$SAVED_9ROUTER (${SAVED_9ROUTER_COMMIT:0:8}), 9router-pro=$SAVED_PRO (${SAVED_PRO_COMMIT:0:8}), t-router=$SAVED_TROUTER"
 
 FORCE=false
 if [ "$1" = "--force" ]; then
@@ -63,10 +67,14 @@ fi
 
 # 3. Pull latest code for all 3 repos with resource constraints
 log "Pulling latest git changes for upstream 9router..."
+OLD_9ROUTER_HEAD=$(git -C "$DIR_9ROUTER" rev-parse HEAD 2>/dev/null || echo "")
 $NICE_CMD git -C "$DIR_9ROUTER" pull origin master || true
+NEW_9ROUTER_HEAD=$(git -C "$DIR_9ROUTER" rev-parse HEAD 2>/dev/null || echo "")
 
 log "Pulling latest git changes for upstream 9router-pro..."
+OLD_PRO_HEAD=$(git -C "$DIR_PRO" rev-parse HEAD 2>/dev/null || echo "")
 $NICE_CMD git -C "$DIR_PRO" pull origin master || true
+NEW_PRO_HEAD=$(git -C "$DIR_PRO" rev-parse HEAD 2>/dev/null || echo "")
 
 log "Pulling latest git changes for t-router..."
 OLD_TROUTER_HEAD=$(git -C "$DIR_TROUTER" rev-parse HEAD 2>/dev/null || echo "")
@@ -142,11 +150,38 @@ fi
 HEAD_9ROUTER=$(git -C "$DIR_9ROUTER" rev-parse --short HEAD 2>/dev/null || echo "")
 HEAD_PRO=$(git -C "$DIR_PRO" rev-parse --short HEAD 2>/dev/null || echo "")
 
-# 4. Check if upstream actually changed
-if [ "$FORCE" = false ] && [ "$LATEST_9ROUTER" = "$SAVED_9ROUTER" ] && [ "$LATEST_PRO" = "$SAVED_PRO" ]; then
-  log "All upstream versions match saved baseline ($SAVED_TROUTER). No update needed."
+# 4. Check if upstream actually changed (by npm registry version OR git commit SHA)
+UPSTREAM_CHANGED=false
+CHANGE_REASONS=""
+
+if [ "$FORCE" = true ]; then
+  UPSTREAM_CHANGED=true
+  CHANGE_REASONS="force flag"
+else
+  if [ -n "$LATEST_9ROUTER" ] && [ -n "$SAVED_9ROUTER" ] && [ "$LATEST_9ROUTER" != "$SAVED_9ROUTER" ]; then
+    UPSTREAM_CHANGED=true
+    CHANGE_REASONS="${CHANGE_REASONS:+${CHANGE_REASONS}, }9router npm ($SAVED_9ROUTER -> $LATEST_9ROUTER)"
+  fi
+  if [ -n "$NEW_9ROUTER_HEAD" ] && [ "$NEW_9ROUTER_HEAD" != "$SAVED_9ROUTER_COMMIT" ]; then
+    UPSTREAM_CHANGED=true
+    CHANGE_REASONS="${CHANGE_REASONS:+${CHANGE_REASONS}, }9router git (${SAVED_9ROUTER_COMMIT:0:8} -> ${NEW_9ROUTER_HEAD:0:8})"
+  fi
+  if [ -n "$LATEST_PRO" ] && [ -n "$SAVED_PRO" ] && [ "$LATEST_PRO" != "$SAVED_PRO" ]; then
+    UPSTREAM_CHANGED=true
+    CHANGE_REASONS="${CHANGE_REASONS:+${CHANGE_REASONS}, }9router-pro npm ($SAVED_PRO -> $LATEST_PRO)"
+  fi
+  if [ -n "$NEW_PRO_HEAD" ] && [ "$NEW_PRO_HEAD" != "$SAVED_PRO_COMMIT" ]; then
+    UPSTREAM_CHANGED=true
+    CHANGE_REASONS="${CHANGE_REASONS:+${CHANGE_REASONS}, }9router-pro git (${SAVED_PRO_COMMIT:0:8} -> ${NEW_PRO_HEAD:0:8})"
+  fi
+fi
+
+if [ "$UPSTREAM_CHANGED" = false ]; then
+  log "All upstream versions and git commits match saved baseline (t-router: $SAVED_TROUTER). No update needed."
   exit 0
 fi
+
+log "Upstream change detected: $CHANGE_REASONS"
 
 # Calculate current version in t-router
 CURRENT_VER=$(node -e "try { console.log(require('$DIR_TROUTER/package.json').version); } catch { console.log('0.5.109-pro.10-t.2'); }" 2>/dev/null)
@@ -226,6 +261,8 @@ if [ "$OLD_HEAD" != "$NEW_HEAD" ]; then
 {
   "upstream_9router": "${LATEST_9ROUTER:-$HEAD_9ROUTER}",
   "upstream_pro": "${LATEST_PRO:-$HEAD_PRO}",
+  "commit_9router": "${NEW_9ROUTER_HEAD}",
+  "commit_pro": "${NEW_PRO_HEAD}",
   "t_router": "$CURRENT_VER",
   "updated_at": "$(date -u +"%Y-%m-%dT%H:%M:%SZ")",
   "commit": "$NEW_HEAD"
@@ -259,6 +296,8 @@ else
 {
   "upstream_9router": "${LATEST_9ROUTER:-$HEAD_9ROUTER}",
   "upstream_pro": "${LATEST_PRO:-$HEAD_PRO}",
+  "commit_9router": "${NEW_9ROUTER_HEAD}",
+  "commit_pro": "${NEW_PRO_HEAD}",
   "t_router": "$CURRENT_VER",
   "updated_at": "$(date -u +"%Y-%m-%dT%H:%M:%SZ")",
   "commit": "$OLD_HEAD"

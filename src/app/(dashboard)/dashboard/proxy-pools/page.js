@@ -1,9 +1,11 @@
 "use client";
 
-import { useCallback, useEffect, useState, useRef } from "react";
+import { useCallback, useEffect, useState, useRef, useMemo } from "react";
 import { Badge, Button, Card, CardSkeleton, Input, Modal, Toggle, ConfirmModal } from "@/shared/components";
 import Pagination from "@/shared/components/Pagination";
 import { useNotificationStore } from "@/store/notificationStore";
+import { errorText } from "@/shared/utils/errorText";
+import { filterProxyPools, getVisibleProxyPoolSelection, updateProxyPoolSelection } from "@/shared/utils/proxyPoolSelection";
 
 function getStatusVariant(status) {
   if (status === "active") return "success";
@@ -56,6 +58,7 @@ export default function ProxyPoolsPage() {
   const [testingId, setTestingId] = useState(null);
   const [rotatingId, setRotatingId] = useState(null);
   const [selectedIds, setSelectedIds] = useState([]);
+  const [statusFilter, setStatusFilter] = useState("all");
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(50);
   const [total, setTotal] = useState(0);
@@ -68,7 +71,11 @@ export default function ProxyPoolsPage() {
   const [bulkBusy, setBulkBusy] = useState(false);
   const [confirmState, setConfirmState] = useState(null);
   const relayMenuRef = useRef(null);
+  const selectionAnchorRef = useRef(null);
   const notify = useNotificationStore();
+
+  const visiblePools = useMemo(() => filterProxyPools(proxyPools, statusFilter), [proxyPools, statusFilter]);
+  const visibleSelectedIds = getVisibleProxyPoolSelection(visiblePools, selectedIds);
 
   useEffect(() => {
     const handleClickOutside = (e) => {
@@ -274,13 +281,23 @@ export default function ProxyPoolsPage() {
     }
   };
 
-  const allSelected = proxyPools.length > 0 && proxyPools.every((p) => selectedIds.includes(p.id));
-  const toggleSelect = (id) => setSelectedIds((prev) => prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]);
+  const allSelected = visiblePools.length > 0 && visiblePools.every((p) => selectedIds.includes(p.id));
+  const toggleSelect = (id, checked, shiftKey) => {
+    const anchorId = selectionAnchorRef.current;
+    setSelectedIds((prev) => updateProxyPoolSelection(visiblePools, prev, { id, checked, shiftKey, anchorId }));
+    selectionAnchorRef.current = id;
+  };
   // Select-all covers the current page only; cross-page picks stay selected.
-  const toggleSelectAll = () => setSelectedIds((prev) => allSelected
-    ? prev.filter((id) => !proxyPools.some((p) => p.id === id))
-    : [...new Set([...prev, ...proxyPools.map((p) => p.id)])]);
-  const clearSelection = () => setSelectedIds([]);
+  const toggleSelectAll = () => {
+    setSelectedIds((prev) => allSelected
+      ? prev.filter((id) => !visiblePools.some((p) => p.id === id))
+      : [...new Set([...prev, ...visiblePools.map((p) => p.id)])]);
+    selectionAnchorRef.current = null;
+  };
+  const clearSelection = () => {
+    setSelectedIds([]);
+    selectionAnchorRef.current = null;
+  };
 
   const bulkSetActive = async (isActive) => {
     let targets = selectedIds;
@@ -381,7 +398,7 @@ export default function ProxyPoolsPage() {
       const res = await fetch("/api/proxy-pools/delete-failed", { method: "POST" });
       const data = await res.json();
       if (!res.ok) {
-        notify.error(data.error || "Failed to delete failed proxies");
+        notify.error(errorText(data, "Failed to delete failed proxies"));
         return;
       }
       await fetchProxyPools();
@@ -865,20 +882,35 @@ export default function ProxyPoolsPage() {
             onChange={(e) => setSearchQuery(e.target.value)}
             className="min-w-[12rem] flex-1 sm:flex-none sm:w-64"
           />
-          {total > 0 && (
+          <label className="flex items-center gap-2 text-xs text-text-muted">
+            Status
+            <select
+              value={statusFilter}
+              disabled={bulkBusy || healthChecking}
+              onChange={(event) => { setStatusFilter(event.target.value); clearSelection(); }}
+              className="rounded-lg border border-border bg-background px-2 py-1.5 text-sm text-text-main"
+            >
+              <option value="all">All</option>
+              <option value="enabled">Enabled</option>
+              <option value="disabled">Disabled</option>
+            </select>
+          </label>
+          {visiblePools.length > 0 && (
             <label className="flex items-center gap-1.5 text-xs text-text-muted cursor-pointer">
               <input
                 type="checkbox"
                 checked={allSelected}
                 onChange={toggleSelectAll}
+                disabled={bulkBusy || healthChecking}
                 className="size-4 rounded border-black/20 dark:border-white/20"
               />
-              {allSelected ? "Unselect all" : "Select all"}
+              {allSelected ? "Unselect all visible" : "Select all visible"}
             </label>
           )}
           <Badge variant="default">Total: {total}</Badge>
           <Badge variant="success">Active: {activeCount}</Badge>
           {failedCount > 0 && <Badge variant="error">Failed: {failedCount}</Badge>}
+          <span className="text-xs text-text-muted">Showing {visiblePools.length} · Shift+click to select a range</span>
           <div className="ml-auto flex flex-wrap items-center gap-2">
             <Button
               size="sm"
@@ -941,7 +973,7 @@ export default function ProxyPoolsPage() {
           </div>
         ) : (
           <div className="flex flex-col divide-y divide-black/[0.04] dark:divide-white/[0.05]">
-            {proxyPools.map((pool) => {
+            {visiblePools.map((pool) => {
               const isDirect = pool.id === "direct" || pool.type === "direct" || pool.name === "Direct";
               return (
               <div key={pool.id} className="flex flex-col gap-3 py-3 sm:flex-row sm:items-center sm:justify-between">
@@ -950,7 +982,9 @@ export default function ProxyPoolsPage() {
                     <input
                       type="checkbox"
                       checked={selectedIds.includes(pool.id)}
-                      onChange={() => toggleSelect(pool.id)}
+                      onChange={(e) => toggleSelect(pool.id, e.target.checked, e.nativeEvent.shiftKey === true)}
+                      disabled={bulkBusy || healthChecking}
+                      aria-label={`Select ${pool.name}`}
                       className="mt-1 size-4 shrink-0 rounded border-black/20 dark:border-white/20"
                     />
                   ) : (

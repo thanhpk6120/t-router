@@ -1,4 +1,4 @@
-// T Router — Token Saver tests: Brief Mode resolution + RTK savings
+// 9Router Pro — Token Saver tests: Brief Mode resolution + RTK savings
 // aggregation (pure logic). Run: npx vitest run pro/token-saver.test.js
 import assert from "node:assert";
 import { selectBriefLevel } from "@/lib/db/repos/briefModeRepo.js";

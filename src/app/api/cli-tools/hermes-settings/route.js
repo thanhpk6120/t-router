@@ -1,6 +1,7 @@
 "use server";
 
 import { NextResponse } from "next/server";
+import { apiErrorBody } from "@/lib/apiError";
 import { exec } from "child_process";
 import { promisify } from "util";
 import fs from "fs/promises";
@@ -20,18 +21,18 @@ import {
   removeDelegationBlock,
   removeAuxRole,
   upsertEnvVar,
-  hasTRouterConfig,
+  has9RouterConfig,
   isCustomBlock,
   parseSttBlock,
-  isTRouterStt,
-  upsertSttTRouter,
-  removeSttTRouter,
+  is9RouterStt,
+  upsertStt9Router,
+  removeStt9Router,
 } from "./hermesYaml.js";
 import { resolveHermesHome, listProfiles, dirExists } from "./hermesProfiles.js";
 
 const execAsync = promisify(exec);
 
-const PROVIDER_NAME = "trouter";
+const PROVIDER_NAME = "9router";
 const API_KEY_ENV = "OPENAI_API_KEY";
 
 // Profile comes from ?profile= on GET (all-statuses calls GET() with no argument at all,
@@ -55,7 +56,7 @@ const resolveHome = (profile) => {
   try {
     return { home: resolveHermesHome(profile) };
   } catch (error) {
-    return { error: error.message };
+    return apiErrorBody(error, { code: "hermes_home_failed", message: "Failed to resolve Hermes home directory" });
   }
 };
 
@@ -125,10 +126,8 @@ export async function GET(request) {
       installed: true,
       profile: { name: home.name, dir: home.dir, isDefault: home.isDefault },
       settings: { model, delegation, auxiliary, stt },
-      hasTRouter: hasTRouterConfig(model) || hasTRouterConfig(delegation) || Object.values(auxiliary).some(hasTRouterConfig),
-      has9Router: hasTRouterConfig(model) || hasTRouterConfig(delegation) || Object.values(auxiliary).some(hasTRouterConfig),
-      hasTRouterStt: isTRouterStt(stt),
-      has9RouterStt: isTRouterStt(stt),
+      has9Router: has9RouterConfig(model) || has9RouterConfig(delegation) || Object.values(auxiliary).some(has9RouterConfig),
+      has9RouterStt: is9RouterStt(stt),
       configPath: home.configPath,
     });
   } catch (error) {
@@ -244,11 +243,11 @@ export async function POST(request) {
     }
     if (audio) {
       if (audioEnabled) {
-        newYaml = upsertSttTRouter(newYaml, audioModel, normalizedBaseUrl);
-      } else if (isTRouterStt(parseSttBlock(newYaml))) {
+        newYaml = upsertStt9Router(newYaml, audioModel, normalizedBaseUrl);
+      } else if (is9RouterStt(parseSttBlock(newYaml))) {
         // Never remove stt wiring this endpoint did not write — a user's own STT
         // provider choice survives an audio-disabled Apply.
-        newYaml = removeSttTRouter(newYaml);
+        newYaml = removeStt9Router(newYaml);
       }
     }
     await writeHomeConfig(home, newYaml);
@@ -260,8 +259,7 @@ export async function POST(request) {
       success: true,
       message: home.isDefault ? "Hermes settings applied successfully!" : `Hermes settings applied to profile "${home.name}"!`,
       profile: { name: home.name, dir: home.dir, isDefault: home.isDefault },
-      sttTRouter: isTRouterStt(parseSttBlock(newYaml)),
-      stt9Router: isTRouterStt(parseSttBlock(newYaml)),
+      stt9Router: is9RouterStt(parseSttBlock(newYaml)),
       configPath: home.configPath,
     });
   } catch (error) {
@@ -326,8 +324,8 @@ export async function DELETE(request) {
     }
 
     const sttCfg = parseSttBlock(yaml);
-    if (sttCfg && isTRouterStt(sttCfg)) {
-      yaml = removeSttTRouter(yaml);
+    if (sttCfg && is9RouterStt(sttCfg)) {
+      yaml = removeStt9Router(yaml);
       removed.stt = true;
       // User settings living inside the block (language, local, ...) survive the key
       // removal — report the remainder as kept, like any other preserved section.

@@ -24,6 +24,8 @@ import { resolveZedModels } from "open-sse/shared/zedAuth.js";
 import { updateProviderCredentials } from "@/sse/services/tokenRefresh";
 import { resolveConnectionProxyConfig } from "@/lib/network/connectionProxy";
 import { capabilitiesFromServiceKind, getCapabilitiesForModel, aggregateComboCapabilities } from "open-sse/providers/capabilities.js";
+import { resolveCommandCodeModels } from "open-sse/services/commandcodeModels.js";
+import { getThinkingLevels } from "open-sse/providers/thinkingLevels.js";
 
 // Qoder shares one live resolver across intl (qoder) and CN (qoder-cn); the
 // credentials carry the provider id so qoderModels picks the right region's
@@ -60,6 +62,19 @@ function comboSeatCapabilities(seat) {
   if (slash <= 0) return null;
   const alias = seat.slice(0, slash);
   return getCapabilitiesForModel(ALIAS_TO_PROVIDER_ID[alias] || alias, seat.slice(slash + 1));
+}
+
+// A combo/variant seat is servable with zero stored connections when its
+// provider is a no-auth free provider (the router injects a virtual
+// connection for it — see auth.js). Nested combo names (no slash) cannot
+// be proven servable here, so they stay unlisted until a connection exists.
+function isNoAuthSeat(seat) {
+  if (typeof seat !== "string") return false;
+  const slash = seat.indexOf("/");
+  if (slash <= 0) return false;
+  const alias = seat.slice(0, slash);
+  const providerId = ALIAS_TO_PROVIDER_ID[alias] || alias;
+  return FREE_PROVIDERS[providerId]?.noAuth === true;
 }
 
 // Per-provider live model resolvers. Each receives a connection record and
@@ -160,6 +175,13 @@ const LIVE_MODEL_RESOLVERS = {
           capabilities: m.supportsTools ? { tools: true } : undefined,
         })),
     };
+  },
+  // CommandCode's catalog is public and account-independent, so no per-connection
+  // credentials are needed — the connection only has to exist and be active.
+  commandcode: async () => {
+    const result = await resolveCommandCodeModels();
+    if (!result?.models?.length) return null;
+    return { models: result.models.map(({ id, name }) => ({ id, name })) };
   },
 };
 
@@ -401,6 +423,11 @@ export async function buildModelsList(kindFilter, options = {}) {
     combos.filter((c) => typeof c?.name === "string").map((c) => [c.name, c]),
   );
 
+  // Ids servable with zero stored connections (no-auth free lane only).
+  // Collected as combos/variants are pushed; the zero-connections branch
+  // below keeps exactly these and drops the rest.
+  const noAuthServableIds = new Set();
+
   // Lookup map so aggregateComboCapabilities can recursively resolve nested combos
   const comboByName = Object.fromEntries(combos.map((c) => [c.name, c.models]));
 
@@ -415,6 +442,13 @@ export async function buildModelsList(kindFilter, options = {}) {
     }
     // If every model in the combo is disabled, do not expose this combo on /v1/models
     if (activeComboMembers.length === 0 && (combo.models || []).length > 0) continue;
+
+    // A combo whose every seat is a no-auth free model serves with zero
+    // stored connections — keep it listed on a fresh install (it is the
+    // zero-config working combo). Anything else is dropped below.
+    if (Array.isArray(combo.models) && combo.models.length > 0 && combo.models.every(isNoAuthSeat)) {
+      noAuthServableIds.add(combo.name);
+    }
 
     const entry = {
       id: combo.name,
@@ -464,6 +498,7 @@ export async function buildModelsList(kindFilter, options = {}) {
         owned_by: "variant",
         ...(capabilities ? { capabilities } : {}),
       });
+      if (isNoAuthSeat(entry.model)) noAuthServableIds.add(name);
     }
   }
 
@@ -491,7 +526,16 @@ export async function buildModelsList(kindFilter, options = {}) {
     // serve through a virtual connection (see auth.js) and are the
     // only models that can honestly be listed here. A fleet with no
     // no-auth providers therefore returns an empty list.
+    //
+    // One exception: combos/variants whose every seat is a no-auth free
+    // model (e.g. the seeded `free` combo) DO serve with zero stored
+    // connections, so keeping them listed is honest — and they are the
+    // new user's zero-config first request. auto:* intents are never
+    // kept: auto-routing needs at least one stored connection to
+    // produce a candidate.
+    const kept = models.filter((m) => noAuthServableIds.has(m.id));
     models.length = 0;
+    models.push(...kept);
   }
 
     // Live catalogs resolve concurrently under one shared budget: sequential
@@ -723,6 +767,11 @@ export async function buildModelsList(kindFilter, options = {}) {
           }
           if (Number.isFinite(contextWindow)) model.context_length = contextWindow;
           if (Number.isFinite(maxOutput)) model.max_completion_tokens = maxOutput;
+          // Selectable reasoning levels (the set the dashboard picker shows) so clients
+          // can build their effort selector from the gateway instead of keeping a
+          // per-model table. Omitted when the model has no reasoning.
+          const thinkingLevels = getThinkingLevels(providerId, modelId);
+          if (Array.isArray(thinkingLevels) && thinkingLevels.length > 0) model.thinking_levels = thinkingLevels;
         }
         models.push(model);
       }

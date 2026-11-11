@@ -1,34 +1,29 @@
 import PropTypes from "prop-types";
 import { CapacityBadges } from "@/shared/components";
+import { getStageLabel } from "@/shared/utils/testErrorStage";
 
-export default function ModelRow({ model, fullModel, alias, copied, onCopy, testStatus, isCustom, isFree, onDeleteAlias, onTest, isTesting, onDisable, onEditCaps, caps, thinkingSuffix, onTestImage, imageStatus, isTestingImage, onTestThinking, thinkingStatus, isTestingThinking, enabled }) {
+export default function ModelRow({ model, fullModel, alias, copied, onCopy, testStatus, testDetail, isCustom, isFree, onDeleteAlias, onTest, isTesting, onDisable, onEdit, caps, thinkingSuffix }) {
   const displayModel = thinkingSuffix ? `${fullModel}(${thinkingSuffix})` : fullModel;
-  // Any probe failure turns the card red; any probe success with no failures
-  // turns it green. This keeps a single at-a-glance verdict per model.
-  const probeStatuses = [testStatus, imageStatus, thinkingStatus];
-  const verdict = probeStatuses.includes("error")
-    ? "error"
-    : probeStatuses.includes("ok") ? "ok" : undefined;
-  const borderColor = verdict === "ok"
+  const borderColor = testStatus === "ok"
     ? "border-green-500/40"
-    : verdict === "error"
+    : testStatus === "error"
     ? "border-red-500/40"
     : "border-border";
 
-  const iconColor = verdict === "ok"
+  const iconColor = testStatus === "ok"
     ? "#22c55e"
-    : verdict === "error"
+    : testStatus === "error"
     ? "#ef4444"
     : undefined;
 
   return (
-    <div className={`group w-full sm:w-auto min-w-0 max-w-full rounded-lg border px-3 py-2 ${borderColor} ${enabled === false ? "opacity-50" : ""} hover:bg-sidebar/50`}>
+    <div className={`group w-full sm:w-auto min-w-0 max-w-full rounded-lg border px-3 py-2 ${borderColor} hover:bg-sidebar/50`}>
       <div className="flex min-w-0 items-start gap-2 sm:items-center">
         <span
           className="material-symbols-outlined shrink-0 text-base mt-0.5 sm:mt-0"
           style={iconColor ? { color: iconColor } : undefined}
         >
-          {verdict === "ok" ? "check_circle" : verdict === "error" ? "cancel" : "smart_toy"}
+          {testStatus === "ok" ? "check_circle" : testStatus === "error" ? "cancel" : "smart_toy"}
         </span>
         <div className="flex min-w-0 flex-1 flex-col gap-1">
           <code className="w-fit max-w-full break-all rounded bg-sidebar px-1.5 py-0.5 font-mono text-xs text-text-muted sm:max-w-[360px] sm:truncate">{displayModel}</code>
@@ -36,6 +31,9 @@ export default function ModelRow({ model, fullModel, alias, copied, onCopy, test
             {model.name && <span className="break-all sm:truncate text-[9px] italic text-text-muted/70">{model.name}</span>}
             <CapacityBadges caps={caps} colorOverride="text-text-muted/70" size={12} />
           </span>
+          {testStatus === "error" && testDetail?.message ? (
+            <p className="text-xs text-red-500 break-words">{getStageLabel(testDetail.stage)}: {testDetail.message}{testDetail.latencyMs != null ? ` (${testDetail.latencyMs} ms)` : ""}</p>
+          ) : null}
         </div>
         <div className="flex shrink-0 items-center gap-0.5 sm:gap-1">
           {onTest && (
@@ -54,45 +52,6 @@ export default function ModelRow({ model, fullModel, alias, copied, onCopy, test
               </span>
             </div>
           )}
-          {/* Image probe: offered for every model. The probe measures the model
-              itself (it bypasses the router's modality strip), so hiding the
-              button for models the capability table calls "no vision" only hid
-              the way to verify that label. */}
-          {onTestImage && (
-            <div className="relative shrink-0 group/btn">
-              <button
-                onClick={onTestImage}
-                disabled={isTestingImage}
-                className={`rounded p-1.5 transition-opacity hover:bg-sidebar ${imageStatus === "error" ? "text-red-500" : "text-text-muted hover:text-primary"}`}
-              >
-                <span className="material-symbols-outlined text-sm" style={isTestingImage ? { animation: "spin 1s linear infinite" } : undefined}>
-                  {isTestingImage ? "progress_activity" : "image"}
-                </span>
-              </button>
-              <span className="pointer-events-none absolute mt-1 top-5 left-1/2 -translate-x-1/2 text-[10px] text-text-muted whitespace-nowrap opacity-0 group-hover/btn:opacity-100 transition-opacity">
-                {isTestingImage ? "Testing image..." : imageStatus === "ok" ? "Image OK" : imageStatus === "error" ? "Image failed" : "Test image"}
-              </span>
-            </div>
-          )}
-          {/* Thinking probe: offered for every model too — a model can reason
-              even when the capability table did not say so, and the probe is
-              the only way to find out. */}
-          {onTestThinking && (
-            <div className="relative shrink-0 group/btn">
-              <button
-                onClick={onTestThinking}
-                disabled={isTestingThinking}
-                className={`rounded p-1.5 transition-opacity hover:bg-sidebar ${thinkingStatus === "error" ? "text-red-500" : "text-text-muted hover:text-primary"}`}
-              >
-                <span className="material-symbols-outlined text-sm" style={isTestingThinking ? { animation: "spin 1s linear infinite" } : undefined}>
-                  {isTestingThinking ? "progress_activity" : "neurology"}
-                </span>
-              </button>
-              <span className="pointer-events-none absolute mt-1 top-5 left-1/2 -translate-x-1/2 text-[10px] text-text-muted whitespace-nowrap opacity-0 group-hover/btn:opacity-100 transition-opacity">
-                {isTestingThinking ? "Testing thinking..." : thinkingStatus === "ok" ? "Thinking OK" : thinkingStatus === "error" ? "Thinking failed" : "Test thinking"}
-              </span>
-            </div>
-          )}
           <div className="relative shrink-0 group/btn">
             <button
               onClick={() => onCopy(displayModel, `model-${model.id}`)}
@@ -106,16 +65,17 @@ export default function ModelRow({ model, fullModel, alias, copied, onCopy, test
               {copied === `model-${model.id}` ? "Copied!" : "Copy"}
             </span>
           </div>
-          {onEditCaps && (
+          {onEdit && (
             <div className="relative shrink-0 group/btn">
               <button
-                onClick={onEditCaps}
-                className="rounded p-0.5 text-text-muted hover:bg-sidebar hover:text-primary"
+                onClick={onEdit}
+                className="rounded p-1.5 text-text-muted transition-opacity hover:bg-sidebar hover:text-primary"
+                title="Edit model capabilities"
               >
-                <span className="material-symbols-outlined text-sm">tune</span>
+                <span className="material-symbols-outlined text-sm">edit</span>
               </button>
               <span className="pointer-events-none absolute mt-1 top-5 left-1/2 -translate-x-1/2 text-[10px] text-text-muted whitespace-nowrap opacity-0 group-hover/btn:opacity-100 transition-opacity">
-                Edit caps
+                Edit
               </span>
             </div>
           )}
@@ -130,13 +90,10 @@ export default function ModelRow({ model, fullModel, alias, copied, onCopy, test
           ) : onDisable ? (
             <button
               onClick={onDisable}
-              className={`rounded p-1.5 transition-opacity hover:bg-sidebar ${enabled === false ? "text-text-muted/50 hover:text-primary" : "text-primary hover:text-text-muted"}`}
-              title={enabled === false ? "Enable this model" : "Disable this model"}
-              aria-pressed={enabled !== false}
+              className="rounded p-1.5 text-text-muted transition-opacity hover:bg-red-500/10 hover:text-red-500"
+              title="Disable this model"
             >
-              <span className="material-symbols-outlined text-sm">
-                {enabled === false ? "toggle_off" : "toggle_on"}
-              </span>
+              <span className="material-symbols-outlined text-sm">close</span>
             </button>
           ) : null}
         </div>
@@ -154,20 +111,14 @@ ModelRow.propTypes = {
   copied: PropTypes.string,
   onCopy: PropTypes.func.isRequired,
   testStatus: PropTypes.oneOf(["ok", "error"]),
+  testDetail: PropTypes.object,
   isCustom: PropTypes.bool,
   isFree: PropTypes.bool,
   onDeleteAlias: PropTypes.func,
   onTest: PropTypes.func,
   isTesting: PropTypes.bool,
   onDisable: PropTypes.func,
-  onTestImage: PropTypes.func,
-  imageStatus: PropTypes.string,
-  isTestingImage: PropTypes.bool,
-  onTestThinking: PropTypes.func,
-  thinkingStatus: PropTypes.string,
-  isTestingThinking: PropTypes.bool,
-  enabled: PropTypes.bool,
-  onEditCaps: PropTypes.func,
+  onEdit: PropTypes.func,
   caps: PropTypes.object,
   thinkingSuffix: PropTypes.string,
 };

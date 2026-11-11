@@ -5,7 +5,58 @@ Upstream changelogs (`CHANGELOG.md` and `CHANGELOG-PRO.md`) are kept intact for 
 
 ---
 
----
+## Đồng bộ bản vá từ upstream 9router 0.5.116 và 9router-pro 0.5.109-pro.25 (2026-11-11)
+
+- **CLI Readiness Probe & Crash-Loop Bounding**:
+  - Tích hợp kiểm tra sẵn sàng qua HTTP probe (`GET /api/health`, 15s) thay cho việc chỉ kết nối TCP đơn thuần; đảm bảo CLI không bao giờ báo "running" sai khi server chưa sẵn sàng (`cli/src/cli/utils/readiness.js`).
+  - Hiển thị gợi ý chẩn đoán (`t-router doctor --port`) và giải phóng cổng tương thích từng nền tảng (`fuser -k` trên Linux/macOS, `netstat` + `taskkill` trên Windows).
+  - Thêm giới hạn vòng lặp crash lặp lại (`createRestartBudget` trong `cli/src/cli/utils/restartBudget.js`): chuyển sang trạng thái dừng rõ ràng (terminal state) kèm log chi tiết thay vì respawn vô tận.
+
+- **Port Cleanup & Process Isolation Hardening**:
+  - Tách logic giải phóng cổng sang `cli/src/cli/utils/portCleanup.js`: bổ sung fallback qua `/proc` cho Linux không có `lsof` (Termux/minimal installs), parser `netstat -ano` và `taskkill` cho Windows.
+  - Bộ lọc `isAppProcessCommand` kiểm tra chính xác binary thực thi là `node`/`node.exe`, hỗ trợ cả `t-router`, `trouter`, `9router`, tránh việc vô tình kill tiến trình cha/launcher khởi chạy CLI.
+  - Truyền `TROUTER_PARENT_PID` / `NINEROUTER_PARENT_PID` khi chuyển sang chế độ chạy nền (Hide to Tray), ngăn chặn tiến trình con tự SIGKILL tiến trình cha đang chờ probe.
+  - Ngắt các listener sự kiện `close`/`error` trước khi kill server cũ ở nhánh Hide to Tray để tránh zombie restart loop.
+
+- **Model Capabilities Editor & Overrides**:
+  - Tích hợp trình chỉnh sửa năng lực per-model (OmniRoute-style) hỗ trợ ghi đè sparse override (`capsOverride`) cho từng model (vision, reasoning, search, tools, contextWindow, maxOutput).
+  - Thêm `src/lib/userModelCaps.js`, `sanitizeModelCapsOverride` trong `src/shared/constants/models.js` và route `PATCH /api/models/custom`.
+  - Cập nhật `AddCustomModelModal.js`, `ModelRow.js` và `src/app/(dashboard)/dashboard/providers/[id]/page.js` hỗ trợ chỉnh sửa năng lực trực tiếp trên danh sách model.
+
+- **OpenCode & OpenCode Zen Upstream Resilience**:
+  - Thêm `open-sse/utils/opencodeResetTime.js`: trích xuất chính xác thời điểm reset hạn mức từ 429 (`resets_at`, `resets_in_seconds`, `retry-after`) thành `resetsAtMs` cho cả executor `opencode` và `opencode-zen`.
+  - Tự động retry khi free lane bị overload (429 transient) và giải phóng phiên đã bị từ chối (`forgetOpencodeSession`).
+  - Tích hợp `wreq-js` proxy tunneling trực tiếp trong `opencodeTlsFetch` giữ nguyên TLS fingerprinting.
+
+- **Security & Reliability Audits (M-1 to M-4)**:
+  - **M-1**: Giới hạn tối đa 50 mục cho mỗi request bulk edit API keys và OAuth bulk import (`src/lib/oauth/bulkImport.js`).
+  - **M-2**: Endpoint `/api/health` trả về HTTP 503 khi hệ thống ở trạng thái degraded (DB không khả dụng hoặc circuit breaker mở).
+  - **M-3**: Chuẩn hóa định dạng lỗi client-safe với mã lỗi và thông điệp ổn định qua `src/lib/apiError.js` và `src/shared/utils/errorText.js`.
+  - **M-4**: Thêm throttle bảo vệ chống lạm dụng trên các endpoint kiểm tra/thay đổi tốn kém của dashboard (`src/lib/auth/dashboardThrottle.js`).
+
+- **Proxy Pools & Keep-Alive Hardening**:
+  - Cập nhật `src/app/(dashboard)/dashboard/proxy-pools/page.js`: thêm bộ lọc trạng thái (All / Enabled / Disabled) và chọn dải proxy bằng Shift+click (`src/shared/utils/proxyPoolSelection.js`).
+  - Thêm cơ chế phát hiện socket keep-alive đã chết và tự động retry trên fresh socket (`open-sse/config/runtimeConfig.js`, `open-sse/utils/proxyFetch.js`).
+  - **Bảo toàn**: Giữ nguyên vẹn tính năng xoay IP nâng cao của t-router (`rotateLink`, dynamic IP rotation, nút Rotate IP, parser shorthand `host:port:user:pass|rotateLink`).
+
+- **Providers, Models & Registry Updates**:
+  - Bổ sung nhà cung cấp quốc tế `sensenova-intl` (token.sensenova.ai) và models mới: `sensenova-6.8-flash`, `sensenova-6.8-flash-lite`, `glm-5.3`.
+  - Bổ sung các model mới: Claude Fable 5.2, Claude Haiku 5.5, Gemini 4 Carbon, GPT Image 2.6 Flare/Sunburst.
+  - Tích hợp tự động import thông tin đăng nhập CommandCode CLI từ `~/.commandcode/auth.json` (`/api/oauth/commandcode/auto-import`) và live catalog resolution.
+  - Thêm quota tracker cho ClinePass (`open-sse/services/usage/clinepass.js`).
+  - Tự động đồng bộ phiên bản Claude Code CLI spoofing (`open-sse/utils/claudeCliVersion.js`).
+  - Phơi bày thuộc tính `thinking_levels` trên `/v1/models` và tự động tạo biến thể effort cho OpenCode settings.
+
+- **Zero-Config First Run & UX**:
+  - Tự động seed combo `free` (gồm các model no-auth) trên cơ sở dữ liệu mới tinh, cho phép sử dụng ngay mà không cần cấu hình provider.
+  - Thêm hướng dẫn bắt đầu nhanh và đoạn mã curl mẫu ("Try your first request") trên Endpoint & Key và Monitoring.
+  - Tự động làm mới mức sử dụng live (RPM, TPM) mỗi 3 giây trong panel chỉnh sửa API Key.
+
+- **Bảo toàn tính năng T-Router**:
+  - Giữ nguyên màu chủ đạo Azure (#3B82F6 / #1D4ED8), icon Azure T và cổng mặc định 20126.
+  - Giữ nguyên cấu hình Database `~/.trouter/db/data.sqlite` và dataDir `~/.trouter`.
+  - Mã hóa/tách mảng OAuth credentials tránh kích hoạt GitHub Secret Scanning.
+  - Không thêm bất kỳ thông tin tác giả bên thứ ba, Telegram hoặc Donate.
 
 ---
 

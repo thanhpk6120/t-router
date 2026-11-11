@@ -1,4 +1,4 @@
-// T Router — backup summary + retention helpers (pure).
+// 9Router Pro — backup summary + retention helpers (pure).
 import {
   payloadSections,
   sanitizeSections,

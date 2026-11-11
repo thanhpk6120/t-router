@@ -144,16 +144,18 @@ const inflight = new Map();
 // as ESM (cjs-module-lexer can't see the export), so `const { chromium } =
 // await import('playwright-core')` yields undefined and every consumer dies
 // with "Cannot read properties of undefined (reading
-// 'launchPersistentContext')". Normalize once here for all consumers.
+// 'launchPersistentContext')". Merge default's own properties as a fallback.
 function normalizeDep(mod) {
-  if (mod && !mod.chromium && mod.default?.chromium) return mod.default;
+  if (mod?.default && typeof mod.default === "object") {
+    return { ...mod.default, ...mod };
+  }
   return mod;
 }
 
 async function load(pkg) {
   // 1) Resolvable from the app install (dev machine / traced standalone).
   try {
-    return normalizeDep(await import(/* webpackIgnore: true */ pkg));
+    return normalizeDep(await import(/* webpackIgnore: true */ /* @vite-ignore */ pkg));
   } catch (error) {
     if (!isModuleMissing(error)) throw error;
   }
@@ -163,7 +165,7 @@ async function load(pkg) {
   const existingPath = resolvePackagePath(dir, pkg);
   if (existingPath) {
     try {
-      return normalizeDep(await import(/* webpackIgnore: true */ pathToFileURL(existingPath).href));
+      return normalizeDep(await import(/* webpackIgnore: true */ /* @vite-ignore */ pathToFileURL(existingPath).href));
     } catch (error) {
       if (!isModuleMissing(error)) throw error;
     }
@@ -184,7 +186,7 @@ async function load(pkg) {
   if (!installedPath) {
     throw new Error(`${pkg} was installed into "${dir}" but could not be resolved.`);
   }
-  return import(/* webpackIgnore: true */ pathToFileURL(installedPath).href).then(normalizeDep);
+  return import(/* webpackIgnore: true */ /* @vite-ignore */ pathToFileURL(installedPath).href).then(normalizeDep);
 }
 export function loadRuntimeDep(pkg) {
   if (!inflight.has(pkg)) {

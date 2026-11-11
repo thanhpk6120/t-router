@@ -1,6 +1,41 @@
 import { Readable } from "stream";
-import { MEMORY_CONFIG, FETCH_CONNECT_TIMEOUT_MS } from "../config/runtimeConfig.js";
+import {
+  MEMORY_CONFIG,
+  FETCH_CONNECT_TIMEOUT_MS,
+  FRESH_RETRY_KEEPALIVE_TIMEOUT_MS,
+  STALE_SOCKET_ERROR_CODES,
+  NON_STALE_SOCKET_ERROR_CODES,
+  STALE_SOCKET_ERROR_SUBSTRINGS,
+  resolveKeepAliveTimeouts,
+  isFreshSocketReplayEnabled,
+} from "../config/runtimeConfig.js";
 import { dbg } from "./debugLog.js";
+import { ensureClaudeCliVersion, applyClaudeCliVersion } from "./claudeCliVersion.js";
+
+const CLAUDE_UA_PROBE = /claude-cli\/\d/;
+function hasClaudeCliHeader(headers) {
+  if (!headers) return false;
+  const values = headers instanceof Headers ? [...headers.values()] : Array.isArray(headers) ? headers.map((h) => h[1]) : Object.values(headers);
+  return values.some((v) => typeof v === "string" && CLAUDE_UA_PROBE.test(v));
+}
+
+export function isStaleSocketError(error) {
+  if (!error || error.name === "AbortError" || isTlsCertError(error)) return false;
+  const code = error?.cause?.code || error?.code || "";
+  if (NON_STALE_SOCKET_ERROR_CODES.has(code)) return false;
+  if (STALE_SOCKET_ERROR_CODES.has(code)) return true;
+  const msg = `${error?.message || ""} ${error?.cause?.message || ""}`.toLowerCase();
+  return STALE_SOCKET_ERROR_SUBSTRINGS.some((sub) => msg.includes(sub));
+}
+
+// Always fetch through the package's own undici instance so fetch and the
+// Agents below come from the same copy — dispatcher options are only guaranteed
+// to match within one undici version.
+let undiciFetch = null;
+async function rawFetch(url, options) {
+  undiciFetch ??= (await import("undici")).fetch;
+  return undiciFetch(url, options);
+}
 
 // Only a *patched instance of this module* is unsafe to call back into: the
 // chain patchedFetch -> proxyAwareFetch -> fetchWithTlsFallback -> patchedFetch
@@ -22,15 +57,20 @@ if (!globalThis.__trouterSystemFetch && systemFetch) {
 
 function resolveBaseFetch() {
   const g = globalThis.fetch;
-  if (!isOwnPatchedFetch(g)) {
-    if (typeof g === "function") globalThis.__trouterOriginalFetch = g;
+  if (g && g !== systemFetch && !isOwnPatchedFetch(g)) {
     return g;
   }
-  return globalThis.__trouterOriginalFetch || initialNativeFetch || g;
+  return rawFetch;
 }
 
 resolveBaseFetch();
 const proxyDispatchers = new Map();
+const directDispatchers = new Map();
+
+export function resetDirectDispatchersForTests() {
+  directDispatchers.clear();
+  proxyDispatchers.clear();
+}
 
 // ─── TLS fingerprinting via got-scraping (browser-like JA3) ───────────────
 // Disabled: not in use. Kept commented for future re-enable.
@@ -241,6 +281,25 @@ function normalizeProxyUrl(proxyUrl) {
   }
 }
 
+/** scheme://host:port only — never credentials. */
+function safeProxyHost(proxyUrl) {
+  try {
+    const parsed = new URL(String(proxyUrl));
+    return `${parsed.protocol}//${parsed.hostname}${parsed.port ? `:${parsed.port}` : ""}`;
+  } catch {
+    return "unparseable-proxy-url";
+  }
+}
+
+/** Destination host only, never the full URL (which may carry a query/path). */
+function safeTargetHost(url) {
+  try {
+    return new URL(typeof url === "string" ? url : url.toString()).host;
+  } catch {
+    return "unparseable-url";
+  }
+}
+
 function resolveConnectionProxyUrl(targetUrl, proxyOptions) {
   const enabled = proxyOptions?.enabled === true || proxyOptions?.connectionProxyEnabled === true;
   if (!enabled) return null;
@@ -254,33 +313,73 @@ function resolveConnectionProxyUrl(targetUrl, proxyOptions) {
   return normalizeProxyUrl(proxyUrlRaw);
 }
 
-/**
- * Create proxy dispatcher lazily (undici-compatible)
- */
-async function getDispatcher(proxyUrl, insecure = false) {
-  const normalized = normalizeProxyUrl(proxyUrl);
-  if (!normalized && !insecure) return null;
+const TLS_ECDH_CURVE = process.env.NINEROUTER_TLS_ECDH_CURVE || "X25519";
+const EYEBALLS_CONNECT = { autoSelectFamily: true, autoSelectFamilyAttemptTimeout: 250 };
+function buildConnectOptions(insecure) {
+  return { ...EYEBALLS_CONNECT, ecdhCurve: TLS_ECDH_CURVE, ...(insecure ? { rejectUnauthorized: false } : {}) };
+}
 
-  const key = `${normalized || "direct"}::${insecure ? "insecure" : "secure"}`;
-  if (!proxyDispatchers.has(key)) {
-    // Evict oldest entry if max size reached
-    if (proxyDispatchers.size >= MEMORY_CONFIG.proxyDispatchersMaxSize) {
-      const [oldKey, oldDispatcher] = proxyDispatchers.entries().next().value || [];
-      if (oldKey) {
-        // Close before dropping: deleting alone leaks the undici pool and its
-        // keep-alive sockets for the life of the process.
-        try {
-          if (typeof oldDispatcher.close === "function") oldDispatcher.close();
-          else if (typeof oldDispatcher.destroy === "function") oldDispatcher.destroy();
-        } catch {}
-        proxyDispatchers.delete(oldKey);
-      }
+function evictOldest(cacheMap) {
+  if (cacheMap.size >= MEMORY_CONFIG.proxyDispatchersMaxSize) {
+    const [oldKey, oldDispatcher] = cacheMap.entries().next().value || [];
+    if (oldKey) {
+      try {
+        if (typeof oldDispatcher.close === "function") oldDispatcher.close();
+        else if (typeof oldDispatcher.destroy === "function") oldDispatcher.destroy();
+      } catch {}
+      cacheMap.delete(oldKey);
     }
-    const { Agent, ProxyAgent } = await import("undici");
-    const connect = insecure ? { rejectUnauthorized: false } : undefined;
-    const dispatcher = normalized
-      ? new ProxyAgent({ uri: normalized, ...(insecure ? { requestTls: connect } : {}) })
-      : new Agent({ connect });
+  }
+}
+
+async function getOrCreateDirectAgent(key, insecure, keepAliveTimeout, keepAliveMaxTimeout) {
+  const cached = directDispatchers.get(key);
+  if (cached) return cached;
+  const { Agent } = await import("undici");
+  evictOldest(directDispatchers);
+  const agent = new Agent({
+    connect: buildConnectOptions(insecure),
+    keepAliveTimeout,
+    keepAliveMaxTimeout,
+  });
+  directDispatchers.set(key, agent);
+  return agent;
+}
+
+export function getDirectDispatcher(insecure = false) {
+  const { keepAliveTimeout, keepAliveMaxTimeout } = resolveKeepAliveTimeouts();
+  const key = `direct::${insecure ? "insecure" : "secure"}::${keepAliveTimeout}::${keepAliveMaxTimeout}`;
+  return getOrCreateDirectAgent(key, insecure, keepAliveTimeout, keepAliveMaxTimeout);
+}
+
+export function getFreshRetryDispatcher(insecure = false) {
+  const key = `fresh::${insecure ? "insecure" : "secure"}`;
+  return getOrCreateDirectAgent(
+    key,
+    insecure,
+    FRESH_RETRY_KEEPALIVE_TIMEOUT_MS,
+    FRESH_RETRY_KEEPALIVE_TIMEOUT_MS
+  );
+}
+
+/**
+ * Create proxy or direct dispatcher lazily (undici-compatible)
+ */
+async function getDispatcher(proxyUrl, insecure = false, forceFreshSocket = false) {
+  const normalized = normalizeProxyUrl(proxyUrl);
+  if (!normalized) {
+    return forceFreshSocket ? getFreshRetryDispatcher(insecure) : getDirectDispatcher(insecure);
+  }
+
+  const key = `${normalized}::${insecure ? "insecure" : "secure"}`;
+  if (!proxyDispatchers.has(key)) {
+    evictOldest(proxyDispatchers);
+    const { ProxyAgent } = await import("undici");
+    const dispatcher = new ProxyAgent({
+      uri: normalized,
+      connect: EYEBALLS_CONNECT,
+      requestTls: { ecdhCurve: TLS_ECDH_CURVE, ...(insecure ? { rejectUnauthorized: false } : {}) },
+    });
     proxyDispatchers.set(key, dispatcher);
   }
 
@@ -310,14 +409,19 @@ export function evictProxyDispatcher(proxyUrl) {
 import { triggerBackgroundRotate, noteFailureRange, isProxyBadOrRefreshing } from "./proxyRotator.js";
 export { triggerBackgroundRotate, noteFailureRange, isProxyBadOrRefreshing };
 
-async function fetchWithTlsFallback(url, options, proxyUrl) {
+function isBodyReplaySafe(body) {
+  return !(body && typeof body.getReader === "function" && body.locked);
+}
+
+async function fetchWithTlsFallback(url, options, proxyUrl, forceFreshSocket = false) {
   try {
     // Protocol adapters may need Node's HTTP/1 transport on the direct path,
     // or custom TLS impersonation (wreq-js) even when routed through a proxy.
-    if (options.directFetch && (!proxyUrl || options.proxyAwareDirectFetch)) {
-      return await options.directFetch(url, { ...options, _proxyUrl: proxyUrl });
+    if (!proxyUrl && options.directFetch) return await options.directFetch(url, options);
+    if (options.directFetch && options.proxyAwareDirectFetch) {
+      return await options.directFetch(url, { ...options, _proxyUrl: proxyUrl }, proxyUrl);
     }
-    const dispatcher = proxyUrl ? await getDispatcher(proxyUrl) : undefined;
+    const dispatcher = await getDispatcher(proxyUrl, false, forceFreshSocket);
     // Resolve at call time: a test may have replaced globalThis.fetch with a
     // mock after this module loaded, and only our own patched instances must
     // be skipped (see isOwnPatchedFetch).
@@ -326,13 +430,28 @@ async function fetchWithTlsFallback(url, options, proxyUrl) {
   } catch (err) {
     const isStrictSsl = options.strictTls === true || process.env.STRICT_SSL === "true" || process.env.STRICT_SSL === "1";
     if (!isStrictSsl && isTlsCertError(err)) {
-      if (options.body && typeof options.body.getReader === "function" && options.body.locked) {
+      if (!isBodyReplaySafe(options.body)) {
         throw err;
       }
       // ponytail: in-memory insecure agent fallback for self-signed MITM corporate/antivirus certs
       console.warn(`[ProxyFetch] TLS cert verification failed (${err.cause?.code || err.code}), retrying with insecure TLS: ${url}`);
-      const insecureDispatcher = await getDispatcher(proxyUrl, true);
+      const insecureDispatcher = await getDispatcher(proxyUrl, true, forceFreshSocket);
       return await resolveBaseFetch()(url, { ...options, dispatcher: insecureDispatcher, _proxyUrl: proxyUrl, _inProxyAware: true });
+    }
+
+    // Stale keep-alive recovery: a pooled socket died before returning headers. Replay
+    // once on the fresh-socket dispatcher instead of waiting out the connect timeout.
+    if (
+      !proxyUrl
+      && !forceFreshSocket
+      && !options.directFetch
+      && !options.signal?.aborted
+      && isBodyReplaySafe(options.body)
+      && isFreshSocketReplayEnabled()
+      && isStaleSocketError(err)
+    ) {
+      dbg("FETCH", `stale keep-alive socket (${err.cause?.code || err.code || err.message}), retrying on fresh socket: ${url}`);
+      return await fetchWithTlsFallback(url, options, proxyUrl, true);
     }
     throw err;
   }
@@ -435,6 +554,13 @@ function isProxyActiveForProvider(proxyOptions) {
   return hasPoolId || isEnabled || hasProxyUrl || hasRelayUrl;
 }
 export async function proxyAwareFetch(url, options = {}, proxyOptions = null) {
+  // Keep the spoofed Claude Code version current (new models require a minimum CLI version).
+  // Refresh in the background: the request uses the version already known, so an
+  // unreachable npm registry can never add latency to the chat path.
+  if (hasClaudeCliHeader(options?.headers)) {
+    void ensureClaudeCliVersion(rawFetch);
+    options = { ...options, headers: applyClaudeCliVersion(options.headers) };
+  }
   const targetUrl = typeof url === "string" ? url : url.toString();
 
   // Vercel relay: forward request via relay headers
@@ -455,6 +581,27 @@ export async function proxyAwareFetch(url, options = {}, proxyOptions = null) {
   const connectionProxyUrl = resolveConnectionProxyUrl(targetUrl, proxyOptions);
   const envProxyUrl = connectionProxyUrl ? null : normalizeProxyUrl(getEnvProxyUrl(targetUrl));
   const proxyUrl = connectionProxyUrl || envProxyUrl;
+  const forceFreshSocket = proxyOptions?.forceFreshSocket === true || options?.forceFreshSocket === true;
+
+  // Protocol adapters that own their transport (wreq-js TLS impersonation)
+  // cannot use an undici dispatcher: they must drive the proxy themselves.
+  // Only adapters that declare `proxyCapable` opt in — any other adapter
+  // ignores the proxy URL and would leave over the direct interface, so they
+  // keep the undici path below.
+  if (proxyUrl && options?.directFetch?.proxyCapable === true) {
+    try {
+      const res = await options.directFetch(url, { ...options, proxyUrl }, proxyUrl);
+      // Reported only after the adapter that holds the tunnel returned.
+      const via = res?.headers?.get?.("x-9r-proxy-via");
+      dbg("PROXY", `PROXY ROUTING VERIFIED | ${safeTargetHost(targetUrl)} | transport=adapter | proxy=${via || safeProxyHost(proxyUrl)} | status=${res?.status}`);
+      return res;
+    } catch (err) {
+      if (proxyOptions?.strictProxy === true) {
+        throw new Error(`[ProxyFetch] Proxy required but failed (strictProxy=true): ${err.message}`);
+      }
+      throw err;
+    }
+  }
 
   const isProxyActive = isProxyActiveForProvider(proxyOptions);
 
@@ -463,7 +610,7 @@ export async function proxyAwareFetch(url, options = {}, proxyOptions = null) {
     if (proxyUrl) {
       // Proxy resolves DNS externally (not affected by /etc/hosts) — use proxy directly
       try {
-        return await fetchWithTlsFallback(url, options, proxyUrl);
+        return await fetchWithTlsFallback(url, options, proxyUrl, forceFreshSocket);
       } catch (proxyError) {
         if (proxyOptions?.strictProxy === true) {
           throw new Error(`[ProxyFetch] Proxy required but failed (strictProxy=true): ${proxyError.message}`);
@@ -589,7 +736,7 @@ export async function proxyAwareFetch(url, options = {}, proxyOptions = null) {
           };
           res = await resolveBaseFetch()(candidate.vercelRelayUrl, { ...candidateOptions, headers: relayHeaders });
         } else {
-          res = await fetchWithTlsFallback(url, candidateOptions, curProxyUrl);
+          res = await fetchWithTlsFallback(url, candidateOptions, curProxyUrl, forceFreshSocket);
         }
         releaseCandidate(true);
 
@@ -637,7 +784,7 @@ export async function proxyAwareFetch(url, options = {}, proxyOptions = null) {
     }
 
     console.warn(`[ProxyFetch] All ${candidateList.length} active proxies failed, falling back to active Direct connection: ${lastError?.message || `HTTP ${lastResponse?.status}`}`);
-    return fetchWithTlsFallback(url, options, null);
+    return fetchWithTlsFallback(url, options, null, forceFreshSocket);
   }
   // Strict mode means "never leave over the direct IP". Reaching here with a
   // proxy configured but unresolved is exactly that case — an inactive or
@@ -657,7 +804,7 @@ export async function proxyAwareFetch(url, options = {}, proxyOptions = null) {
   }
 
   // Provider does not use proxy (or Direct connection is active) — use native fetch directly
-  return fetchWithTlsFallback(url, options, null);
+  return fetchWithTlsFallback(url, options, null, forceFreshSocket);
 }
 
 /**

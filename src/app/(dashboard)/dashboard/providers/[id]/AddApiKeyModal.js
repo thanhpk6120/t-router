@@ -1,10 +1,10 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useState } from "react";
 import PropTypes from "prop-types";
 import { Button, Badge, Input, Modal, Select } from "@/shared/components";
 import { AI_PROVIDERS } from "@/shared/constants/providers";
-import { planBulkAdd, runBulkPool } from "@/shared/utils/bulkAdd";
+import { planBulkAdd } from "@/shared/utils/bulkAdd";
 
 const BULK_PLACEHOLDER = `name1|sk-key1\nname2|sk-key2\nsk-key-only-auto-named`;
 
@@ -55,6 +55,30 @@ export default function AddApiKeyModal({ isOpen, provider, providerName, isCompa
   const [validating, setValidating] = useState(false);
   const [validationResult, setValidationResult] = useState(null);
   const [saving, setSaving] = useState(false);
+  const [cliDetecting, setCliDetecting] = useState(false);
+  const [cliDetectError, setCliDetectError] = useState(null);
+
+  const handleCommandCodeAutoImport = async () => {
+    setCliDetecting(true);
+    setCliDetectError(null);
+    try {
+      const res = await fetch("/api/oauth/commandcode/auto-import");
+      const data = await res.json();
+      if (data.found && data.apiKey) {
+        setFormData((prev) => ({
+          ...prev,
+          name: prev.name || data.userName || data.keyName || "CommandCode CLI",
+          apiKey: data.apiKey,
+        }));
+      } else {
+        setCliDetectError(data.error || "Could not find Command Code credentials");
+      }
+    } catch {
+      setCliDetectError("Failed to auto-import from Command Code CLI");
+    } finally {
+      setCliDetecting(false);
+    }
+  };
   const bulkPlaceholder = isCloudflareAi
     ? `name1|sk-key1|acc123456\nname2|sk-key2|def789012\nsk-key-only-auto-named`
     : provider === "qoder" || provider === "qoder-cn"
@@ -63,14 +87,7 @@ export default function AddApiKeyModal({ isOpen, provider, providerName, isCompa
 
   const [mode, setMode] = useState("single"); // "single" | "bulk"
   const [bulkText, setBulkText] = useState("");
-  const [bulkResult, setBulkResult] = useState(null); // { success, failed, failures: [{name, reason}] }
-  const [bulkProgress, setBulkProgress] = useState(null); // { done, total, current } while adding
-  const bulkCloseTimer = useRef(null);
-  // Auto-close timer must not fire after the modal unmounts (e.g. the user
-  // closes it manually during the result flash).
-  useEffect(() => () => {
-    if (bulkCloseTimer.current) clearTimeout(bulkCloseTimer.current);
-  }, []);
+  const [bulkResult, setBulkResult] = useState(null); // { success, failed }
 
   const buildProviderSpecificData = () => {
     if (isOllamaLocal && formData.ollamaHostUrl.trim()) {
@@ -177,79 +194,53 @@ export default function AddApiKeyModal({ isOpen, provider, providerName, isCompa
   const handleBulkSubmit = async () => {
     const lines = bulkText.split("\n");
     if (!lines.length) return;
-    // Provisional display names only (opt21): the server allocates the
-    // final name from DB names, so the paginated existingNames here can
-    // never produce a false "free" name that then 409s. See bulkAdd.js.
+    // Plan collision-free names against existing connections so a generated
+    // "Key N" never matches a saved name (which the backend would upsert /
+    // overwrite instead of inserting). See bulkAdd.js for the full rationale.
     const plan = planBulkAdd(lines, existingNames, { isCloudflareAi });
     if (!plan.length) return;
     setSaving(true);
     setBulkResult(null);
-    setBulkProgress({ done: 0, total: plan.length, current: plan[0].name });
-    // Same per-key work as before (validate, then save, so bulk-added
-    // connections get a real status like single adds) — just overlapped
-    // instead of queued one-by-one. See runBulkPool in bulkAdd.js.
-    const worker = async (entry) => {
-      // Validate each key before saving so bulk-added connections get a
-      // real status (active/unknown) like single adds, instead of a
-      // hardcoded "unknown" that never flips until a manual test.
-      // Validation never gates the save: only the save result decides
-      // success, and the server-assigned name (not the provisional label)
-      // is authoritative.
-      let isValid = false;
+    let success = 0;
+    let failed = 0;
+    for (const entry of plan) {
       try {
-        const vres = await fetch("/api/providers/validate", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ provider, apiKey: entry.apiKey }),
-        });
-        const vdata = await vres.json().catch(() => ({}));
-        isValid = !!vdata.valid;
-      } catch {
-        isValid = false;
-      }
-      try {
+        // Validate each key before saving so bulk-added connections get a
+        // real status (active/unknown) like single adds, instead of a
+        // hardcoded "unknown" that never flips until a manual test.
+        let isValid = false;
+        try {
+          const vres = await fetch("/api/providers/validate", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ provider, apiKey: entry.apiKey }),
+          });
+          const vdata = await vres.json().catch(() => ({}));
+          isValid = !!vdata.valid;
+        } catch {
+          isValid = false;
+        }
         const res = await fetch("/api/providers", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             provider,
             apiKey: entry.apiKey,
-            baseName: entry.baseName,
-            autoAllocateName: true,
+            name: entry.name,
             priority: 1,
             testStatus: isValid ? "active" : "unknown",
             ...(entry.providerSpecificData ? { providerSpecificData: entry.providerSpecificData } : {}),
           }),
         });
-        if (res.ok) {
-          const data = await res.json().catch(() => ({}));
-          return { ok: true, assignedName: data?.connection?.name || null };
-        }
-        const data = await res.json().catch(() => ({}));
-        return {
-          ok: false,
-          reason: data?.code === "PROVIDER_NAME_CONFLICT"
-            ? "name conflict"
-            : (data?.error ? String(data.error).slice(0, 100) : `HTTP ${res.status}`),
-        };
+        if (res.ok) success++;
+        else failed++;
       } catch {
-        return { ok: false, reason: "network error" };
+        failed++;
       }
-    };
-    const { success, failed, failures } = await runBulkPool(plan, worker, {
-      concurrency: 6,
-      onProgress: (p) => setBulkProgress({ done: p.done, total: p.total, current: p.current }),
-    });
-    setSaving(false);
-    setBulkProgress(null);
-    setBulkResult({ success, failed, failures: failures || [] });
-    if (success > 0 && onBulkDone) onBulkDone();
-    // Auto-close once finished: the result line flashes briefly so the
-    // success/failed count is still seen, then the modal closes itself.
-    if (onClose) {
-      if (bulkCloseTimer.current) clearTimeout(bulkCloseTimer.current);
-      bulkCloseTimer.current = setTimeout(() => { onClose(); }, 1500);
     }
+    setSaving(false);
+    setBulkResult({ success, failed });
+    if (success > 0 && onBulkDone) onBulkDone();
   };
 
   if (!provider) return null;
@@ -261,8 +252,8 @@ export default function AddApiKeyModal({ isOpen, provider, providerName, isCompa
             Bedrock entry would be saved with no access key id or profile and never work. */}
         {!usesAwsCredentialForm && (
           <div className="flex gap-2">
-            <Button size="sm" variant={mode === "single" ? "primary" : "ghost"} disabled={saving} onClick={() => { setMode("single"); setBulkResult(null); }}>Single</Button>
-            <Button size="sm" variant={mode === "bulk" ? "primary" : "ghost"} disabled={saving} onClick={() => { setMode("bulk"); setBulkResult(null); }}>Bulk Add</Button>
+            <Button size="sm" variant={mode === "single" ? "primary" : "ghost"} onClick={() => { setMode("single"); setBulkResult(null); }}>Single</Button>
+            <Button size="sm" variant={mode === "bulk" ? "primary" : "ghost"} onClick={() => { setMode("bulk"); setBulkResult(null); }}>Bulk Add</Button>
           </div>
         )}
 
@@ -277,54 +268,21 @@ export default function AddApiKeyModal({ isOpen, provider, providerName, isCompa
               }
             </p>
             <textarea
-              className="w-full rounded border border-accent/30 bg-sidebar p-2 text-sm font-mono resize-y min-h-[140px] focus:outline-none focus:ring-1 focus:ring-primary disabled:opacity-60"
+              className="w-full rounded border border-accent/30 bg-sidebar p-2 text-sm font-mono resize-y min-h-[140px] focus:outline-none focus:ring-1 focus:ring-primary"
               placeholder={bulkPlaceholder}
               value={bulkText}
-              disabled={saving}
               onChange={(e) => setBulkText(e.target.value)}
             />
-            {saving && bulkProgress && (
-              <div className="flex flex-col gap-1.5">
-                <div className="flex items-center justify-between text-xs text-text-muted">
-                  <span>Adding {bulkProgress.done} of {bulkProgress.total} — {bulkProgress.current}</span>
-                  <span>{Math.round((bulkProgress.done / bulkProgress.total) * 100)}%</span>
-                </div>
-                <div className="h-1.5 w-full overflow-hidden rounded bg-white/10">
-                  <div
-                    className="h-full bg-primary transition-all duration-300"
-                    style={{ width: `${(bulkProgress.done / bulkProgress.total) * 100}%` }}
-                  />
-                </div>
-              </div>
-            )}
             {bulkResult && (
-              <>
-                <div className={`text-sm font-medium ${bulkResult.failed > 0 ? "text-yellow-400" : "text-green-400"}`}>
-                  ✓ {bulkResult.success} added{bulkResult.failed > 0 ? `, ✗ ${bulkResult.failed} failed` : ""}
-                </div>
-                {bulkResult.failures && bulkResult.failures.length > 0 && (
-                  <div className="text-xs text-text-muted">
-                    <div>
-                      {Object.entries(bulkResult.failures.reduce((acc, f) => {
-                        acc[f.reason] = (acc[f.reason] || 0) + 1;
-                        return acc;
-                      }, {})).map(([reason, count]) => `${reason} (${count})`).join(" · ")}
-                    </div>
-                    {bulkResult.failures.slice(0, 5).map((f, i) => (
-                      <div key={`${f.name}-${i}`}>{f.name} — {f.reason}</div>
-                    ))}
-                    {bulkResult.failures.length > 5 && (
-                      <div>…and {bulkResult.failures.length - 5} more</div>
-                    )}
-                  </div>
-                )}
-              </>
+              <div className={`text-sm font-medium ${bulkResult.failed > 0 ? "text-yellow-400" : "text-green-400"}`}>
+                ✓ {bulkResult.success} added{bulkResult.failed > 0 ? `, ✗ ${bulkResult.failed} failed` : ""}
+              </div>
             )}
             <div className="flex gap-2">
               <Button onClick={handleBulkSubmit} fullWidth disabled={saving || !bulkText.trim()}>
-                {saving ? (bulkProgress ? `Adding ${bulkProgress.done}/${bulkProgress.total}...` : "Adding...") : "Add All Keys"}
+                {saving ? "Adding..." : "Add All Keys"}
               </Button>
-              <Button onClick={onClose} variant="ghost" fullWidth disabled={saving}>Cancel</Button>
+              <Button onClick={onClose} variant="ghost" fullWidth>Cancel</Button>
             </div>
           </div>
         )}
@@ -350,6 +308,23 @@ export default function AddApiKeyModal({ isOpen, provider, providerName, isCompa
                 {validating ? "Checking..." : "Check"}
               </Button>
             </div>
+          </div>
+        )}
+        {provider === "commandcode" && (
+          <div className="flex items-center justify-between p-3 rounded bg-accent/10 border border-accent/20">
+            <div>
+              <div className="text-xs font-medium text-text">Command Code CLI detected?</div>
+              <div className="text-xs text-text-muted">Import API key directly from ~/.commandcode/auth.json</div>
+              {cliDetectError && <div className="text-xs text-red-400 mt-1">{cliDetectError}</div>}
+            </div>
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={handleCommandCodeAutoImport}
+              disabled={cliDetecting || saving}
+            >
+              {cliDetecting ? "Importing..." : "Import from CLI"}
+            </Button>
           </div>
         )}
         {!isOllamaLocal && (
@@ -540,7 +515,7 @@ export default function AddApiKeyModal({ isOpen, provider, providerName, isCompa
 
         <div className="flex gap-2">
           <Button onClick={handleSubmit} fullWidth disabled={saving || (!isOllamaLocal && (!formData.name || !apiKeySatisfied())) || (isCompatible && !formData.defaultModel.trim()) || (isAzure && (!azureData.azureEndpoint || !azureData.deployment || !azureData.organization)) || (isCloudflareAi && !cloudflareData.accountId)}>
-            {saving ? (validating ? "Checking..." : "Saving...") : "Save"}
+            {saving ? "Saving..." : "Save"}
           </Button>
           <Button onClick={onClose} variant="ghost" fullWidth>
             Cancel

@@ -22,7 +22,7 @@ beforeAll(async () => {
 });
 
 afterAll(() => {
-  try { if (tempDir) fs.rmSync(tempDir, { recursive: true, force: true }); } catch {}
+  if (tempDir) fs.rmSync(tempDir, { recursive: true, force: true });
   if (originalDataDir === undefined) delete process.env.DATA_DIR;
   else process.env.DATA_DIR = originalDataDir;
 });

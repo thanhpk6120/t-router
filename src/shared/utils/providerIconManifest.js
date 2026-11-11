@@ -135,6 +135,7 @@ export const PROVIDER_ICON_IDS = [
   "selfhosted-stt",
   "selfhosted-tts",
   "sensenova",
+  "sensenova-intl",
   "serper",
   "siliconflow",
   "stability-ai",

@@ -8,25 +8,30 @@
  *   descriptions, renamed schemas or tool_choice "none" are answered with 403
  *   FreeTierError. Caller tools are sent untouched. A tool that already uses an
  *   exact fingerprint name with a different definition adopts OpenCode's
- *   definition in place whenever its arguments can carry them; only a
- *   genuinely different schema travels under an alias, and the response side
- *   restores that caller's original name.
+ *   definition in place whenever its arguments can carry them; only a genuinely
+ *   different schema travels under an alias, and the response side restores
+ *   that caller's original name.
  * - System prompt: the CLI's `<env>` marker must be present. A request missing
  *   either half (marker or tools) answers 429 FreeUsageLimitError regardless of
  *   headers, UA or session shape; both halves together pass.
  *
  * Transport is a third gate and lives in services/opencodeTlsClient.js.
- *
- * Pro divergence, kept deliberately: the old "Do not call the ... tools; they
- * are placeholders" system-prompt note is a no-op here (upstream keeps a
- * claude-aware variant), because that exact phrasing is a relay telltale
- * upstream content filtering flags with 429 FreeUsageLimitError.
  */
 import os from "node:os";
 import path from "node:path";
 
 /** Names required by the upstream free-tier gate. */
 export const OPENCODE_FINGERPRINT_TOOLS = ["read", "shell"];
+
+// A second, purely textual gate on the same route: a declared tool name
+// containing "terminal" (case-insensitive substring) is answered 429
+// FreeUsageLimitError regardless of quota, IP, session or payload size, while
+// the same body with only that name changed answers normally
+// (decolua/9router#5319). Only `tools[]` is inspected — history and system
+// prompt are not — so the declaration travels under an alias and the caller's
+// name is restored on the way back, like a fingerprint-name collision.
+export const GATED_TOOL_NAME_RE = /terminal/i;
+const GATED_TOOL_ALIAS = "run_command";
 
 // Verbatim from the OpenCode v2.0.26 CLI. Upstream compares description and
 // parameters, so do not reword or reformat these.
@@ -158,7 +163,17 @@ export function concealFingerprintToolNames(tools) {
       continue;
     }
 
-    const key = fingerprintToolKey(toolNameOf(tool));
+    const name = toolNameOf(tool);
+    if (GATED_TOOL_NAME_RE.test(name)) {
+      let alias = GATED_TOOL_ALIAS;
+      for (let i = 2; taken.has(alias); i++) alias = `${GATED_TOOL_ALIAS}${i}`;
+      taken.add(alias);
+      map.set(alias, name);
+      out.push(withToolName(tool, alias));
+      continue;
+    }
+
+    const key = fingerprintToolKey(name);
     if (!key) {
       out.push(tool);
       continue;
@@ -263,20 +278,36 @@ export function aliasHistoryToolCalls(body, map) {
   }
 }
 
-// The old "Do not call the ... tools; they are placeholders" system-prompt note
-// turned out to be a telltale: upstream OpenCode content filtering flags that
-// exact phrasing as a third-party relay and answers 429 FreeUsageLimitError.
-// Keep this a no-op so the prompt stays pristine, like the real CLI sends it.
-function noteUnavailableTools() {}
+// Without the old "must not be used" descriptions the model does call the
+// appended tools (live probe: `read` on "what files are in /etc?"), so tell it
+// in the system prompt instead. Upstream does not gate on the prompt text.
+// Wording matters: "not available" made the model also refuse the caller's own
+// Read/Bash; "placeholders ... use the other tools" kept those working.
+function noteUnavailableTools(body, flat, names, claude = false) {
+  const list = names.map((name) => `\`${name}\``).join(" or ");
+  const note = names.length > 1
+    ? `Do not call the ${list} tools; they are placeholders that do nothing. Use the other tools you have been given instead.`
+    : `Do not call the ${list} tool; it is a placeholder that does nothing. Use the other tools you have been given instead.`;
+  if (flat) {
+    body.instructions = typeof body.instructions === "string" && body.instructions.trim()
+      ? `${body.instructions}\n\n${note}`
+      : note;
+    return;
+  }
+  // Claude-shaped bodies carry `system` instead; /messages rejects role:"system".
+  if (claude || body.system !== undefined) {
+    body.system = appendSystemText(body.system, note);
+    return;
+  }
+  if (!Array.isArray(body.messages)) return;
+  const first = body.messages[0];
+  if (first?.role === "system" && typeof first.content === "string") {
+    body.messages = [{ ...first, content: `${first.content}\n\n${note}` }, ...body.messages.slice(1)];
+  } else {
+    body.messages = [{ role: "system", content: note }, ...body.messages];
+  }
+}
 
-/**
- * Full request-side pass: normalize caller tools that collide with a
- * fingerprint name, and append OpenCode's definitions for any that are missing.
- *
- * @param {object} body
- * @param {boolean} flat - true for Responses tools ({name}), false for chat tools
- * @returns {Map<string,string>} map: sent name -> original name
- */
 // The marker gate reads text only: a foreign system prompt plus this exact block
 // passes, so the marker is appended to the caller's own prompt rather than
 // replacing it. Values mirror a real CLI instance on this host.
@@ -368,6 +399,15 @@ export function applyEnvFingerprint(body, flat, { claude = false } = {}) {
   }
 }
 
+/**
+ * Full request-side pass: normalize caller tools that collide with a
+ * fingerprint name, append OpenCode's definitions for any that are missing, and
+ * tell the model the appended ones are off-limits.
+ *
+ * @param {object} body
+ * @param {boolean} flat - true for Responses tools ({name}), false for chat tools
+ * @returns {Map<string,string>} map: sent name -> original name
+ */
 export function applyFingerprintTools(body, flat, { claude = false } = {}) {
   if (!body || typeof body !== "object") return new Map();
 
@@ -376,6 +416,7 @@ export function applyFingerprintTools(body, flat, { claude = false } = {}) {
   const appended = appendMissingFingerprintTools(body.tools, flat);
   retargetToolChoice(body, map);
   aliasHistoryToolCalls(body, map);
+  if (appended.length) noteUnavailableTools(body, flat, appended, claude);
 
   // The `<env>` marker is required on every free-lane request, with or without tools.
   applyEnvFingerprint(body, flat, { claude });

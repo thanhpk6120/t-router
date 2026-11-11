@@ -2,6 +2,9 @@
 
 import { NextResponse } from "next/server";
 import { resolveCliApiKey } from "../resolveApiKey.js";
+import { ALIAS_TO_ID } from "@/shared/constants/providers";
+import { PROVIDER_ID_TO_ALIAS } from "@/shared/constants/models";
+import { getThinkingLevels } from "open-sse/providers/thinkingLevels.js";
 import { exec } from "child_process";
 import { promisify } from "util";
 import fs from "fs/promises";
@@ -12,6 +15,23 @@ const execAsync = promisify(exec);
 
 const getConfigDir = () => path.join(os.homedir(), ".config", "opencode");
 const getConfigPath = () => path.join(getConfigDir(), "opencode.json");
+
+const ALIAS_TO_PROVIDER_ID = {
+  ...Object.fromEntries(Object.entries(PROVIDER_ID_TO_ALIAS).map(([id, alias]) => [alias, id])),
+  ...ALIAS_TO_ID,
+};
+
+// opencode "variants" built from the levels 9Router itself offers for a model
+// ("alias/model" → same set as the dashboard picker). Returns null when the
+// model has no reasoning levels, so nothing is written for it.
+const buildEffortVariants = (fullModelId) => {
+  const slash = fullModelId.indexOf("/");
+  if (slash <= 0) return null;
+  const alias = fullModelId.slice(0, slash);
+  const levels = getThinkingLevels(ALIAS_TO_PROVIDER_ID[alias] || alias, fullModelId.slice(slash + 1));
+  if (!Array.isArray(levels) || levels.length === 0) return null;
+  return Object.fromEntries(levels.map((level) => [level, { reasoningEffort: level }]));
+};
 
 // Check if opencode CLI is installed (via which/where or config file exists)
 const checkOpenCodeInstalled = async () => {
@@ -49,9 +69,9 @@ const readConfig = async () => {
   }
 };
 
-const hasTRouterConfig = (config) => {
+const has9RouterConfig = (config) => {
   if (!config?.provider) return false;
-  return !!config.provider["trouter"];
+  return !!config.provider["9router"];
 };
 
 // GET - Check opencode CLI and read current settings
@@ -74,7 +94,7 @@ export async function GET() {
     return NextResponse.json({
       installed: true,
       config,
-      hasTRouter: hasTRouterConfig(config), has9Router: hasTRouterConfig(config),
+      has9Router: has9RouterConfig(config),
       configPath: getConfigPath(),
         opencode: {
           models: Object.keys(modelMap),
@@ -88,7 +108,7 @@ export async function GET() {
   }
 }
 
-// POST - Apply T-Router as openai-compatible provider (multi-model support)
+// POST - Apply 9Router as openai-compatible provider (multi-model support)
 export async function POST(request) {
   try {
     const { baseUrl, apiKey, model, models, activeModel, subagentModel } = await request.json();
@@ -119,8 +139,8 @@ export async function POST(request) {
     // Ensure provider object
     if (!config.provider) config.provider = {};
 
-    // Preserve any existing t routervider entry and its models
-    const existingProvider = config.provider["trouter"] || { npm: "@ai-sdk/openai-compatible", options: {}, models: {} };
+    // Preserve any existing 9router provider entry and its models
+    const existingProvider = config.provider["9router"] || { npm: "@ai-sdk/openai-compatible", options: {}, models: {} };
 
     // Merge options (overwrite baseURL/apiKey)
     existingProvider.options = {
@@ -135,11 +155,15 @@ export async function POST(request) {
     // Add or update entries for all requested models
     for (const m of modelsArray) {
       if (!m || typeof m !== "string") continue;
-      existingProvider.models[m] = { name: m, modalities: { input: ["text", "image"], output: ["text"] } };
+      const entry = { name: m, modalities: { input: ["text", "image"], output: ["text"] } };
+      // Keep variants the user already tuned; only generate them when absent.
+      const variants = existingProvider.models[m]?.variants || buildEffortVariants(m);
+      if (variants) entry.variants = variants;
+      existingProvider.models[m] = entry;
     }
 
     // Save merged provider back
-    config.provider["trouter"] = existingProvider;
+    config.provider["9router"] = existingProvider;
 
     // Set the active model: prefer explicit activeModel, else first of modelsArray
     // If activeModel is explicitly empty string, clear the model
@@ -148,7 +172,7 @@ export async function POST(request) {
     } else {
       const finalActive = activeModel || modelsArray[0];
       if (finalActive) {
-        config.model = `trouter/${finalActive}`;
+        config.model = `9router/${finalActive}`;
       }
     }
 
@@ -157,7 +181,7 @@ export async function POST(request) {
     config.agent.explorer = {
       description: "Fast explorer subagent for codebase exploration",
       mode: "subagent",
-      model: `trouter/${effectiveSubagentModel}`,
+      model: `9router/${effectiveSubagentModel}`,
     };
 
     await fs.writeFile(configPath, JSON.stringify(config, null, 2));
@@ -209,7 +233,7 @@ export async function PATCH(request) {
   }
 }
 
-// DELETE - Remove T routervider or specific models from config
+// DELETE - Remove 9Router provider or specific models from config
 export async function DELETE(request) {
   try {
     const { searchParams } = new URL(request.url);
@@ -229,20 +253,20 @@ export async function DELETE(request) {
 
     // If specific model provided, remove just that model
     if (modelToRemove && config.provider?.["9router"]?.models) {
-      delete config.provider["trouter"].models[modelToRemove];
+      delete config.provider["9router"].models[modelToRemove];
       
       // If no models left, remove the provider
-      if (Object.keys(config.provider["trouter"].models).length === 0) {
-        delete config.provider["trouter"];
+      if (Object.keys(config.provider["9router"].models).length === 0) {
+        delete config.provider["9router"];
         if (config.model?.startsWith("9router/")) delete config.model;
       } else if (config.model === `9router/${modelToRemove}`) {
         // If removed model was active, switch to first remaining model
-        const remainingModels = Object.keys(config.provider["trouter"].models);
+        const remainingModels = Object.keys(config.provider["9router"].models);
         config.model = `9router/${remainingModels[0]}`;
       }
     } else {
-      // No specific model - remove entire t routervider
-      if (config.provider) delete config.provider["trouter"];
+      // No specific model - remove entire 9router provider
+      if (config.provider) delete config.provider["9router"];
       if (config.model?.startsWith("9router/")) delete config.model;
     }
 
@@ -257,7 +281,7 @@ export async function DELETE(request) {
 
     return NextResponse.json({
       success: true,
-      message: modelToRemove ? `Model "${modelToRemove}" removed` : "T-Router settings removed from OpenCode",
+      message: modelToRemove ? `Model "${modelToRemove}" removed` : "9Router settings removed from OpenCode",
     });
   } catch (error) {
     console.log("Error resetting opencode settings:", error);
