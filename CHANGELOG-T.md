@@ -5,6 +5,12 @@ Upstream changelogs (`CHANGELOG.md` and `CHANGELOG-PRO.md`) are kept intact for 
 
 ---
 
+## Cấu hình mã lỗi miễn trừ cách ly tài khoản theo provider (2026-11-12)
+
+- **Per-provider quarantine exempt statuses**: Thêm tùy chọn "Never deactivate on" trong trang chi tiết từng provider. Mặc định để trống giữ nguyên logic cũ (401/403, cách ly sau 5 lần lỗi liên tiếp). Khai báo danh sách mã (ví dụ `403`) để provider đó không bao giờ tự tắt tài khoản vì mã lỗi này.
+- **Lý do**: `antigravity` trả về HTTP 403 cho model mà tài khoản Google thực tế không phục vụ được, khiến tài khoản khỏe vẫn bị `Auto-quarantined` và bị tắt sau 5 request. Nút Test dùng endpoint khác nên không tái hiện được lỗi.
+- **Lưu trữ**: `settings.providerStrategies[providerId].quarantineExemptStatuses` (mảng số). Đọc trong `src/sse/services/auth.js` khi quyết định cách ly; fail-open khi đọc DB lỗi.
+
 ## Đồng bộ bản vá từ upstream 9router 0.5.116 và 9router-pro 0.5.109-pro.25 (2026-11-11)
 
 - **CLI Readiness Probe & Crash-Loop Bounding**:

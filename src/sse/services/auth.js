@@ -51,6 +51,25 @@ let lastUsedFlushTimer = null;
 // and can be re-enabled by hand (which resets the counter).
 const QUARANTINE_AFTER_AUTH_FAILURES = 5;
 
+// Per-provider opt-out (dashboard): settings.providerStrategies[providerId]
+// .quarantineExemptStatuses lists HTTP statuses that must NOT count toward
+// auto-quarantine for that provider. Default is empty, so the built-in
+// 401/403 rule stands; an operator sets e.g. [403] when the upstream answers
+// 403 for a model the credential is actually allowed to use (antigravity
+// answers 403 for models the Google project cannot serve), which used to
+// deactivate a healthy account after five requests.
+async function quarantineExemptStatuses(providerId) {
+  if (!providerId) return null;
+  try {
+    const settings = await getSettings();
+    const list = (settings?.providerStrategies || {})[providerId]?.quarantineExemptStatuses;
+    if (!Array.isArray(list) || list.length === 0) return null;
+    return new Set(list.map(Number).filter((n) => Number.isInteger(n)));
+  } catch {
+    return null; // fail open: a DB hiccup keeps the default rule
+  }
+}
+
 // Provider-wide auth-failure guard: if several distinct accounts of one
 // provider fail auth within a short window, the provider itself is sick
 // (endpoint change, global outage) — quarantining each account would
@@ -658,8 +677,9 @@ export async function markAccountUnavailable(connectionId, status, errorText, pr
   // the counter (clearAccountError); manual re-enable resets it too.
   if (conn && (status === 401 || status === 403)) {
     const providerId = provider ? resolveProviderId(provider) : null;
+    const exempt = await quarantineExemptStatuses(providerId);
     const broad = providerId ? providerAuthFailureIsBroad(providerId, connectionId) : false;
-    if (!broad) {
+    if (!broad && !(exempt && exempt.has(Number(status)))) {
       const failures = (conn.consecutiveAuthFailures || 0) + 1;
       update.consecutiveAuthFailures = failures;
       if (failures >= QUARANTINE_AFTER_AUTH_FAILURES) {

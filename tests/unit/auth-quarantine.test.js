@@ -93,6 +93,27 @@ describe("auth quarantine", () => {
     expect(row.consecutiveAuthFailures).toBe(4);
   });
 
+  it("a provider can exempt statuses from quarantine (403 exempt, 401 still counted)", async () => {
+    const conn = await freshConn("qtest6");
+    const settings = await db.getSettings();
+    await db.updateSettings({
+      providerStrategies: {
+        ...(settings.providerStrategies || {}),
+        qtest6: { quarantineExemptStatuses: [403] },
+      },
+    });
+
+    await fail(conn, "qtest6", 403, 6);
+    let row = await readConn(conn.id);
+    expect(row.isActive).toBe(true);
+    expect(row.consecutiveAuthFailures || 0).toBe(0);
+
+    await fail(conn, "qtest6", 401, 5);
+    row = await readConn(conn.id);
+    expect(row.isActive).toBe(false);
+    expect(row.consecutiveAuthFailures).toBe(5);
+  });
+
   it("manual re-enable resets the counter and quarantine fields", async () => {
     const conn = await freshConn("qtest5");
     await fail(conn, "qtest5", 401, 5);

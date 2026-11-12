@@ -86,6 +86,9 @@ export default function ProviderDetailPage() {
   const [bulkUpdatingProxy, setBulkUpdatingProxy] = useState(false);
   const [providerStrategy, setProviderStrategy] = useState(null);
   const [providerStickyLimit, setProviderStickyLimit] = useState("");
+  // Per-provider statuses that must not auto-quarantine the account.
+  // Empty = built-in rule (401/403 after 5 consecutive failures).
+  const [quarantineExempt, setQuarantineExempt] = useState("");
   const [thinkingMode, setThinkingMode] = useState("auto");
   const [autoPing, setAutoPing] = useState({ enabled: false, connections: {}, schedules: {} });
   const [scheduleConnection, setScheduleConnection] = useState(null);
@@ -415,6 +418,7 @@ export default function ProviderDetailPage() {
       const override = (settingsData.providerStrategies || {})[providerId] || {};
       setProviderStrategy(override.fallbackStrategy || "fill-first");
       setProviderStickyLimit(override.stickyRoundRobinLimit != null ? String(override.stickyRoundRobinLimit) : "1");
+      setQuarantineExempt(Array.isArray(override.quarantineExemptStatuses) ? override.quarantineExemptStatuses.join(", ") : "");
       // Load per-provider thinking config
       const thinkingCfg = (settingsData.providerThinking || {})[providerId] || {};
       setThinkingMode(thinkingCfg.mode || "auto");
@@ -494,6 +498,34 @@ export default function ProviderDetailPage() {
     }
   };
 
+  // "401, 403" -> [401, 403]; empty -> property removed (built-in default).
+  const applyQuarantineExempt = (override, raw = quarantineExempt) => {
+    const codes = raw
+      .split(",")
+      .map((v) => Number(v.trim()))
+      .filter((n) => Number.isInteger(n) && n >= 100 && n <= 599);
+    if (codes.length > 0) override.quarantineExemptStatuses = codes;
+    else delete override.quarantineExemptStatuses;
+  };
+
+  const saveQuarantineExempt = async (raw) => {
+    setQuarantineExempt(raw);
+    try {
+      const settingsRes = await fetch("/api/settings", { cache: "no-store" });
+      const settingsData = settingsRes.ok ? await settingsRes.json() : {};
+      const current = settingsData.providerStrategies || {};
+      const override = { ...(current[providerId] || {}) };
+      applyQuarantineExempt(override, raw);
+      await fetch("/api/settings", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ providerStrategies: { ...current, [providerId]: override } }),
+      });
+    } catch (error) {
+      console.log("Error saving quarantine exempt statuses:", error);
+    }
+  };
+
   const saveProviderStrategy = async (strategy, stickyLimit) => {
     try {
       const settingsRes = await fetch("/api/settings", { cache: "no-store" });
@@ -508,6 +540,9 @@ export default function ProviderDetailPage() {
       } else {
         delete override.stickyRoundRobinLimit;
       }
+      // quarantineExempt lives on the same override: this save rebuilds the
+      // object from a fresh settings read, so re-apply it explicitly.
+      applyQuarantineExempt(override);
 
       const updated = { ...current };
       updated[providerId] = override;
@@ -1919,6 +1954,23 @@ export default function ProviderDetailPage() {
                   )}
                 </>
               )}
+              {/* Quarantine exempt statuses (per provider) */}
+              <div className="flex flex-wrap items-center gap-2">
+                <span
+                  className="text-xs text-text-muted font-medium"
+                  title="HTTP statuses that must not deactivate accounts of this provider after repeated failures. Leave empty to keep the default (401 and 403)."
+                >
+                  Never deactivate on
+                </span>
+                <input
+                  type="text"
+                  value={quarantineExempt}
+                  onChange={(e) => setQuarantineExempt(e.target.value)}
+                  onBlur={(e) => saveQuarantineExempt(e.target.value)}
+                  placeholder="401, 403"
+                  className="w-32 px-2 py-1 text-xs border border-border rounded-md bg-background focus:outline-none focus:border-primary"
+                />
+              </div>
               {/* Round Robin toggle */}
               <div className="flex flex-wrap items-center gap-2">
                 <span className="text-xs text-text-muted font-medium">Round Robin</span>
