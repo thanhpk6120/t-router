@@ -12,7 +12,7 @@ import { getModelsByProviderId, getModelKind } from "@/shared/constants/models";
 import { OAUTH_PROVIDERS, APIKEY_PROVIDERS, FREE_PROVIDERS, FREE_TIER_PROVIDERS, AI_PROVIDERS, isOpenAICompatibleProvider, isAnthropicCompatibleProvider, getProviderAlias } from "@/shared/constants/providers";
 import { parseSearchQuery, matchesSearch } from "@/shared/utils/modelSearchFilter";
 import { getDeactivatedProviderIds } from "@/shared/utils/connectionStatus";
-import { NO_AUTH_PROVIDER_IDS } from "@/shared/utils/selectableModels";
+import { NO_AUTH_PROVIDER_IDS, filterDisabledModels } from "@/shared/utils/selectableModels";
 
 // Provider order: OAuth first, then Free Tier, then API Key (matches dashboard/providers)
 const PROVIDER_ORDER = [
@@ -466,16 +466,7 @@ export default function ModelSelectModal({
     });
 
     // Filter out disabled models per provider (disabled keyed by storage alias OR providerId)
-    Object.entries(groups).forEach(([providerId, group]) => {
-      const aliasKey = getProviderAlias(providerId);
-      const disabledIds = new Set([
-        ...(disabledModels[aliasKey] || []),
-        ...(disabledModels[providerId] || []),
-      ]);
-      if (disabledIds.size === 0) return;
-      group.models = group.models.filter((m) => !disabledIds.has(m.id));
-      if (group.models.length === 0) delete groups[providerId];
-    });
+    filterDisabledModels(groups, disabledModels);
 
     // Filter by enabledModels if explicitly configured on any active connection for this provider
     Object.entries(groups).forEach(([providerId, group]) => {

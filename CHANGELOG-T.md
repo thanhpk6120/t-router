@@ -5,6 +5,11 @@ Upstream changelogs (`CHANGELOG.md` and `CHANGELOG-PRO.md`) are kept intact for 
 
 ---
 
+## Sửa lỗi danh sách model và bộ lọc model bị disable (2026-11-12)
+
+- **"Loaded N models" nhưng danh sách trống**: `getModelKind` không nhận diện `type: "model"` — kiểu `type` mà catalog Anthropic-compatible và một số gateway Gemini-style trả về. Toàn bộ 18 model bị lọc khỏi "Available Models". Thêm các object-kind (`model`, `models`, `response`, `responses`, `default`) vào nhóm alias LLM trong `src/shared/constants/models.js`; kind media thật (embedding/image/tts) vẫn bị loại như cũ.
+- **Model đang disable vẫn hiện trong popup chọn model của Combos**: popup giữ bản sao riêng của logic lọc denylist và chỉ so khớp `model.id`, nên entry lưu dạng `alias/model` (hoặc key theo alias hiển thị) vẫn lọt qua. Tách logic thành `filterDisabledModels()` trong `src/shared/utils/selectableModels.js`, dùng chung cho cả trang provider và popup; so khớp đồng thời `id`, `value` và giá trị đã bỏ tiền tố alias.
+
 ## Cấu hình mã lỗi miễn trừ cách ly tài khoản theo provider (2026-11-12)
 
 - **Per-provider quarantine exempt statuses**: Thêm tùy chọn "Never deactivate on" trong trang chi tiết từng provider. Mặc định để trống giữ nguyên logic cũ (401/403, cách ly sau 5 lần lỗi liên tiếp). Khai báo danh sách mã (ví dụ `403`) để provider đó không bao giờ tự tắt tài khoản vì mã lỗi này.

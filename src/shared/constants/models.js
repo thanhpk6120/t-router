@@ -42,7 +42,15 @@ export const AI_MODELS = Object.entries(MODELS).flatMap(([alias, models]) =>
 // LLM filter in the dashboard compares against "llm", so an unmapped "chat"
 // read as a non-LLM kind and hid the ENTIRE catalog of such a provider — the
 // page said "Loaded 101 models" and then rendered an empty list.
-const LLM_KIND_ALIASES = new Set(["llm", "chat", "text", "completion", "completions", "language", "chat.completion"]);
+// Upstream catalogs also reuse "type" for the row's own object kind: Anthropic
+// and several Gemini-shaped catalogs answer { id, display_name, type: "model" },
+// which read as a non-LLM kind and hid the ENTIRE catalog (the page said
+// "Loaded 18 models" and rendered nothing). "model" and the OpenAI object
+// kinds below describe the row, not a modality, so they are LLM rows too.
+const LLM_KIND_ALIASES = new Set([
+  "llm", "chat", "text", "completion", "completions", "language", "chat.completion",
+  "model", "models", "responses", "response", "default",
+]);
 
 export const getModelKind = (m, fallback = null) => {
   const kind = m?.kind || m?.type || fallback;

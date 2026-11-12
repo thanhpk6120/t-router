@@ -42,6 +42,41 @@ export const ALL_PROVIDERS = { ...OAUTH_PROVIDERS, ...FREE_PROVIDERS, ...FREE_TI
 const asArray = (value) => (Array.isArray(value) ? value : []);
 
 /**
+ * Drop every model on a provider's denylist from the built groups.
+ *
+ * One implementation for the provider page and the model picker: the picker
+ * used to carry its own copy that matched only `model.id`, so a denylist entry
+ * stored as the full "alias/model" routing value stayed visible there while the
+ * provider page hid it.
+ *
+ * @param {Object<string, {alias?: string, models: Array}>} groups
+ * @param {Object<string, string[]>} disabledModels  alias|providerId -> model ids
+ */
+export function filterDisabledModels(groups, disabledModels) {
+  const disabledSafe = disabledModels || {};
+  Object.entries(groups || {}).forEach(([providerId, group]) => {
+    if (!group || !Array.isArray(group.models)) return;
+    const aliasKey = getProviderAlias(providerId);
+    const groupAlias = group.alias;
+    const disabledIds = new Set([
+      ...asArray(disabledSafe[aliasKey]),
+      ...asArray(disabledSafe[providerId]),
+      ...((groupAlias && groupAlias !== aliasKey) ? asArray(disabledSafe[groupAlias]) : []),
+    ]);
+    if (disabledIds.size === 0) return;
+    group.models = group.models.filter((m) => {
+      const stripped = (groupAlias && typeof m?.value === "string")
+        ? m.value.replace(`${groupAlias}/`, "")
+        : undefined;
+      const values = [m?.id, m?.value, stripped].filter(Boolean);
+      return !values.some((v) => disabledIds.has(v));
+    });
+    if (group.models.length === 0) delete groups[providerId];
+  });
+  return groups;
+}
+
+/**
  * Build the grouped, ordered, filtered model list shown by the pickers.
  *
  * @param {object} input
@@ -323,16 +358,7 @@ export function buildModelGroups({
   });
 
   // Filter out disabled models per provider (disabled keyed by storage alias OR providerId)
-  Object.entries(groups).forEach(([providerId, group]) => {
-    const aliasKey = getProviderAlias(providerId);
-    const disabledIds = new Set([
-      ...(disabledModelsSafe[aliasKey] || []),
-      ...(disabledModelsSafe[providerId] || []),
-    ]);
-    if (disabledIds.size === 0) return;
-    group.models = group.models.filter((m) => !disabledIds.has(m.id));
-    if (group.models.length === 0) delete groups[providerId];
-  });
+  filterDisabledModels(groups, disabledModelsSafe);
 
   // Filter by enabledModels if explicitly configured on any active connection for this provider
   Object.entries(groups).forEach(([providerId, group]) => {
