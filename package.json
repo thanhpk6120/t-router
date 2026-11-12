@@ -4,6 +4,9 @@
   "description": "T Router — AI router with a Prompt Inject engine (per-model / per-key / global system prompts), based on 9Router by decolua",
   "author": "",
   "private": true,
+  "engines": {
+    "node": ">=20.18.1"
+  },
   "scripts": {
     "predev": "node scripts/gen-provider-icon-manifest.mjs",
     "dev": "next dev --port 20126",

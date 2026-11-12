@@ -89,3 +89,77 @@ describe("provider breaker", () => {
     expect(snap).not.toContain("secret-conn-id");
   });
 });
+
+describe("per-model cooldowns", () => {
+  const failModel = (provider, conn, model, now) => recordProviderFailure(provider, conn, model, now);
+  const tripModel = (provider, model, t0 = 1000) => {
+    for (const [c, t] of [["c1", 0], ["c2", 100], ["c1", 200], ["c2", 300], ["c1", 400]]) {
+      failModel(provider, c, model, t0 + t);
+    }
+  };
+
+  it("one bad model cools down alone — provider stays closed, other models serve", () => {
+    tripModel("deepai", "gemini-4-argon");
+    expect(providerBreakerGate("deepai", "gemini-4-argon", 1500)).toBe("skip");
+    expect(providerBreakerGate("deepai", "llama-3.1-8b-instant", 1500)).toBe("allow");
+    expect(providerBreakerGate("deepai", null, 1500)).toBe("allow");
+    expect(getProviderBreakerSnapshot(1500).deepai.state).toBe("closed");
+    expect(getProviderBreakerSnapshot(1500).deepai.models["gemini-4-argon"].state).toBe("cooldown");
+  });
+
+  it("two bad models cool down independently — provider never trips", () => {
+    tripModel("deepai", "gemini-4-argon", 1000);
+    tripModel("deepai", "gpt-6-astra", 2000);
+    expect(providerBreakerGate("deepai", "gemini-4-argon", 2500)).toBe("skip");
+    expect(providerBreakerGate("deepai", "gpt-6-astra", 2500)).toBe("skip");
+    expect(providerBreakerGate("deepai", "tencent-hy3", 2500)).toBe("allow");
+    expect(getProviderBreakerSnapshot(2500).deepai.state).toBe("closed");
+  });
+
+  it("a broad outage still trips the provider — failures spread thin across models", () => {
+    for (const [c, m, t] of [
+      ["c1", "model-a", 1000], ["c2", "model-b", 1100], ["c1", "model-c", 1200],
+      ["c2", "model-a", 1300], ["c1", "model-b", 1400], ["c2", "model-c", 1500],
+    ]) {
+      failModel("dahl", c, m, t);
+    }
+    expect(providerBreakerGate("dahl", "model-a", 1600)).toBe("skip");
+    expect(getProviderBreakerSnapshot(1600).dahl.state).toBe("open");
+  });
+
+  it("cooldown expires, then a repeat failure escalates the next cooldown", () => {
+    const t0 = 10000;
+    tripModel("deepai", "gemini-4-argon", t0);
+    const firstCooldownUntil = t0 + 400 + PROVIDER_BREAKER_OPEN_MS;
+    expect(providerBreakerGate("deepai", "gemini-4-argon", t0 + 500)).toBe("skip");
+    expect(providerBreakerGate("deepai", "gemini-4-argon", firstCooldownUntil + 100)).toBe("allow");
+    tripModel("deepai", "gemini-4-argon", firstCooldownUntil + 200);
+    expect(providerBreakerGate("deepai", "gemini-4-argon", firstCooldownUntil + 700)).toBe("skip");
+    expect(providerBreakerGate("deepai", "gemini-4-argon", firstCooldownUntil + 200 + 400 + 2 * PROVIDER_BREAKER_OPEN_MS + 100)).toBe("allow");
+  });
+
+  it("a success for the model clears its cooldown; another model's success does not", () => {
+    const t0 = 50000;
+    tripModel("deepai", "gemini-4-argon", t0);
+    expect(providerBreakerGate("deepai", "gemini-4-argon", t0 + 500)).toBe("skip");
+    recordProviderSuccess("deepai", "tencent-hy3", t0 + 600);
+    expect(providerBreakerGate("deepai", "gemini-4-argon", t0 + 700)).toBe("skip");
+    recordProviderSuccess("deepai", "gemini-4-argon", t0 + 800);
+    expect(providerBreakerGate("deepai", "gemini-4-argon", t0 + 900)).toBe("allow");
+    expect(getProviderBreakerSnapshot(t0 + 900).deepai).toBeUndefined();
+  });
+
+  it("provider/model-prefixed and bare model ids key the same model", () => {
+    tripModel("deepai", "deepai/gemini-4-argon");
+    expect(providerBreakerGate("deepai", "gemini-4-argon", 1500)).toBe("skip");
+    recordProviderSuccess("deepai", "gemini-4-argon", 1600);
+    expect(providerBreakerGate("deepai", "deepai/gemini-4-argon", 1700)).toBe("allow");
+  });
+
+  it("snapshot lists model cooldowns without connection ids", () => {
+    tripModel("deepai", "gemini-4-argon");
+    const snap = JSON.stringify(getProviderBreakerSnapshot(1500));
+    expect(snap).not.toContain("secret-conn-id");
+    expect(snap).toContain("gemini-4-argon");
+  });
+});

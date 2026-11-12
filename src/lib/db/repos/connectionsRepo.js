@@ -16,6 +16,10 @@ function modelsListSignature(conn) {
   ]);
 }
 
+// MiniMax desktop-lease connections carry no token of their own (the usage
+// handler borrows one from the desktop broker), so eligibility is by authType.
+const LEASE_AUTH_TYPE = "mcode-lease";
+
 const OPTIONAL_FIELDS = [
   "displayName", "email", "globalPriority", "defaultModel",
   "accessToken", "refreshToken", "expiresAt", "tokenType",
@@ -126,7 +130,8 @@ export async function getProviderConnections(filter = {}) {
 // 9Router Pro (opt26): quota page only — fetch usage-eligible connections
 // straight from SQLite instead of loading + decrypting the whole table.
 // Mirrors the providers/client route's eligibility rule exactly: the provider
-// must support usage AND (oauth auth OR apikey-whitelisted provider).
+// must support usage AND (oauth auth, an apikey-whitelisted provider, or a
+// MiniMax desktop lease — authType "mcode-lease", which stores no token).
 export async function getUsageEligibleConnections(usageProviders, apikeyProviders) {
   const db = await getAdapter();
   const usage = Array.isArray(usageProviders) ? usageProviders.filter(Boolean) : [];
@@ -134,10 +139,11 @@ export async function getUsageEligibleConnections(usageProviders, apikeyProvider
   if (!usage.length) return [];
   const usagePlaceholders = usage.map(() => "?").join(", ");
   const apikeyPlaceholders = apikey.length ? apikey.map(() => "?").join(", ") : null;
-  const sql = apikeyPlaceholders
-    ? `SELECT * FROM providerConnections WHERE provider IN (${usagePlaceholders}) AND (authType = 'oauth' OR provider IN (${apikeyPlaceholders}))`
-    : `SELECT * FROM providerConnections WHERE provider IN (${usagePlaceholders}) AND authType = 'oauth'`;
-  const rows = db.all(sql, [...usage, ...apikey]);
+  const eligibleAuth = apikeyPlaceholders
+    ? `(authType = 'oauth' OR authType = ? OR provider IN (${apikeyPlaceholders}))`
+    : `(authType = 'oauth' OR authType = ?)`;
+  const sql = `SELECT * FROM providerConnections WHERE provider IN (${usagePlaceholders}) AND ${eligibleAuth}`;
+  const rows = db.all(sql, [...usage, LEASE_AUTH_TYPE, ...apikey]);
   const list = rows.map(rowToConn);
   list.sort((a, b) => {
     const pA = a.priority != null ? a.priority : 999;

@@ -105,6 +105,21 @@ describe("OpenCodeExecutor overload retry", () => {
     expect(result.response.status).toBe(429);
   });
 
+  it("does not retry an overloaded 429 that carries a quota reset time", async () => {
+    // Both signals in one body: the reset time wins — the window is spent.
+    baseExecuteMock.mockResolvedValue(upstream(429, JSON.stringify({
+      error: {
+        message: "The inference service is overloaded. Please try again later.",
+        resets_in_seconds: 1800,
+      },
+    })));
+
+    const result = await run(new OpenCodeExecutor("opencode", {}));
+
+    expect(baseExecuteMock).toHaveBeenCalledTimes(1);
+    expect(result.response.status).toBe(429);
+  });
+
   it("does not retry other upstream failures", async () => {
     baseExecuteMock.mockResolvedValue(upstream(500, '{"error":"boom"}'));
 

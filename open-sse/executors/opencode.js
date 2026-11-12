@@ -51,13 +51,18 @@ async function classifyRejection(response) {
   const status = response?.status;
   if (status !== 429 && status !== 403) return null;
   if (status === 403) return "session";
+  let bodyText;
   try {
     // The body is the response stream; clone it so a non-retryable 429 is still
     // delivered intact to the caller.
-    return OPENCODE_OVERLOAD_RE.test(await response.clone().text()) ? "overload" : "session";
+    bodyText = await response.clone().text();
   } catch {
     return "session";
   }
+  // A reset time means the quota window is spent: retrying burns the window
+  // and grows the reset delay, so it is never an overload retry.
+  if (parseOpencodeRateLimitReset(response, bodyText)) return "session";
+  return OPENCODE_OVERLOAD_RE.test(bodyText) ? "overload" : "session";
 }
 
 function sleep(ms, signal) {

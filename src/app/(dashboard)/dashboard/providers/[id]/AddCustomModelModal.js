@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import PropTypes from "prop-types";
-import { Button, Modal, Select, Toggle } from "@/shared/components";
+import { Button, Modal, Select } from "@/shared/components";
 import { MODEL_CAPS_OVERRIDE_META, MODEL_CAPS_OVERRIDE_NUMBER_KEYS, STT_TRANSPORT_META, STT_TRANSPORTS } from "@/shared/constants/models";
 
 // Tri-state per capability: "auto" = use detection, "on"/"off" = explicit.
@@ -113,7 +113,7 @@ export default function AddCustomModelModal({ isOpen, providerAlias, providerDis
       const res = await fetch("/api/models/test", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ model: `${providerAlias}/${cleanId}` }),
+        body: JSON.stringify({ model: `${providerAlias}/${cleanId}`, kind: isStt ? "stt" : "llm" }),
       });
       const data = await res.json();
       setTestStatus(data.ok ? "ok" : "error");
@@ -202,83 +202,93 @@ export default function AddCustomModelModal({ isOpen, providerAlias, providerDis
           </p>
         </div>
 
-        <div>
-          <div className="flex items-baseline justify-between gap-2 mb-1.5">
-            <label className="text-sm font-medium block">Capabilities</label>
-            {isEdit && (
-              <button type="button" onClick={handleResetAll} className="text-xs text-primary hover:underline shrink-0">
-                Reset all to Auto
-              </button>
-            )}
-          </div>
-          {isEdit && detectedCaps && (
-            <p className="text-xs text-text-muted mb-2">
-              Detected: {formatDetected(detectedCaps)}. Auto keeps the detected value.
-            </p>
-          )}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            {TOGGLE_KEYS.map((key) => (
-              <Select
-                key={key}
-                label={MODEL_CAPS_OVERRIDE_META[key].label}
-                value={triState[key]}
-                onChange={(e) => setTriState((prev) => ({ ...prev, [key]: e.target.value }))}
-                options={TRI_STATE_OPTIONS}
-                hint={MODEL_CAPS_OVERRIDE_META[key].desc}
-              />
-            ))}
-            {MODEL_CAPS_OVERRIDE_NUMBER_KEYS.map((key) => (
-              <div key={key} className="flex flex-col gap-1.5">
-                <label className="text-sm font-medium text-text-main">{MODEL_CAPS_OVERRIDE_META[key].label}</label>
-                <input
-                  type="number"
-                  min="1"
-                  step="1"
-                  inputMode="numeric"
-                  value={numbers[key]}
-                  onChange={(e) => { setNumbers((prev) => ({ ...prev, [key]: e.target.value })); setNumberError(""); }}
-                  placeholder={detectedCaps?.[key] ? `Auto (${detectedCaps[key].toLocaleString()})` : "Auto (detected)"}
-                  className="w-full py-2.5 px-3 text-sm text-text-main bg-surface-2 border border-transparent rounded-[10px] focus:outline-none focus:ring-2 focus:ring-brand-500/30 focus:border-brand-500/40"
-                />
-                <p className="text-xs text-text-muted">{MODEL_CAPS_OVERRIDE_META[key].desc} — empty keeps the detected value.</p>
-              </div>
-            ))}
-          </div>
-          {numberError && (
-            <p className="text-xs text-red-500 flex items-center gap-1 mt-2">
-              <span className="material-symbols-outlined text-[14px]">error</span>
-              {numberError}
-            </p>
-          )}
-        </div>
-
-        {/* STT is a model TYPE, not a chat capability: the save flow turns this
-            flag into type "stt" (the API honours a transport only on stt
-            records). The select pins the realtime dispatch marker persisted
-            with the model; the whitelist is the shared STT_TRANSPORT_META.
-            Add mode only — edits are llm rows and keep their type. */}
+        {/* STT is a model TYPE, not a chat capability: the API honours a
+            transport only on stt records. Add mode only — edits are llm rows
+            and keep their type. */}
         {!isEdit && (
+          <Select
+            label="Model type"
+            value={isStt ? "stt" : "llm"}
+            onChange={(e) => {
+              const next = e.target.value === "stt";
+              setIsStt(next);
+              if (!next) setTransport("");
+              setTestStatus(null);
+              setTestError("");
+            }}
+            options={[
+              { value: "llm", label: "Chat / LLM" },
+              { value: "stt", label: "Speech to text (STT)" },
+            ]}
+            hint={isStt
+              ? "Audio transcription models use /v1/audio/transcriptions."
+              : "Chat models appear in this provider's Available Models."}
+          />
+        )}
+
+        {!isStt && (
           <div>
-            <Toggle
-              checked={isStt}
-              onChange={(v) => { setIsStt(v); if (!v) setTransport(""); }}
-              label="Speech to text"
-              description="Transcribes audio via /v1/audio/transcriptions"
-              size="sm"
-            />
-            {isStt && (
-              <div className="mt-3">
+            <div className="flex items-baseline justify-between gap-2 mb-1.5">
+              <label className="text-sm font-medium block">Capabilities</label>
+              {isEdit && (
+                <button type="button" onClick={handleResetAll} className="text-xs text-primary hover:underline shrink-0">
+                  Reset all to Auto
+                </button>
+              )}
+            </div>
+            {isEdit && detectedCaps && (
+              <p className="text-xs text-text-muted mb-2">
+                Detected: {formatDetected(detectedCaps)}. Auto keeps the detected value.
+              </p>
+            )}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {TOGGLE_KEYS.map((key) => (
                 <Select
-                  label="Transport"
-                  value={transport}
-                  onChange={(e) => setTransport(e.target.value)}
-                  placeholder="Provider default (REST)"
-                  options={STT_TRANSPORTS.map((t) => ({ value: t, label: STT_TRANSPORT_META[t].label }))}
-                  hint="Realtime transport marker for the STT dispatcher. Empty keeps the provider's REST format."
+                  key={key}
+                  label={MODEL_CAPS_OVERRIDE_META[key].label}
+                  value={triState[key]}
+                  onChange={(e) => setTriState((prev) => ({ ...prev, [key]: e.target.value }))}
+                  options={TRI_STATE_OPTIONS}
+                  hint={MODEL_CAPS_OVERRIDE_META[key].desc}
                 />
-              </div>
+              ))}
+              {MODEL_CAPS_OVERRIDE_NUMBER_KEYS.map((key) => (
+                <div key={key} className="flex flex-col gap-1.5">
+                  <label className="text-sm font-medium text-text-main">{MODEL_CAPS_OVERRIDE_META[key].label}</label>
+                  <input
+                    type="number"
+                    min="1"
+                    step="1"
+                    inputMode="numeric"
+                    value={numbers[key]}
+                    onChange={(e) => { setNumbers((prev) => ({ ...prev, [key]: e.target.value })); setNumberError(""); }}
+                    placeholder={detectedCaps?.[key] ? `Auto (${detectedCaps[key].toLocaleString()})` : "Auto (detected)"}
+                    className="w-full py-2.5 px-3 text-sm text-text-main bg-surface-2 border border-transparent rounded-[10px] focus:outline-none focus:ring-2 focus:ring-brand-500/30 focus:border-brand-500/40"
+                  />
+                  <p className="text-xs text-text-muted">{MODEL_CAPS_OVERRIDE_META[key].desc} — empty keeps the detected value.</p>
+                </div>
+              ))}
+            </div>
+            {numberError && (
+              <p className="text-xs text-red-500 flex items-center gap-1 mt-2">
+                <span className="material-symbols-outlined text-[14px]">error</span>
+                {numberError}
+              </p>
             )}
           </div>
+        )}
+
+        {/* The type picks the modality; the transport pins the realtime
+            dispatch marker persisted with an stt model. Empty = provider REST. */}
+        {!isEdit && isStt && (
+          <Select
+            label="Transport"
+            value={transport}
+            onChange={(e) => setTransport(e.target.value)}
+            placeholder="Provider default (REST)"
+            options={STT_TRANSPORTS.map((t) => ({ value: t, label: STT_TRANSPORT_META[t].label }))}
+            hint="Realtime transport marker for the STT dispatcher. Empty keeps the provider's REST format."
+          />
         )}
 
         {/* Test result */}

@@ -158,8 +158,10 @@ export async function GET(request, { params }) {
       connection.authType === "apikey" || connection.authType === "api_key";
     const isApikeyEligible =
       isApikeyAuth && USAGE_APIKEY_PROVIDERS.includes(connection.provider);
+    // Lease connections borrow the desktop app's token inside the usage handler.
+    const isLease = connection.authType === "mcode-lease";
 
-    if (!isOAuth && !isApikeyEligible) {
+    if (!isOAuth && !isApikeyEligible && !isLease) {
       return Response.json({ message: "Usage not available for this connection" });
     }
 

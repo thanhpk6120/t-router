@@ -5,6 +5,31 @@ Upstream changelogs (`CHANGELOG.md` and `CHANGELOG-PRO.md`) are kept intact for 
 
 ---
 
+## Đồng bộ bản vá từ upstream 9router 0.5.119 và 9router-pro 0.5.109-pro.26 (2026-11-12)
+
+- **Per-model cooldowns** (`src/sse/services/providerBreaker.js`): thêm tầng cách ly theo từng model bên cạnh circuit breaker toàn provider. Một model lỗi liên tục (≥5 lần từ ≥2 connection trong cửa sổ 5 phút) chỉ bị đưa vào cooldown 60s → 120s → 240s … (tối đa 10 phút, hằng số `PROVIDER_BREAKER_MODEL_COOLDOWN_MAX_MS`), các model còn lại của provider vẫn phục vụ bình thường. Thành công của chính model đó xoá cooldown và reset backoff; thành công của model khác không ảnh hưởng.
+  - `providerBreakerGate`/`recordProviderFailure`/`recordProviderSuccess` nhận thêm tham số `model` (giữ tương thích ngược: tham số số thứ 2/3 vẫn được hiểu là timestamp).
+  - Snapshot dashboard liệt kê `models` đang cooldown theo model id, không lộ connection id.
+  - Lỗi của một model đã từng cooldown không còn tính vào bộ đếm provider, nên một model hỏng không thể làm sập cả provider.
+
+- **OpenCode free-lane 429 classification** (`open-sse/executors/opencode.js`): `classifyRejection` giờ kiểm tra reset time trước. 429 kèm `resets_at` / `resets_in_seconds` / `retry-after` là quota đã cạn — không bao giờ retry (retry chỉ đốt thêm cửa sổ quota và làm reset xa hơn). Chỉ 429 "overloaded" không kèm reset mới được retry với backoff 800ms → 1600 → 3200 → 4000ms (tối đa 8 lần, có jitter và tôn trọng abort signal như trước).
+
+- **Combo first-response grace** (`open-sse/services/combo.js`): thành viên combo vượt ngân sách chờ phản hồi đầu tiên bị loại khỏi combo đó trong 5 phút (`COMBO_FIRST_RESPONSE_GRACE_MS`, env cùng tên, đặt 0 để tắt) rồi tự quay lại — thay vì mỗi request lại đốt trọn 60s vào đúng model chậm đó. Chỉ áp dụng cho combo có tên và có ≥2 thành viên; nếu tất cả đều đang trong grace thì trả 504 kèm thông điệp rõ ràng ngay lập tức.
+
+- **Stable JSON request bodies** (`open-sse/utils/stableJson.js`, `open-sse/executors/base.js`): body gửi upstream giờ được serialize với key đã sắp xếp, giữ nguyên ngữ nghĩa `JSON.stringify` (bỏ `undefined`/function/symbol, `toJSON`, ném lỗi với BigInt, `undefined` trong mảng thành `null`). Cùng một request logic luôn ra cùng một chuỗi byte, giữ prefix cache của upstream sống khi body được lắp từ nhiều nhánh code khác nhau.
+
+- **KeyAccessControls TDZ crash** (`src/app/(dashboard)/dashboard/endpoint/components/KeyAccessControls.js`): `open` được khai báo sau `useEffect` nhưng lại nằm trong dependency array, nên mở modal Edit ném `Cannot access 'open' before initialization` và làm sập cả trang. Chuyển toàn bộ `useState` lên trước các effect.
+
+- **MiniMax desktop lease usage** (`src/app/api/usage/[connectionId]/route.js`, `src/lib/db/repos/connectionsRepo.js`): connection `authType: "mcode-lease"` không có token riêng (usage handler mượn token từ desktop broker) nên trước đây bị trả "Usage not available". Nay route cho qua, và truy vấn quota-eligible của trang usage cũng tính lease là hợp lệ (so khớp bằng tham số SQL, không nối chuỗi).
+
+- **Model type tường minh khi thêm custom model** (`AddCustomModelModal.js`): chọn "Chat / LLM" hay "Speech to text (STT)" ngay từ đầu thay vì suy ra từ một toggle nằm trong nhóm capabilities. Grid capabilities chỉ hiện với LLM; ô Transport chỉ hiện với STT. Nút Test gửi kèm `kind` tương ứng để model STT không bị probe như model chat.
+
+- **Catalog `xiaomi-tokenplan`**: cập nhật theo danh mục Token Plan hiện hành — `mimo-v2.6-pro`, `mimo-v2.6-flash`, `mimo-v2.5-asr` (stt), cùng các model TTS được đánh dấu `kind: "tts"`.
+
+- **Synthetic (`syn`)**: giữ nguyên phần đã tích hợp ở lần sync trước (registry, usage tracker `/v2/quotas`, test/validate dùng `validateUrl` là endpoint quota vì `/openai/v1/models` trả 200 cho mọi key).
+
+- **Node engines floor**: `package.json` khai báo `engines.node >= 20.18.1` (dùng `AbortSignal.any`, và `node:sqlite` cần ≥22.5 nếu không có native driver).
+
 ## Sửa lỗi danh sách model và bộ lọc model bị disable (2026-11-12)
 
 - **"Loaded N models" nhưng danh sách trống**: `getModelKind` không nhận diện `type: "model"` — kiểu `type` mà catalog Anthropic-compatible và một số gateway Gemini-style trả về. Toàn bộ 18 model bị lọc khỏi "Available Models". Thêm các object-kind (`model`, `models`, `response`, `responses`, `default`) vào nhóm alias LLM trong `src/shared/constants/models.js`; kind media thật (embedding/image/tts) vẫn bị loại như cũ.

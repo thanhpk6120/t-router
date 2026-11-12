@@ -257,10 +257,12 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
       // Provider breaker (P3-27, layer 1): protect upstream when the whole provider fleet fails broadly.
       // But NEVER block a healthy, untried account from serving just because another account failed!
       // If a connection has never failed or is not in cooldown, it should be given a chance to serve.
-      if (providerBreakerGate(providerId) === "skip") {
+      // A model in its own cooldown is skipped while the rest of the
+      // provider keeps serving.
+      if (providerBreakerGate(providerId, model) === "skip") {
         const hasRecentError = c.lastErrorAt && (Date.now() - new Date(c.lastErrorAt).getTime() < 300000);
         if (hasRecentError || (c.backoffLevel || 0) > 0) {
-          log.warn("AUTH", `${c.id?.slice(0, 8)} | provider breaker open for ${providerId} — skip (failing account)`);
+          log.warn("AUTH", `${c.id?.slice(0, 8)} | provider breaker open for ${providerId}${model ? `/${model}` : ""} — skip (failing account)`);
           return false;
         }
       }
@@ -649,8 +651,10 @@ export async function markAccountUnavailable(connectionId, status, errorText, pr
   // 402/404 are request-scoped and never reach here (shouldFallback is false for them).
   if (provider) {
     const s = Number(status);
+    // The model is passed so a single bad model cools down on its own
+    // instead of tripping the whole provider.
     const isOutage = status == null || (Number.isFinite(s) && s >= 500);
-    if (isOutage) recordProviderFailure(resolveProviderId(provider), connectionId);
+    if (isOutage) recordProviderFailure(resolveProviderId(provider), connectionId, model);
   }
 
   const reason = typeof errorText === "string" ? errorText.slice(0, 200) : "Provider error";
