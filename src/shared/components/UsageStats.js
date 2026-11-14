@@ -29,6 +29,7 @@ function resolveRecentProvider(id, names) {
 }
 import Badge from "./Badge";
 import Card from "./Card";
+import ProxyBadge, { ProxyFallbackBadge, ProxyBlockedBadge } from "./ProxyBadge";
 import OverviewCards from "@/app/(dashboard)/dashboard/usage/components/OverviewCards";
 import UsageTable, { fmt, fmtTime } from "@/app/(dashboard)/dashboard/usage/components/UsageTable";
 import dynamic from "next/dynamic";
@@ -126,7 +127,22 @@ function RecentRequests({ requests = [], providerNames = {} }) {
                     </td>
                     <td className="py-1.5 max-w-0 w-full">
                       <div className="font-mono truncate" title={r.model}>{r.model}</div>
-                      <div className="text-[11px] leading-tight text-text-muted truncate" title={providerName}>{providerName}</div>
+                      <div className="mt-0.5 flex flex-wrap items-center gap-1.5 text-[11px] leading-tight text-text-muted min-w-0">
+                        <span className="truncate" title={providerName}>{providerName}</span>
+                        {r.combo && (
+                          <span className="inline-flex max-w-full min-w-0 shrink-0" title={`Combo: ${r.combo}`}>
+                            <Badge variant="primary" size="sm">
+                              <span className="flex items-center gap-1 max-w-[140px]">
+                                <span className="material-symbols-outlined text-[12px] shrink-0">layers</span>
+                                <span className="truncate font-mono">{r.combo}</span>
+                              </span>
+                            </Badge>
+                          </span>
+                        )}
+                        <ProxyBadge descriptor={r.proxy} />
+                        <ProxyFallbackBadge descriptor={r.proxy} />
+                        <ProxyBlockedBadge descriptor={r.proxy} />
+                      </div>
                     </td>
                     <td className="py-1.5 pr-2 text-right whitespace-nowrap">
                       <span className="text-primary">{fmt(r.promptTokens)}↑</span>

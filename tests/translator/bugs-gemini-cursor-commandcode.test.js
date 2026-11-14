@@ -45,9 +45,10 @@ describe("OpenAI → Cursor", () => {
 });
 
 describe("OpenAI → CommandCode", () => {
-  // openai-to-commandcode.js:53-57 — safeParseJson returns {} on bad JSON (args silently lost)
-  // KNOWN BUG
-  it.fails("malformed tool arguments are not silently emptied", () => {
+  // openai-to-commandcode.js safeParseJson now parks unparseable arguments under
+  // { raw: <original string> } instead of returning {} (which silently dropped the
+  // model's tool input). Kept as a plain test so a regression back to {} fails here.
+  it("malformed tool arguments are not silently emptied", () => {
     const out = O2CC({
       messages: [
         { role: "user", content: "go" },

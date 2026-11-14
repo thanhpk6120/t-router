@@ -31,16 +31,31 @@ describe("Codex Refresh Token", () => {
     return fetchMock;
   }
 
+  /**
+   * Install the fetch mock AFTER the caller has imported the module.
+   *
+   * open-sse/services/tokenRefresh.js (and the executors that pull it in) import
+   * open-sse/index.js, which installs its proxy-patched fetch on globalThis as a
+   * module side-effect. Stubbing before the import let that install overwrite the
+   * mock, the refresh went to the real network, and the assertion read null.
+   * Ordering is the whole fix; the first test in a file is the one that trips.
+   * The specifier must stay literal at each call site — a dynamic import with a
+   * variable specifier does not resolve.
+   */
+  function stubFetchAfterImport(payload) {
+    return mockFetchWithJson(payload);
+  }
+
   describe("refreshCodexToken", () => {
     it("should return new refresh_token when server provides one (token rotation)", async () => {
-      const fetchMock = mockFetchWithJson({
+      const { refreshCodexToken } = await import("../../open-sse/services/tokenRefresh.js");
+      const fetchMock = stubFetchAfterImport({
           access_token: "new-access",
           refresh_token: "rotated-refresh-token",
           id_token: "new-id-token",
           expires_in: 3600,
       });
 
-      const { refreshCodexToken } = await import("../../open-sse/services/tokenRefresh.js");
       const result = await refreshCodexToken("old-refresh-token", null);
 
       expect(result.refreshToken).toBe("rotated-refresh-token");
@@ -64,12 +79,12 @@ describe("Codex Refresh Token", () => {
     });
 
     it("should keep old refresh_token when server does not return new one", async () => {
-      mockFetchWithJson({
+      const { refreshCodexToken } = await import("../../open-sse/services/tokenRefresh.js");
+      stubFetchAfterImport({
           access_token: "new-access",
           expires_in: 3600,
       });
 
-      const { refreshCodexToken } = await import("../../open-sse/services/tokenRefresh.js");
       const result = await refreshCodexToken("old-refresh-token-without-rotation", null);
 
       expect(result.refreshToken).toBe("old-refresh-token-without-rotation");
@@ -78,13 +93,13 @@ describe("Codex Refresh Token", () => {
 
   describe("CodexExecutor credential lifecycle", () => {
     it("should refresh Codex credentials and preserve omitted id_token", async () => {
-      mockFetchWithJson({
+      const { CodexExecutor } = await import("../../open-sse/executors/codex.js");
+      stubFetchAfterImport({
           access_token: "new-access",
           refresh_token: "rotated-refresh-token",
           expires_in: 3600,
       });
 
-      const { CodexExecutor } = await import("../../open-sse/executors/codex.js");
       const executor = new CodexExecutor();
       const result = await executor.refreshCredentials({
         connectionId: "codex-1",
@@ -120,13 +135,13 @@ describe("Codex Refresh Token", () => {
     });
 
     it("should de-duplicate concurrent refreshes for the same Codex connection", async () => {
-      const fetchMock = mockFetchWithJson({
+      const { refreshProviderCredentials } = await import("../../open-sse/services/oauthCredentialManager.js");
+      const fetchMock = stubFetchAfterImport({
           access_token: "new-access",
           refresh_token: "rotated-refresh-token",
           expires_in: 3600,
       });
 
-      const { refreshProviderCredentials } = await import("../../open-sse/services/oauthCredentialManager.js");
       const credentials = {
         connectionId: "codex-single-flight",
         refreshToken: "old-refresh-token",

@@ -62,9 +62,14 @@ export async function GET(request) {
     // wholesale lets any dashboard-authenticated user (or, if requireLogin is
     // disabled, anyone) read every user's conversation history. Keep the
     // metadata (model, tokens, latency, status) but drop message content.
+    //
+    // `proxy` is deliberately NOT in this list: it carries a pool id/name and a
+    // masked scheme://host:port, no credentials and no conversation, and it is
+    // the whole point of the field on this page.
+    const REDACTED_KEYS = ["request", "providerRequest", "providerResponse", "response"];
     const redactedDetails = (result.details || []).map((d) => {
       const redacted = { ...d };
-      for (const key of ["request", "providerRequest", "providerResponse", "response"]) {
+      for (const key of REDACTED_KEYS) {
         if (redacted[key] !== undefined) {
           redacted[key] = { redacted: true };
         }

@@ -190,7 +190,9 @@ function buildFreeProviderGroups() {
       providerName: connection.name,
       providerType: "free",
       connections: [connection],
-      models: dedupeModels(models).sort((a, b) => a.name.localeCompare(b.name)),
+      // Upstream rows are not uniform: a raw `{id, object}` row has no `name` and
+      // `a.name.localeCompare` threw, killing the picker. Fall back through id.
+      models: dedupeModels(models).sort((a, b) => String(a.name || a.id || "").localeCompare(String(b.name || b.id || ""))),
     });
   }
   return groups.sort((a, b) => a.providerName.localeCompare(b.providerName));

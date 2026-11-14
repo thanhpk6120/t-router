@@ -10,6 +10,8 @@ import {
   Toggle,
   Modal,
   ConfirmModal,
+  ProxyBadge,
+  ProxyMissingBadge,
 } from "@/shared/components";
 import ProviderIcon from "@/shared/components/ProviderIcon";
 import { getProviderIconSrc } from "@/shared/utils/providerIcon";
@@ -173,6 +175,8 @@ function getStatusDisplay(connected, error, errorCode, opts = {}) {
       ),
     );
   }
+  // "last tested" is rendered by the card itself, below the badge row, so the
+  // proxy status line can sit above it without fighting for the same flex row.
   if (opts.lastTested) {
     parts.push(
       <span key="lastTested" className="text-text-muted">
@@ -295,7 +299,7 @@ function NotConnectedProviders({ entries, forceOpen }) {
 }
 
 export default function ProvidersPage() {
-  const { statsMap, setStatsMap, breakers, providerStrategies, setProviderStrategies, refresh, loading: summaryLoading } = useProviderSummary();
+  const { statsMap, setStatsMap, breakers, providerStrategies, setProviderStrategies, effectiveProxies, refresh, loading: summaryLoading } = useProviderSummary();
   const [providerNodes, setProviderNodes] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showAddCompatibleModal, setShowAddCompatibleModal] = useState(false);
@@ -928,7 +932,7 @@ export default function ProvidersPage() {
             </button>
           </div>
         </div>
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4 lg:grid-cols-3 xl:grid-cols-4">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4 lg:grid-cols-2 xl:grid-cols-3">
           {allOnProviders.slice(0, allOnPage.visible).map((entry) => entry.card === "provider" ? (
             <ProviderCard
               key={`all-${entry.providerId}`}
@@ -939,6 +943,7 @@ export default function ProvidersPage() {
               onToggle={(active) => handleToggleProvider(entry.providerId, entry.authTypes, active, entry.provider.name)}
               fakeConnected={fakeCounts[entry.providerId] ?? null}
               onConnectedLongPress={() => setFakeMenu({ providerId: entry.providerId, providerName: entry.provider.name, original: entry.stats.connected, value: String(fakeCounts[entry.providerId] ?? entry.stats.connected) })}
+              proxyInfo={effectiveProxies[entry.providerId]}
             />
           ) : (
             <ApiKeyProviderCard
@@ -950,6 +955,7 @@ export default function ProvidersPage() {
               onToggle={(active) => handleToggleProvider(entry.providerId, entry.authTypes, active, entry.provider.name)}
               fakeConnected={fakeCounts[entry.providerId] ?? null}
               onConnectedLongPress={() => setFakeMenu({ providerId: entry.providerId, providerName: entry.provider.name, original: entry.stats.connected, value: String(fakeCounts[entry.providerId] ?? entry.stats.connected) })}
+              proxyInfo={effectiveProxies[entry.providerId]}
             />
           ))}
         </div>
@@ -1003,7 +1009,7 @@ export default function ProvidersPage() {
           </div>
         ) : (
           <>
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4 lg:grid-cols-3 xl:grid-cols-4">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4 lg:grid-cols-2 xl:grid-cols-3">
               {[...compatibleProviders, ...anthropicCompatibleProviders].slice(0, customPage.visible).map(
                 (info) => (
                   <ApiKeyProviderCard
@@ -1015,6 +1021,7 @@ export default function ProvidersPage() {
                     onToggle={(active) =>
                       handleToggleProvider(info.id, "apikey", active, info.name)
                     }
+                    proxyInfo={effectiveProxies[info.id]}
                   />
                 ),
               )}
@@ -1065,7 +1072,7 @@ export default function ProvidersPage() {
         </div>
         {oauthConnected.length > 0 && (
         <>
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4 lg:grid-cols-3 xl:grid-cols-4">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4 lg:grid-cols-2 xl:grid-cols-3">
             {oauthConnected.slice(0, oauthPage.visible).map(([key, info]) => {
               const authTypes = dualAuthTypes(info, key);
               return (
@@ -1076,6 +1083,7 @@ export default function ProvidersPage() {
                   stats={getProviderStats(key, authTypes)}
                   authType="oauth"
                   onToggle={(active) => handleToggleProvider(key, authTypes, active, info.name)}
+                  proxyInfo={effectiveProxies[key]}
                 />
               );
             })}
@@ -1125,7 +1133,7 @@ export default function ProvidersPage() {
         </div>
         {(freeConnected.length > 0 || freeTierConnected.length > 0) && (
         <>
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4 lg:grid-cols-3 xl:grid-cols-4">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4 lg:grid-cols-2 xl:grid-cols-3">
             {[...freeConnected.map(([key, info]) => ({ card: "provider", key, info })),
               ...freeTierConnected.map(([key, info]) => ({ card: "apikey", key, info }))]
               .slice(0, freePage.visible).map((entry) => {
@@ -1143,6 +1151,7 @@ export default function ProvidersPage() {
                     onToggle={(active) =>
                       handleToggleProvider(key, freeAuthTypes, active, info.name)
                     }
+                    proxyInfo={effectiveProxies[key]}
                   />
                 ) : (
                   <ApiKeyProviderCard
@@ -1152,6 +1161,7 @@ export default function ProvidersPage() {
                     stats={getProviderStats(key, freeAuthTypes)}
                     authType={Array.isArray(freeAuthTypes) ? (freeAuthTypes[0] ?? "apikey") : freeAuthTypes}
                     onToggle={(active) => handleToggleProvider(key, freeAuthTypes, active, info.name)}
+                    proxyInfo={effectiveProxies[key]}
                   />
                 );
               })}
@@ -1204,7 +1214,7 @@ export default function ProvidersPage() {
         </div>
         {apikeyConnected.length > 0 && (
         <>
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4 lg:grid-cols-3 xl:grid-cols-4">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4 lg:grid-cols-2 xl:grid-cols-3">
             {[...apikeyConnected.map(([key, info]) => ({ authType: "apikey", key, info })),
               ...webCookieEntries.map(([key, info]) => ({ authType: "cookie", key, info }))]
               .slice(0, apikeyPage.visible).map(({ authType, key, info }) => (
@@ -1215,6 +1225,7 @@ export default function ProvidersPage() {
                   stats={getProviderStats(key, authType)}
                   authType={authType}
                   onToggle={(active) => handleToggleProvider(key, authType, active, info.name)}
+                  proxyInfo={effectiveProxies[key]}
                 />
               ))}
           </div>
@@ -1342,7 +1353,7 @@ export default function ProvidersPage() {
   );
 }
 
-function ProviderCard({ providerId, provider, stats, authType, onToggle, fakeConnected = null, onConnectedLongPress = null }) {
+function ProviderCard({ providerId, provider, stats, authType, onToggle, fakeConnected = null, onConnectedLongPress = null, proxyInfo = null }) {
   const { connected, error, errorCode, errorTime, lastTested, allDisabled, breaker } = stats;
   const isNoAuth = !!provider.noAuth;
 
@@ -1386,9 +1397,18 @@ function ProviderCard({ providerId, provider, stats, authType, onToggle, fakeCon
                 providerType={provider.type}
               />
             </div>
-            <div className="min-w-0">
+            <div className="min-w-0 flex-1">
               <h3 className="truncate font-semibold">{provider.name}</h3>
-              <div className="flex min-w-0 items-center gap-1.5 text-xs flex-wrap">
+              {/* Proxy row sits ABOVE "last tested": both are secondary detail,
+                  but the proxy badge carries a host name and used to collide with
+                  the provider name once the card narrowed to a 4-column grid. */}
+              {(proxyInfo?.proxied || proxyInfo?.strictProxy || proxyInfo?.directDisabled || proxyInfo?.fallbackDirect || proxyInfo?.poolMissing) && (
+                <div className="mt-1 flex min-w-0 flex-wrap items-center gap-1.5">
+                  <ProxyBadge descriptor={proxyInfo} />
+                  <ProxyMissingBadge descriptor={proxyInfo} />
+                </div>
+              )}
+              <div className="mt-1 flex min-w-0 items-center gap-1.5 text-xs flex-wrap">
                 {allDisabled ? (
                   <Badge variant="default" size="sm">
                     <span className="flex items-center gap-1">
@@ -1402,7 +1422,7 @@ function ProviderCard({ providerId, provider, stats, authType, onToggle, fakeCon
                   <Badge variant="success" size="sm" dot>Ready</Badge>
                 ) : (
                   <>
-                    {getStatusDisplay(connected, error, errorCode, { displayConnected: fakeConnected, onConnectedLongPress, lastTested })}
+                    {getStatusDisplay(connected, error, errorCode, { displayConnected: fakeConnected, onConnectedLongPress })}
                     {breaker?.state === "open" && (
                       <span title="Provider breaker open — broad failures, no traffic until the probe window.">
                         <Badge variant="error" size="sm">
@@ -1430,6 +1450,11 @@ function ProviderCard({ providerId, provider, stats, authType, onToggle, fakeCon
                   </>
                 )}
               </div>
+              {lastTested && !allDisabled && (
+                <div className="mt-0.5 text-[11px] text-text-muted">
+                  last tested {getRelativeTime(lastTested)}
+                </div>
+              )}
             </div>
           </div>
           <div className="flex shrink-0 items-center gap-2">
@@ -1466,6 +1491,7 @@ ProviderCard.propTypes = {
     textIcon: PropTypes.string,
     type: PropTypes.string,
   }).isRequired,
+  proxyInfo: PropTypes.object,
   stats: PropTypes.shape({
     connected: PropTypes.number,
     error: PropTypes.number,
@@ -1486,6 +1512,7 @@ function ApiKeyProviderCard({
   onToggle,
   fakeConnected = null,
   onConnectedLongPress = null,
+  proxyInfo = null,
 }) {
   const { connected, error, errorCode, errorTime, lastTested, allDisabled, breaker } = stats;
   // No-auth providers own no connection rows, so their switch must render even
@@ -1546,9 +1573,15 @@ function ApiKeyProviderCard({
                 fallbackColor={provider.color}
               />
             </div>
-            <div className="min-w-0">
+            <div className="min-w-0 flex-1">
               <h3 className="truncate font-semibold">{provider.name}</h3>
-              <div className="flex min-w-0 items-center gap-1.5 text-xs flex-wrap">
+              {(proxyInfo?.proxied || proxyInfo?.strictProxy || proxyInfo?.directDisabled || proxyInfo?.fallbackDirect || proxyInfo?.poolMissing) && (
+                <div className="mt-1 flex min-w-0 flex-wrap items-center gap-1.5">
+                  <ProxyBadge descriptor={proxyInfo} />
+                  <ProxyMissingBadge descriptor={proxyInfo} />
+                </div>
+              )}
+              <div className="mt-1 flex min-w-0 items-center gap-1.5 text-xs flex-wrap">
                 {allDisabled ? (
                   <Badge variant="default" size="sm">
                     <span className="flex items-center gap-1">
@@ -1560,7 +1593,7 @@ function ApiKeyProviderCard({
                   </Badge>
                 ) : (
                   <>
-                    {getStatusDisplay(connected, error, errorCode, { displayConnected: fakeConnected, onConnectedLongPress, lastTested })}
+                    {getStatusDisplay(connected, error, errorCode, { displayConnected: fakeConnected, onConnectedLongPress })}
                     {breaker?.state === "open" && (
                       <span title="Provider breaker open — broad failures, no traffic until the probe window.">
                         <Badge variant="error" size="sm">
@@ -1600,6 +1633,11 @@ function ApiKeyProviderCard({
                   </>
                 )}
               </div>
+              {lastTested && !allDisabled && (
+                <div className="mt-0.5 text-[11px] text-text-muted">
+                  last tested {getRelativeTime(lastTested)}
+                </div>
+              )}
             </div>
           </div>
           <div className="flex shrink-0 items-center gap-2">
@@ -1646,6 +1684,7 @@ ApiKeyProviderCard.propTypes = {
   onToggle: PropTypes.func,
   fakeConnected: PropTypes.number,
   onConnectedLongPress: PropTypes.func,
+  proxyInfo: PropTypes.object,
 };
 
 function ProviderTestResultsView({ results }) {

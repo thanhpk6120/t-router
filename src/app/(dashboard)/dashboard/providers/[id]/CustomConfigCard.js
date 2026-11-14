@@ -8,6 +8,28 @@ import { useNotificationStore } from "@/store/notificationStore";
 // Mirrors the server-side gate in /api/providers/[id]/overrides — client check is UX only
 const BLOCKED_HEADERS = ["host", "content-length", "content-type", "connection", "transfer-encoding", "authorization", "cookie"];
 const HEADER_NAME_RE = /^[A-Za-z0-9-]+$/;
+// Same caps as open-sse/config/runtimeConfig.js (TTFT_TIMEOUT_MAX_MS / TTFT_LADDER_MAX_LEN).
+// A rung above the cap is rejected rather than clamped so the user sees why.
+const LADDER_MAX_SECONDS = 60;
+const LADDER_MAX_LEN = 6;
+
+// "5, 10,30" → [5,10,30]. Returns null when the text is valid-but-empty (= off),
+// throws a user-facing message when it is malformed.
+function parseLadder(text) {
+  const raw = (text || "").trim();
+  if (!raw) return null;
+  const parts = raw.split(/[,\s]+/).filter(Boolean);
+  const out = [];
+  for (const part of parts) {
+    if (!/^\d+$/.test(part)) throw new Error(`"${part}" is not a whole number of seconds`);
+    const n = Number(part);
+    if (n <= 0) throw new Error("Every ladder step must be greater than 0");
+    if (n > LADDER_MAX_SECONDS) throw new Error(`Every ladder step must be at most ${LADDER_MAX_SECONDS}s`);
+    out.push(n);
+  }
+  if (out.length > LADDER_MAX_LEN) throw new Error(`At most ${LADDER_MAX_LEN} ladder steps`);
+  return out;
+}
 
 export default function CustomConfigCard({ providerId }) {
   const notify = useNotificationStore();
@@ -16,6 +38,8 @@ export default function CustomConfigCard({ providerId }) {
   const [builtin, setBuiltin] = useState({});
   const [hasOverride, setHasOverride] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [ladderText, setLadderText] = useState("");
+  const [hasLadder, setHasLadder] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -30,6 +54,9 @@ export default function CustomConfigCard({ providerId }) {
         setBuiltin(builtinHeaders);
         setRows(headerRows.length ? headerRows : [{ name: "", value: "" }]);
         setHasOverride(Object.keys(data.headers || {}).length > 0);
+        const ladder = Array.isArray(data.timeoutLadder) ? data.timeoutLadder : [];
+        setLadderText(ladder.join(", "));
+        setHasLadder(ladder.length > 0);
       })
       .catch(() => {});
     return () => { cancelled = true; };
@@ -60,12 +87,21 @@ export default function CustomConfigCard({ providerId }) {
       if (r.value !== builtin[name]) headers[name] = r.value;
     }
 
+    let timeoutLadder;
+    try {
+      timeoutLadder = parseLadder(ladderText);
+    } catch (err) {
+      notify.error(err.message);
+      return;
+    }
+
     setSaving(true);
     try {
       const res = await fetch(`/api/providers/${providerId}/overrides`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ headers }),
+        // An empty array is the server's "feature off" value (deletes the field).
+        body: JSON.stringify({ headers, timeoutLadder: timeoutLadder || [] }),
       });
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
@@ -73,18 +109,20 @@ export default function CustomConfigCard({ providerId }) {
         return;
       }
       setHasOverride(Object.keys(headers).length > 0);
-      notify.success("Custom headers saved");
+      setHasLadder((timeoutLadder || []).length > 0);
+      notify.success("Custom config saved");
     } finally {
       setSaving(false);
     }
-  }, [rows, builtin, providerId, notify]);
+  }, [rows, builtin, providerId, notify, ladderText]);
 
   const resetToBuiltin = () => {
     setRows(Object.entries(builtin).map(([name, value]) => ({ name, value })));
   };
 
-  // Only render when there is something to customize: registry headers or existing overrides
-  if (Object.keys(builtin).length === 0 && !hasOverride) return null;
+  // Always render: any provider can take a TTFT ladder even when it has no
+  // registry headers to override.
+  const active = hasOverride || hasLadder;
 
   return (
     <Card padding="xs">
@@ -95,8 +133,8 @@ export default function CustomConfigCard({ providerId }) {
       >
         <div className="flex items-center gap-2">
           <span className="material-symbols-outlined text-primary text-[20px]">tune</span>
-          <span className="text-sm font-semibold">Custom Headers</span>
-          {hasOverride && (
+          <span className="text-sm font-semibold">Custom Config</span>
+          {active && (
             <Badge variant="success" size="sm">Active</Badge>
           )}
         </div>
@@ -140,6 +178,31 @@ export default function CustomConfigCard({ providerId }) {
                 </div>
               );
             })}
+          </div>
+
+          <div className="mt-4 rounded-md border border-border bg-black/[0.02] p-3 dark:bg-white/[0.02]">
+            <label htmlFor="ttft-ladder" className="text-xs font-semibold">
+              TTFT timeout ladder (seconds)
+            </label>
+            <input
+              id="ttft-ladder"
+              value={ladderText}
+              onChange={(e) => setLadderText(e.target.value)}
+              placeholder="e.g. 5, 10, 30"
+              spellCheck={false}
+              className="mt-1.5 w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:border-primary focus:outline-none"
+            />
+            <p className="mt-1.5 text-[11px] leading-relaxed text-text-muted">
+              Number of attempts = number of values. Each expired step retries the{" "}
+              <strong>same account</strong> with the next value. Each step measures time until the{" "}
+              <strong>first token</strong> — a stream that already produced output is a success and is
+              never cut. Max {LADDER_MAX_SECONDS}s per step, {LADDER_MAX_LEN} steps. Leave empty to
+              disable.
+            </p>
+            <p className="mt-1.5 text-[11px] leading-relaxed text-amber-600 dark:text-amber-400">
+              Inside a combo, the member budget (60s by default) aborts the ladder first. A long
+              ladder only pays off when this provider is called directly.
+            </p>
           </div>
 
           <div className="mt-3 flex items-center justify-between gap-2">

@@ -1,5 +1,5 @@
 // Public API barrel — all DB functions
-import { getAdapter } from "./driver.js";
+import { getAdapter, closeAdapter } from "./driver.js";
 import { resolveRoutableBacking } from "./repos/nodesRepo.js";
 import { stringifyJson, parseJson } from "./helpers/jsonCol.js";
 import { makeBackupDir, backupDbLite, pruneOldBackups } from "./backup.js";
@@ -42,7 +42,7 @@ export {
   createProviderConnection, updateProviderConnection,
   deleteProviderConnection, deleteProviderConnectionsByProvider,
   reorderProviderConnections, cleanupProviderConnections,
-  getApikeyConnectionNames,
+  getApikeyConnectionNames, getProviderConnectionProxyBindings,
 } from "./repos/connectionsRepo.js";
 
 // Provider nodes
@@ -399,3 +399,8 @@ export async function importDb(payload, options = {}) {
 export async function initDb() {
   await getAdapter();
 }
+
+// Shutdown helper. Windows holds the data directory locked while the SQLite
+// handle is open, so anything that deletes DATA_DIR (tests with a temp dir,
+// a cleanup path) must close first or rm() fails with EPERM.
+export { closeAdapter };

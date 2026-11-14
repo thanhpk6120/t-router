@@ -44,7 +44,13 @@ async function chatWith(jwt, ua) {
 }
 
 describe("MiMo Free bootstrap (live)", () => {
-  it("bootstrap returns 200 with JWT", async () => {
+  // SKIPPED for the same reason as the chat test below: Xiaomi ended the free
+  // MiMo channel. The bootstrap host no longer serves JSON — it answers with an
+  // HTML page (parked/redirected domain), so `r.json()` throws
+  // "Unexpected token '<'". The provider is `hidden: true` in the registry, so
+  // no route reaches this path. Re-enable with the chat test if a replacement
+  // channel is wired.
+  it.skip("bootstrap returns 200 with JWT", async () => {
     const { status, jwt } = await bootstrapWith(CHROME_UA);
     expect(status).toBe(200);
     expect(jwt).toBeTruthy();

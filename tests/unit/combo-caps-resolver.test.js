@@ -69,11 +69,12 @@ describe("aggregateComboCapabilities: resolveCaps override", () => {
     expect(caps.contextWindow).toBe(getCapabilitiesForModel("kimi", "kimi-k3").contextWindow);
   });
 
-  it("claude-haiku-5-5 combo: 1M only through the provider-alias resolver", () => {
-    // Both seats are 1M in their provider tables (opencode-go/commandcode entries),
-    // but a bare `ocg/`-style alias resolves to 200k without the resolver: null
-    // provider falls to the global *claude*haiku* pattern. The server passes
-    // comboSeatCapabilities (alias → provider id); the dashboard does not.
+  it("claude-haiku-5-5 combo: both seats resolve to 1M", () => {
+    // `claude-haiku-5-5` carries an exact global entry with a 1M window (f3bb7d1:
+    // the id is adaptive-only upstream, and its limits are stated on the entry so
+    // the catalog overlay cannot shrink it). A bare `ocg/`-style alias therefore
+    // no longer falls back to the 200k *claude*haiku* pattern — the exact entry wins
+    // for both, and the provider-alias resolver agrees rather than correcting it.
     const seats = ["ocg/claude-haiku-5-5", "cmc/claude-haiku-5-5"];
     const seatCaps = (fullId) => {
       const slash = fullId.indexOf("/");
@@ -81,7 +82,7 @@ describe("aggregateComboCapabilities: resolveCaps override", () => {
       const providerId = { ocg: "opencode-go", cmc: "commandcode" }[fullId.slice(0, slash)] || fullId.slice(0, slash);
       return getCapabilitiesForModel(providerId, fullId.slice(slash + 1));
     };
-    expect(aggregateComboCapabilities(seats).contextWindow).toBe(200_000);
+    expect(aggregateComboCapabilities(seats).contextWindow).toBe(1_000_000);
     expect(aggregateComboCapabilities(seats, null, seatCaps).contextWindow).toBe(1_000_000);
   });
 });

@@ -38,7 +38,11 @@ describe("dashboard shows the proxy in use", () => {
 
   it("the provider card summarises the effective proxy", () => {
     expect(card).toContain("Effective");
-    expect(card).toContain("const effectiveLabel = isRotation");
+    // Precedence must match getProviderCredentials: an explicit pool wins, and
+    // rotation is only what happens when the selector is empty.
+    expect(card).toContain("const explicitPool = proxyPoolId && proxyPoolId !== NONE_PROXY_POOL_VALUE");
+    expect(card).toContain("const usesRotation = !explicitPool && isRotation");
+    expect(card).toContain("const effectiveLabel = usesRotation");
     expect(card).toContain("Check exit IP");
     expect(card).toContain("Exit IP via ${exitCheck.poolName}");
     // A per-connection pool wins over this setting; say so instead of lying.

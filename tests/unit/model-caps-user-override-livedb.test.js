@@ -43,6 +43,10 @@ describe("user override end-to-end (real kv)", () => {
 
       setUserCapsSource(null);
     } finally {
+      // The adapter holds the SQLite file open; close it before rm() or
+      // Windows answers EPERM on the temp directory.
+      const { closeAdapter } = await import("@/lib/db/index.js");
+      closeAdapter();
       rmSync(dir, { recursive: true, force: true });
     }
   });

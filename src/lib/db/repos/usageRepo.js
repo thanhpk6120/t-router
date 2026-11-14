@@ -149,6 +149,8 @@ async function ensureRingInitialized() {
         apiKey: r.apiKey, endpoint: r.endpoint, cost: r.cost, status: r.status,
         tokens: parseJson(r.tokens, {}),
         latencyMs: Number.isFinite(m.latencyMs) ? m.latencyMs : null,
+        ...(m.combo ? { combo: m.combo } : {}),
+        ...(m.proxy ? { proxy: m.proxy } : {}),
       };
     });
   } catch {}
@@ -246,6 +248,8 @@ export async function getActiveRequests() {
         completionTokens: t.completion_tokens || t.output_tokens || 0,
         status: e.status || "ok",
         latencyMs: Number.isFinite(e.latencyMs) ? e.latencyMs : null,
+        ...(e.combo ? { combo: e.combo } : {}),
+        ...(e.proxy ? { proxy: e.proxy } : {}),
       };
     })
     .filter((e) => {
@@ -289,6 +293,21 @@ export async function saveRequestUsage(entry) {
     if (Number.isFinite(entry.latencyMs)) {
       storedMeta.latencyMs = Math.round(entry.latencyMs);
       entry.latencyMs = storedMeta.latencyMs;
+    }
+    const comboName = typeof entry.combo === "string" && entry.combo.trim() ? entry.combo.trim() : null;
+    if (comboName) {
+      storedMeta.combo = comboName;
+    }
+    const hasProxySignal = Boolean(
+      entry.proxy && typeof entry.proxy === "object" && (
+        entry.proxy.proxied
+        || entry.proxy.fallbackDirect
+        || entry.proxy.strictProxy
+        || entry.proxy.directDisabled
+      )
+    );
+    if (hasProxySignal) {
+      storedMeta.proxy = entry.proxy;
     }
 
     let inserted = false;
@@ -362,7 +381,11 @@ export async function saveRequestUsage(entry) {
     });
 
     if (inserted) {
-      pushToRing(entry);
+      const ringEntry = { ...entry };
+      if (comboName) ringEntry.combo = comboName;
+      if (hasProxySignal) ringEntry.proxy = entry.proxy;
+      else delete ringEntry.proxy;
+      pushToRing(ringEntry);
       scheduleStatsEvent("update", 250);
       // Structured webhook event (P3-30): off by default, fire-and-forget,
       // never the raw key — only the masked form the usage API already
@@ -559,6 +582,8 @@ export async function getUsageStats(period = "all", range = null) {
         cachedTokens: t.cached_tokens || t.cache_read_input_tokens || 0,
         status: r.status || "ok",
         latencyMs: Number.isFinite(m.latencyMs) ? m.latencyMs : null,
+        ...(m.combo ? { combo: m.combo } : {}),
+        ...(m.proxy ? { proxy: m.proxy } : {}),
       };
     })
     .filter((e) => {

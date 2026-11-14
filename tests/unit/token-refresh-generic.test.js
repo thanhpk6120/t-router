@@ -4,6 +4,12 @@
  * Verifies refreshAccessToken() handles the 4 foldable providers
  * (iflow, github, kimi, claude) via a REFRESH_PROFILES table,
  * while preserving the legacy generic path for unknown providers.
+ *
+ * Ordering matters: tokenRefresh/providers.js pulls in open-sse/index.js, which
+ * installs its proxy-patched fetch on globalThis as a module side-effect.
+ * Stubbing fetch before the import let that install overwrite the mock, so the
+ * first test in a file went to the real network. Every test therefore imports
+ * first and installs the mock second.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
@@ -26,8 +32,8 @@ describe("refreshAccessToken — config-driven profiles", () => {
   afterEach(() => { global.fetch = originalFetch; });
 
   it("iflow: Basic Auth header from clientId:clientSecret, form body keeps client_secret", async () => {
-    const fm = mockFetchOnce({ access_token: "if-acc", refresh_token: "if-rot", expires_in: 3600 });
     const { refreshAccessToken } = await import("open-sse/services/tokenRefresh/providers.js");
+    const fm = mockFetchOnce({ access_token: "if-acc", refresh_token: "if-rot", expires_in: 3600 });
 
     await refreshAccessToken("iflow", "if-old", {}, console);
 
@@ -39,8 +45,8 @@ describe("refreshAccessToken — config-driven profiles", () => {
   });
 
   it("github: omits client_secret when config has none", async () => {
-    const fm = mockFetchOnce({ access_token: "gh-acc", expires_in: 28800 });
     const { refreshAccessToken } = await import("open-sse/services/tokenRefresh/providers.js");
+    const fm = mockFetchOnce({ access_token: "gh-acc", expires_in: 28800 });
 
     const out = await refreshAccessToken("github", "gh-old", {}, console);
 
@@ -51,8 +57,8 @@ describe("refreshAccessToken — config-driven profiles", () => {
   });
 
   it("kimi: merges X-Msh-* headers from credentials.providerSpecificData.deviceId", async () => {
-    const fm = mockFetchOnce({ access_token: "km-acc", expires_in: 86400 });
     const { refreshAccessToken } = await import("open-sse/services/tokenRefresh/providers.js");
+    const fm = mockFetchOnce({ access_token: "km-acc", expires_in: 86400 });
 
     await refreshAccessToken("kimi", "km-old", {
       providerSpecificData: { deviceId: "dev-xyz" },
@@ -65,8 +71,8 @@ describe("refreshAccessToken — config-driven profiles", () => {
   });
 
   it("claude: JSON body, client_id only (no client_secret)", async () => {
-    const fm = mockFetchOnce({ access_token: "cl-acc", refresh_token: "cl-rot", expires_in: 3600 });
     const { refreshAccessToken } = await import("open-sse/services/tokenRefresh/providers.js");
+    const fm = mockFetchOnce({ access_token: "cl-acc", refresh_token: "cl-rot", expires_in: 3600 });
 
     await refreshAccessToken("claude", "cl-old", {}, console);
 
@@ -79,8 +85,8 @@ describe("refreshAccessToken — config-driven profiles", () => {
   });
 
   it("returns null on non-ok response", async () => {
-    mockFetchOnce({ error: "invalid_grant" }, { ok: false, status: 400 });
     const { refreshAccessToken } = await import("open-sse/services/tokenRefresh/providers.js");
+    mockFetchOnce({ error: "invalid_grant" }, { ok: false, status: 400 });
     const out = await refreshAccessToken("iflow", "dead", {}, console);
     expect(out).toBeNull();
   });
@@ -92,8 +98,8 @@ describe("refreshAccessToken — config-driven profiles", () => {
   });
 
   it("dedupes concurrent calls with same refresh token (same dedupKey)", async () => {
-    const fm = mockFetchOnce({ access_token: "dd-acc", expires_in: 3600 });
     const { refreshAccessToken } = await import("open-sse/services/tokenRefresh/providers.js");
+    const fm = mockFetchOnce({ access_token: "dd-acc", expires_in: 3600 });
     const creds = { providerSpecificData: { deviceId: "d" } };
     await Promise.all([
       refreshAccessToken("kimi", "dup-refresh", creds, console),
@@ -107,6 +113,9 @@ describe("Cline refresh", () => {
   afterEach(() => { global.fetch = originalFetch; });
 
   it("uses the extension JSON refresh contract", async () => {
+    const { refreshTokenByProvider } = await import(
+      "open-sse/services/tokenRefresh.js"
+    );
     const expiresAt = new Date(Date.now() + 3600 * 1000).toISOString();
     const fm = mockFetchOnce({
       data: {
@@ -115,9 +124,6 @@ describe("Cline refresh", () => {
         expiresAt,
       },
     });
-    const { refreshTokenByProvider } = await import(
-      "open-sse/services/tokenRefresh.js"
-    );
 
     const out = await refreshTokenByProvider(
       "cline",

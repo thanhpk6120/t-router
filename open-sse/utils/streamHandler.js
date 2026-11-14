@@ -1,6 +1,7 @@
 // Stream handler with disconnect detection - shared for all providers
 import { STREAM_STALL_TIMEOUT_MS, TOTAL_REQUEST_TIMEOUT_MS } from "../config/runtimeConfig.js";
 import { dbg, isDebugEnabled } from "./debugLog.js";
+import { carriesOutput } from "./ttftGate.js";
 
 // Get HH:MM:SS timestamp
 function getTimeString() {
@@ -104,7 +105,7 @@ export function createStreamController({ onDisconnect, onError, log, provider, m
  * paths. Not called on clean EOF — flush() already finalized there.
  * Must be idempotent; every call site is guarded.
  */
-export function createDisconnectAwareStream(transformStream, streamController, onAbortTerminal = null, onAborted = null) {
+export function createDisconnectAwareStream(transformStream, streamController, onAbortTerminal = null, onAborted = null, options = {}) {
   const reader = transformStream.readable.getReader();
   const writer = transformStream.writable.getWriter();
   let terminalEmitted = false;
@@ -117,6 +118,9 @@ export function createDisconnectAwareStream(transformStream, streamController, o
   // Emit a synthesized terminal payload (e.g. Responses response.failed + [DONE]) once
   const emitTerminal = (controller) => {
     if (terminalEmitted || !onAbortTerminal) return;
+    // A stream that already delivered output ends as a success: the client has
+    // tokens on screen, and an error frame would mark the whole response failed.
+    if (options.shouldEmitTerminal && !options.shouldEmitTerminal()) return;
     terminalEmitted = true;
     try {
       const bytes = onAbortTerminal();
@@ -147,7 +151,10 @@ export function createDisconnectAwareStream(transformStream, streamController, o
         // Controller already closed = downstream ended; not an upstream error, skip noisy log.
         const msg0 = error?.message || "";
         const isControllerClosed = msg0.includes("already closed") || msg0.includes("Invalid state");
-        if (!isControllerClosed) streamController.handleError(error);
+        // Output already delivered: a broken read is a truncation, not a failed
+        // response. Reporting it would flip a partially-successful stream to ✗.
+        const delivered = options.hasOutput ? options.hasOutput() : false;
+        if (!isControllerClosed && !(delivered && wasConnected)) streamController.handleError(error);
         reader.cancel().catch(() => {});
         writer.abort().catch(() => {});
         runAbortedHook();
@@ -212,6 +219,12 @@ export function pipeWithDisconnect(providerResponse, transformStream, streamCont
   let totalBytes = 0;
   let lastChunkAt = Date.now();
   let abortMessage = "upstream connection lost";
+  // Once ANY upstream byte has arrived the request produced an answer: ending
+  // the stream after that is a truncation the client can keep, NOT an error.
+  // Reporting "stream stall timeout" here would turn a partially-delivered
+  // response into a hard failure and throw away tokens the client already
+  // rendered.
+  let sawOutput = false;
   const t0 = Date.now();
   const tag = "STREAM";
   const clearStall = () => {
@@ -240,6 +253,13 @@ export function pipeWithDisconnect(providerResponse, transformStream, streamCont
     stallTimer = setTimeout(() => {
       stallTimer = null;
       abortMessage = "stream stall timeout";
+      if (sawOutput) {
+        // Output already flowed: close the stream cleanly and let the client
+        // keep what it has. No error frame, no handleError, no FAILED row.
+        dbg(tag, `STALL after output (treated as success) ${stallTimeoutMs}ms | chunks=${chunkCount} | bytes=${totalBytes}`);
+        wrappedController.abort();
+        return;
+      }
       dbg(tag, `STALL TIMEOUT ${stallTimeoutMs}ms | chunks=${chunkCount} | bytes=${totalBytes} | sinceLast=${Date.now() - lastChunkAt}ms`);
       wrappedController.handleError(new Error("stream stall timeout"));
       wrappedController.abort();
@@ -256,6 +276,13 @@ export function pipeWithDisconnect(providerResponse, transformStream, streamCont
     totalTimer = setTimeout(() => {
       totalTimer = null;
       abortMessage = "total request timeout";
+      if (sawOutput) {
+        // Same rule as the stall timer: a stream that already delivered output
+        // ends as a success, not as a 504 the client would surface as failure.
+        dbg(tag, `TOTAL after output (treated as success) ${totalTimeoutMs}ms | chunks=${chunkCount} | bytes=${totalBytes}`);
+        wrappedController.abort();
+        return;
+      }
       dbg(tag, `TOTAL TIMEOUT ${totalTimeoutMs}ms | chunks=${chunkCount} | bytes=${totalBytes}`);
       wrappedController.handleError(new Error("total request timeout"));
       wrappedController.abort();
@@ -274,6 +301,16 @@ export function pipeWithDisconnect(providerResponse, transformStream, streamCont
       const now = Date.now();
       const gap = now - lastChunkAt;
       lastChunkAt = now;
+      // A heartbeat is framing, not output: an upstream that only pings while
+      // its model hangs has NOT answered, and must still count as a failure.
+      // Same predicate the TTFT gate uses, so the two can never disagree.
+      if (!sawOutput && sz > 0) {
+        const contentType = (providerResponse.headers?.get?.("content-type") || "").toLowerCase();
+        // Unknown content-type is treated as streaming: assuming raw bytes are
+        // output would let a `data: {}` drip satisfy the watchdog forever.
+        const isSse = !contentType || contentType.includes("text/event-stream");
+        if (carriesOutput(chunk, isSse)) sawOutput = true;
+      }
       if (isDebugEnabled && (chunkCount <= 5 || chunkCount % 20 === 0 || gap > 5000)) {
         dbg(tag, `chunk #${chunkCount} | size=${sz}B | gap=${gap}ms | total=${totalBytes}B`);
       }
@@ -293,7 +330,9 @@ export function pipeWithDisconnect(providerResponse, transformStream, streamCont
     onAbortTerminal ? () => onAbortTerminal(abortMessage) : null,
     // The SSE transform exposes its idempotent finalizer (see stream.js);
     // transforms without one (other pipeWithDisconnect callers) no-op.
-    () => transformStream.finalizeStream?.()
+    () => transformStream.finalizeStream?.(),
+    // No error frame once output flowed — see `sawOutput` above.
+    { shouldEmitTerminal: () => !sawOutput, hasOutput: () => sawOutput }
   );
 }
 

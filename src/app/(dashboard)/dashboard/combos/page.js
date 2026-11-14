@@ -89,6 +89,11 @@ export default function CombosPage() {
   const [showStrategyInfo, setShowStrategyInfo] = useState(false);
   const [adapterSaveState, setAdapterSaveState] = useState("idle");
   const adapterSaveRef = useRef({ busy: false, pending: null });
+  const comboOrderSaveRef = useRef({ busy: false, pending: null });
+  const comboSensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
+  );
   const [searchQuery, setSearchQuery] = useState("");
   const { copied, copy } = useCopyToClipboard();
 
@@ -219,6 +224,45 @@ export default function CombosPage() {
         }
       }
       ref.busy = false;
+    })();
+  };
+
+  const handleComboDragEnd = (event) => {
+    if (normalizedQuery) return;
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+    const oldIndex = combos.findIndex((c) => c.id === active.id);
+    const newIndex = combos.findIndex((c) => c.id === over.id);
+    if (oldIndex === -1 || newIndex === -1) return;
+    const nextCombos = arrayMove(combos, oldIndex, newIndex);
+    setCombos(nextCombos);
+
+    const ref = comboOrderSaveRef.current;
+    ref.pending = nextCombos.map((c) => c.id);
+    if (ref.busy) return;
+    ref.busy = true;
+    (async () => {
+      let failed = false;
+      while (ref.pending) {
+        const comboIds = ref.pending;
+        ref.pending = null;
+        try {
+          const res = await fetch("/api/combos/reorder", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ comboIds }),
+          });
+          if (!res.ok) throw new Error("reorder failed");
+        } catch (error) {
+          console.log("Error reordering combos:", error);
+          failed = true;
+        }
+      }
+      ref.busy = false;
+      if (failed) {
+        notify.error("Failed to save combo order");
+        await fetchData();
+      }
     })();
   };
 
@@ -655,45 +699,48 @@ export default function CombosPage() {
               </p>
             </div>
           ) : (
-          <div className="flex flex-col gap-3">
-            {(() => {
-              const comboByName = Object.fromEntries(combos.map((c) => [c.name, c.models]));
-              if (filteredCombos.length === 0) {
-                return (
-                  <Card>
-                    <div className="text-center py-10">
-                      <p className="text-text-main font-medium mb-1">No combos match “{searchQuery.trim()}”</p>
-                      <p className="text-sm text-text-muted mb-4">Try a shorter query, or clear the search to see all {combos.length} combos.</p>
-                      <Button variant="secondary" onClick={() => setSearchQuery("")}>
-                        Clear search
-                      </Button>
-                    </div>
-                  </Card>
-                );
-              }
-              return filteredCombos.map((combo) => (
-                <ComboCard
-                  key={combo.id}
-                  combo={combo}
-                  getCaps={getCaps}
-                  comboByName={comboByName}
-                  activeProviders={activeProviders}
-                  activeProviderIds={activeProviderIds}
-                  prefixById={prefixById}
-                  copied={copied}
-                  onCopy={copy}
-                  onEdit={() => setEditingCombo(combo)}
-                  onDelete={() => handleDelete(combo.id)}
-                  onTest={() => handleTestCombo(combo)}
-                  testing={testingCombo === combo.name}
-                  strategy={comboStrategies[combo.name] || {}}
-                  onSetStrategy={(patch) => handleSetComboStrategy(combo.name, patch)}
-                  selected={selectedIds.includes(combo.id)}
-                  onToggleSelect={() => toggleSelect(combo.id)}
-                />
-              ));
-            })()}
-          </div>
+          <DndContext
+            id="combos-list-dnd"
+            sensors={comboSensors}
+            collisionDetection={closestCenter}
+            onDragEnd={handleComboDragEnd}
+            modifiers={[restrictToVerticalAxis, restrictToParentElement]}
+          >
+            <SortableContext items={filteredCombos.map((c) => c.id)} strategy={verticalListSortingStrategy}>
+              <div className="flex flex-col gap-3">
+                {(() => {
+                  const comboByName = Object.fromEntries(combos.map((c) => [c.name, c.models]));
+                  const dragDisabled = Boolean(normalizedQuery) || combos.length < 2;
+                  const dragDisabledTitle = normalizedQuery
+                    ? "Clear search to reorder combos"
+                    : "Need at least 2 combos to reorder";
+                  return filteredCombos.map((combo) => (
+                    <ComboCard
+                      key={combo.id}
+                      combo={combo}
+                      getCaps={getCaps}
+                      comboByName={comboByName}
+                      activeProviders={activeProviders}
+                      activeProviderIds={activeProviderIds}
+                      prefixById={prefixById}
+                      copied={copied}
+                      onCopy={copy}
+                      onEdit={() => setEditingCombo(combo)}
+                      onDelete={() => handleDelete(combo.id)}
+                      onTest={() => handleTestCombo(combo)}
+                      testing={testingCombo === combo.name}
+                      strategy={comboStrategies[combo.name] || {}}
+                      onSetStrategy={(patch) => handleSetComboStrategy(combo.name, patch)}
+                      selected={selectedIds.includes(combo.id)}
+                      onToggleSelect={() => toggleSelect(combo.id)}
+                      dragDisabled={dragDisabled}
+                      dragDisabledTitle={dragDisabledTitle}
+                    />
+                  ));
+                })()}
+              </div>
+            </SortableContext>
+          </DndContext>
           )}
         </div>
       )}
@@ -878,7 +925,7 @@ function ComboTestModal({ result, onClose, prefixById = {} }) {
   );
 }
 
-function ComboCard({ combo, getCaps, comboByName = {}, activeProviders = [], activeProviderIds = new Set(), prefixById = {}, copied, onCopy, onEdit, onDelete, onTest, testing = false, strategy = {}, onSetStrategy, selected = false, onToggleSelect }) {
+function ComboCard({ combo, getCaps, comboByName = {}, activeProviders = [], activeProviderIds = new Set(), prefixById = {}, copied, onCopy, onEdit, onDelete, onTest, testing = false, strategy = {}, onSetStrategy, selected = false, onToggleSelect, dragDisabled = false, dragDisabledTitle = "Drag disabled" }) {
   const [showJudgeSelect, setShowJudgeSelect] = useState(false);
   const [showAllModels, setShowAllModels] = useState(false);
   const visibleModels = showAllModels ? combo.models : combo.models.slice(0, 3);
@@ -893,11 +940,41 @@ function ComboCard({ combo, getCaps, comboByName = {}, activeProviders = [], act
   // generic patterns and under-report the limits. getCaps carries the server's
   // answer for /api/models.
   const comboCaps = aggregateComboCapabilities(combo.models, comboByName, getCaps);
+  const { attributes, listeners, setNodeRef, transform, isDragging } = useSortable({
+    id: combo.id,
+    disabled: dragDisabled,
+  });
+  const dragStyle = {
+    transform: CSS.Transform.toString(transform),
+    opacity: isDragging ? 0.55 : 1,
+    zIndex: isDragging ? 50 : undefined,
+    position: isDragging ? "relative" : undefined,
+  };
 
   return (
-    <Card padding="sm" className={`group ${selected ? "ring-1 ring-primary/40 bg-primary/[0.03]" : ""}`}>
+    <div ref={setNodeRef} style={dragStyle}>
+    <Card padding="sm" className={`group ${selected ? "ring-1 ring-primary/40 bg-primary/[0.03]" : ""} ${isDragging ? "shadow-lg ring-1 ring-primary/40" : ""}`}>
       <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex min-w-0 flex-1 items-start gap-3 sm:items-center">
+          <button
+            {...(dragDisabled ? {} : attributes)}
+            {...(dragDisabled ? {} : listeners)}
+            type="button"
+            disabled={dragDisabled}
+            className={`p-1 -ml-1 rounded shrink-0 touch-none transition-colors ${
+              dragDisabled
+                ? "text-text-muted/25 cursor-not-allowed"
+                : "cursor-grab text-text-muted hover:text-primary active:cursor-grabbing"
+            }`}
+            title={dragDisabled ? dragDisabledTitle : "Drag to reorder"}
+            aria-label={`Drag to reorder ${combo.name}`}
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+              <circle cx="9" cy="4" r="2"/><circle cx="15" cy="4" r="2"/>
+              <circle cx="9" cy="12" r="2"/><circle cx="15" cy="12" r="2"/>
+              <circle cx="9" cy="20" r="2"/><circle cx="15" cy="20" r="2"/>
+            </svg>
+          </button>
           <label className="flex shrink-0 items-center pt-1 sm:pt-0 cursor-pointer" title="Select combo">
             <input
               type="checkbox"
@@ -1113,6 +1190,7 @@ function ComboCard({ combo, getCaps, comboByName = {}, activeProviders = [], act
         />
       )}
     </Card>
+    </div>
   );
 }
 
@@ -1158,6 +1236,23 @@ function CapacityAdapterCap({ cap, entry, onChange, activeProviders, getCaps }) 
   const [showModelSelect, setShowModelSelect] = useState(false);
   const { enabled, roundRobin, models } = entry;
 
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
+  );
+  const modelItems = models.map((model, i) => ({ uid: `cap-${cap.key}-${i}`, model }));
+
+  const handleDragEnd = (event) => {
+    if (!enabled) return;
+    const { active, over } = event;
+    if (over && active.id !== over.id) {
+      const oldIndex = modelItems.findIndex((m) => m.uid === active.id);
+      const newIndex = modelItems.findIndex((m) => m.uid === over.id);
+      if (oldIndex !== -1 && newIndex !== -1) {
+        patch({ models: arrayMove(models, oldIndex, newIndex) });
+      }
+    }
+  };
   const patch = (p) => onChange({ ...entry, ...p });
 
   const handleAdd = (model) => {
@@ -1237,83 +1332,43 @@ function CapacityAdapterCap({ cap, entry, onChange, activeProviders, getCaps }) 
           No models in pool (will fallback to {DEFAULT_FALLBACK_MODEL})
         </div>
       ) : (
-        <div className="mt-3 overflow-hidden rounded-lg border border-border/50">
-          <table className="w-full text-left text-xs">
-            <thead>
-              <tr className="border-b border-border/40 bg-black/[0.02] text-text-muted dark:bg-white/[0.02]">
-                <th className="w-12 px-3 py-1.5 font-medium text-center">#</th>
-                <th className="px-3 py-1.5 font-medium">Model</th>
-                <th className="w-24 px-3 py-1.5 font-medium text-center">Order</th>
-                <th className="w-12 px-3 py-1.5 font-medium text-right"></th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-border/30 font-mono">
-              {models.map((model, index) => (
-                <tr key={`${model}-${index}`} className="hover:bg-black/[0.02] dark:hover:bg-white/[0.02] transition-colors">
-                  <td className="px-3 py-2 text-center text-text-muted text-[11px] font-sans">
-                    #{index + 1}
-                  </td>
-                  <td className="px-3 py-2 text-text-main">
-                    <div className="flex items-center gap-1.5 flex-wrap">
-                      <span className="truncate">{model}</span>
-                      <CapacityBadges caps={getCaps?.(model)} />
-                      {model === DEFAULT_FALLBACK_MODEL && (
-                        <span className="rounded bg-emerald-500/10 px-1.5 py-0.5 font-sans text-[10px] font-medium text-emerald-600 dark:text-emerald-400">
-                          free default
-                        </span>
-                      )}
-                    </div>
-                  </td>
-                  <td className="px-3 py-2 text-center">
-                    <div className="inline-flex items-center gap-1">
-                      <button
-                        type="button"
-                        onClick={() => handleMove(index, -1)}
-                        disabled={!enabled || index === 0}
-                        className={`p-2 rounded transition-colors ${
-                          !enabled || index === 0
-                            ? "text-text-muted/20 cursor-not-allowed"
-                            : "text-text-muted hover:text-primary hover:bg-black/5 dark:hover:bg-white/5"
-                        }`}
-                        title="Move up"
-                      >
-                        <span className="material-symbols-outlined text-[16px] leading-none">arrow_upward</span>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => handleMove(index, 1)}
-                        disabled={!enabled || index === models.length - 1}
-                        className={`p-2 rounded transition-colors ${
-                          !enabled || index === models.length - 1
-                            ? "text-text-muted/20 cursor-not-allowed"
-                            : "text-text-muted hover:text-primary hover:bg-black/5 dark:hover:bg-white/5"
-                        }`}
-                        title="Move down"
-                      >
-                        <span className="material-symbols-outlined text-[16px] leading-none">arrow_downward</span>
-                      </button>
-                    </div>
-                  </td>
-                  <td className="px-3 py-2 text-right">
-                    <button
-                      type="button"
-                      onClick={() => handleRemove(index)}
-                      disabled={!enabled}
-                      className={`p-2 rounded transition-colors ${
-                        !enabled
-                          ? "text-text-muted/20 cursor-not-allowed"
-                          : "text-text-muted hover:text-red-500 hover:bg-red-500/10"
-                      }`}
-                      title="Remove model"
-                    >
-                      <span className="material-symbols-outlined text-[16px] leading-none">close</span>
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        <DndContext
+          id={`capacity-adapter-dnd-${cap.key}`}
+          sensors={sensors}
+          collisionDetection={closestCenter}
+          onDragEnd={handleDragEnd}
+          modifiers={[restrictToVerticalAxis, restrictToParentElement]}
+        >
+          <SortableContext items={modelItems.map((m) => m.uid)} strategy={verticalListSortingStrategy}>
+            <div className="mt-3 overflow-hidden rounded-lg border border-border/50">
+              <table className="w-full text-left text-xs">
+                <thead>
+                  <tr className="border-b border-border/40 bg-black/[0.02] text-text-muted dark:bg-white/[0.02]">
+                    <th className="w-20 px-3 py-1.5 font-medium text-center">#</th>
+                    <th className="px-3 py-1.5 font-medium">Model</th>
+                    <th className="w-24 px-3 py-1.5 font-medium text-center">Order</th>
+                    <th className="w-12 px-3 py-1.5 font-medium text-right"></th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-border/30 font-mono">
+                  {modelItems.map(({ uid, model }, index) => (
+                    <CapacityAdapterModelRow
+                      key={uid}
+                      id={uid}
+                      model={model}
+                      index={index}
+                      total={modelItems.length}
+                      enabled={enabled}
+                      getCaps={getCaps}
+                      onMove={(delta) => handleMove(index, delta)}
+                      onRemove={() => handleRemove(index)}
+                    />
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </SortableContext>
+        </DndContext>
       )}
 
       {showModelSelect && (
@@ -1330,6 +1385,111 @@ function CapacityAdapterCap({ cap, entry, onChange, activeProviders, getCaps }) 
         />
       )}
     </Card>
+  );
+}
+
+function CapacityAdapterModelRow({ id, model, index, total, enabled, getCaps, onMove, onRemove }) {
+  const dragDisabled = !enabled || total < 2;
+  const { attributes, listeners, setNodeRef, transform, isDragging } = useSortable({
+    id,
+    disabled: dragDisabled,
+  });
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    opacity: isDragging ? 0.5 : 1,
+    zIndex: isDragging ? 50 : undefined,
+    position: isDragging ? "relative" : undefined,
+  };
+
+  return (
+    <tr
+      ref={setNodeRef}
+      style={style}
+      className={`hover:bg-black/[0.02] dark:hover:bg-white/[0.02] transition-colors ${
+        isDragging ? "bg-surface shadow-md ring-1 ring-primary/30" : ""
+      }`}
+    >
+      <td className="px-3 py-2 text-center text-text-muted text-[11px] font-sans">
+        <div className="inline-flex items-center gap-1.5">
+          <button
+            {...(dragDisabled ? {} : attributes)}
+            {...(dragDisabled ? {} : listeners)}
+            type="button"
+            disabled={dragDisabled}
+            className={`p-0.5 rounded touch-none shrink-0 transition-colors ${
+              dragDisabled
+                ? "text-text-muted/20 cursor-not-allowed"
+                : "cursor-grab text-text-muted hover:text-primary active:cursor-grabbing"
+            }`}
+            title="Drag to reorder"
+            aria-label={`Drag to reorder ${model}`}
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+              <circle cx="9" cy="4" r="2"/><circle cx="15" cy="4" r="2"/>
+              <circle cx="9" cy="12" r="2"/><circle cx="15" cy="12" r="2"/>
+              <circle cx="9" cy="20" r="2"/><circle cx="15" cy="20" r="2"/>
+            </svg>
+          </button>
+          <span>#{index + 1}</span>
+        </div>
+      </td>
+      <td className="px-3 py-2 text-text-main">
+        <div className="flex items-center gap-1.5 flex-wrap">
+          <span className="truncate">{model}</span>
+          <CapacityBadges caps={getCaps?.(model)} />
+          {model === DEFAULT_FALLBACK_MODEL && (
+            <span className="rounded bg-emerald-500/10 px-1.5 py-0.5 font-sans text-[10px] font-medium text-emerald-600 dark:text-emerald-400">
+              free default
+            </span>
+          )}
+        </div>
+      </td>
+      <td className="px-3 py-2 text-center">
+        <div className="inline-flex items-center gap-1">
+          <button
+            type="button"
+            onClick={() => onMove(-1)}
+            disabled={!enabled || index === 0}
+            className={`p-2 rounded transition-colors ${
+              !enabled || index === 0
+                ? "text-text-muted/20 cursor-not-allowed"
+                : "text-text-muted hover:text-primary hover:bg-black/5 dark:hover:bg-white/5"
+            }`}
+            title="Move up"
+          >
+            <span className="material-symbols-outlined text-[16px] leading-none">arrow_upward</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => onMove(1)}
+            disabled={!enabled || index === total - 1}
+            className={`p-2 rounded transition-colors ${
+              !enabled || index === total - 1
+                ? "text-text-muted/20 cursor-not-allowed"
+                : "text-text-muted hover:text-primary hover:bg-black/5 dark:hover:bg-white/5"
+            }`}
+            title="Move down"
+          >
+            <span className="material-symbols-outlined text-[16px] leading-none">arrow_downward</span>
+          </button>
+        </div>
+      </td>
+      <td className="px-3 py-2 text-right">
+        <button
+          type="button"
+          onClick={onRemove}
+          disabled={!enabled}
+          className={`p-2 rounded transition-colors ${
+            !enabled
+              ? "text-text-muted/20 cursor-not-allowed"
+              : "text-text-muted hover:text-red-500 hover:bg-red-500/10"
+          }`}
+          title="Remove model"
+        >
+          <span className="material-symbols-outlined text-[16px] leading-none">close</span>
+        </button>
+      </td>
+    </tr>
   );
 }
 
@@ -1657,7 +1817,7 @@ function ComboFormModal({ isOpen, combo, onClose, onSave, activeProviders, prefi
                 <p className="text-xs text-text-muted">No models added yet</p>
               </div>
             ) : (
-            <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd} modifiers={[restrictToVerticalAxis, restrictToParentElement]}>
+            <DndContext id="combo-form-models-dnd" sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd} modifiers={[restrictToVerticalAxis, restrictToParentElement]}>
               <SortableContext items={modelItems.map((m) => m.uid)} strategy={verticalListSortingStrategy}>
                 <div className="flex max-h-[55vh] min-w-0 flex-col gap-1 overflow-y-auto sm:max-h-[350px]">
                   {modelItems.map(({ uid, model }, index) => (

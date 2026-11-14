@@ -109,6 +109,10 @@ async function flushToDatabase() {
             status: item.status || null,
             latency: item.latency || {},
             tokens: item.tokens || {},
+            // Proxy provenance is tiny and bounded (pool id/name + masked host),
+            // so it is stored verbatim — never truncated, or the usage page
+            // would lose the one field it exists to show.
+            ...(item.proxy ? { proxy: item.proxy } : {}),
             request: truncateField(item.request, config.maxJsonSize),
             providerRequest: truncateField(item.providerRequest, config.maxJsonSize),
             providerResponse: truncateField(item.providerResponse, config.maxJsonSize),

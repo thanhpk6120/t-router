@@ -126,7 +126,16 @@ export async function GET(request) {
         const { getSettings } = await import("@/lib/localDb");
         providerStrategies = (await getSettings())?.providerStrategies || {};
       } catch { /* fail-open */ }
-      return NextResponse.json({ stats: data, breakers, health, providerStrategies });
+      // Which proxy each provider is actually routing through right now.
+      // Providers with no proxy are omitted entirely, so the UI renders a badge
+      // only where one is true. Non-mutating: rotation state is peeked, never
+      // advanced, so opening the page cannot shift live traffic.
+      let effectiveProxies = {};
+      try {
+        const { resolveProviderEffectiveProxyMap } = await import("@/lib/network/effectiveProxy");
+        effectiveProxies = await resolveProviderEffectiveProxyMap();
+      } catch { /* fail-open — the page just shows no proxy badges */ }
+      return NextResponse.json({ stats: data, breakers, health, providerStrategies, effectiveProxies });
     }
     const providerFilter = params.get("provider") || undefined;
     const lite = params.get("lite") === "1";

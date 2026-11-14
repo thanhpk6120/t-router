@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import { DefaultExecutor } from "./default.js";
 import { resolveSessionId } from "../utils/sessionManager.js";
 import { getModelTargetFormat } from "../config/providerModels.js";
+import { PROVIDERS } from "../config/providers.js";
 import { FORMATS } from "../translator/formats.js";
 import {
   normalizeResponsesInput,
@@ -14,7 +15,11 @@ const SESSION_HEADER = "x-opencode-session";
 const SESSION_FIELD = "_opencodeGoSession";
 const MAX_SESSION_LENGTH = 256;
 
-const RESPONSES_BASE_URL = "https://opencode.ai/zen/go/v1/responses";
+// Read from the registry rather than hardcoding: the response endpoint moved with
+// the zen/go → inference/go migration, and a stale literal here silently sent
+// responses-only models to a dead host. `transports` is the co-located source.
+const RESPONSES_BASE_URL =
+  PROVIDERS["opencode-go"]?.transports?.find((t) => t.format === FORMATS.OPENAI_RESPONSES)?.baseUrl;
 const MAX_TOOL_NAME_LEN = 128;
 
 function normalizeSession(value) {
@@ -117,7 +122,7 @@ export class OpenCodeGoExecutor extends DefaultExecutor {
 
   buildUrl(model, stream, urlIndex = 0, credentials = null) {
     // Muse Spark lives on /responses even when a stale runtimeTransport leaks in.
-    if (isResponsesModel(model)) return RESPONSES_BASE_URL;
+    if (isResponsesModel(model) && RESPONSES_BASE_URL) return RESPONSES_BASE_URL;
     return super.buildUrl(model, stream, urlIndex, credentials);
   }
 

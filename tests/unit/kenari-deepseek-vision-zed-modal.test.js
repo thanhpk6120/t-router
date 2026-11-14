@@ -65,14 +65,27 @@ describe("ModelSelectModal uses a live catalog for every provider (#4244)", () =
   });
 
   it("fetches each provider's own /models endpoint", () => {
-    expect(src).toContain("/api/providers/${connectionId}/models");
+    expect(src).toContain("/api/providers/${encodeURIComponent(fetchId)}/models");
   });
 
   it("reads the live catalog for every provider in the picker", () => {
-    expect(src).toMatch(/const liveModels = liveCatalogs\[providerId\] \|\| \[\]/);
+    // One resolver for both branches; the registry is only reached when the
+    // route was never read (catalogFor returns null).
+    expect(src).toMatch(/const liveModels = catalogForProvider\(providerId\);/);
+    expect(src).toContain("const servedCatalog = catalogForProvider(providerId);");
   });
 
   it("picks the first active connection, matching the provider page", () => {
-    expect(src).toContain("firstConnectionByProvider");
+    // No sorting of the provider/connection pairs: array order decides, exactly
+    // like `connections.find(c => c.isActive !== false)` on the provider page.
+    expect(src).toContain("if (p?.provider && p?.id && !map.has(p.provider)) map.set(p.provider, p.id);");
+    expect(src).not.toContain("firstConnectionByProvider");
+  });
+
+  it("asks the /models route for no-auth providers, which own no connection row", () => {
+    // Without this they had no live catalog at all and fell back to the static
+    // registry — the source of the ghost models this fix removes.
+    expect(src).toContain("for (const id of noAuthProviderIds || [])");
+    expect(src).toContain("if (id && !map.has(id)) map.set(id, id);");
   });
 });

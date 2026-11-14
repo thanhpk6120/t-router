@@ -11,6 +11,7 @@ import {
 } from "../config/runtimeConfig.js";
 import { dbg } from "./debugLog.js";
 import { ensureClaudeCliVersion, applyClaudeCliVersion } from "./claudeCliVersion.js";
+import { tagProxyUsed, tagProxyFailure } from "./proxyProvenance.js";
 
 const CLAUDE_UA_PROBE = /claude-cli\/\d/;
 function hasClaudeCliHeader(headers) {
@@ -539,6 +540,37 @@ async function createBypassRequest(parsedUrl, realIP, options) {
   });
 }
 
+// ─── Per-response proxy provenance ─────────────────────────────────
+// The dashboard has to answer "which proxy did THIS request use?", and the
+// answer only exists here: the pool is chosen per attempt inside
+// proxyAwareFetch and a failed candidate rotates mid-request, so the resolved
+// config is not the proxy that carried the bytes.
+//
+// The tagging mechanism itself lives in ./proxyProvenance.js on purpose — the
+// recorder imports it directly, so the dozens of tests that mock this module
+// with only { proxyAwareFetch } cannot break it. Re-exported here for callers
+// that already reach through proxyFetch.
+export { tagProxyUsed, getResponseProxyInfo, tagProxyFailure, getProxyFailureInfo } from "./proxyProvenance.js";
+
+function describeProxyCandidate(candidate, proxyOptions, extra = {}) {
+  const proxyUrl = normalizeString(candidate?.proxyUrl);
+  const relayUrl = normalizeString(candidate?.vercelRelayUrl);
+  const pool = candidate?.proxyPool || proxyOptions?.proxyPool || null;
+  const resolvedUrl = proxyUrl || relayUrl;
+  if (!resolvedUrl || resolvedUrl === "direct") {
+    return { proxied: false, ...extra };
+  }
+  return {
+    proxied: true,
+    poolId: normalizeString(candidate?.id) || normalizeString(proxyOptions?.proxyPoolId) || null,
+    poolName: normalizeString(candidate?.name) || normalizeString(pool?.name) || null,
+    host: safeProxyHost(resolvedUrl),
+    type: relayUrl ? (pool?.type || "relay") : (pool?.type || "http"),
+    rotateLink: Boolean(candidate?.rotateLink || pool?.rotateLink || pool?.rotateUrl),
+    ...extra,
+  };
+}
+
 function isProxyActiveForProvider(proxyOptions) {
   if (!proxyOptions) return false;
   if (proxyOptions.proxyIntended === true) return true;
@@ -553,6 +585,65 @@ function isProxyActiveForProvider(proxyOptions) {
 
   return hasPoolId || isEnabled || hasProxyUrl || hasRelayUrl;
 }
+// ─── Rotate-on-status policy ────────────────────────────────────────
+// The list itself and its parser live in config/ so the dashboard control and
+// this engine cannot drift apart. See open-sse/config/proxyRotateStatuses.js
+// for why 400/404/422 are deliberately excluded from the default set.
+import { DEFAULT_PROXY_ROTATE_STATUSES, resolveProxyRotateStatuses } from "../config/proxyRotateStatuses.js";
+
+export { DEFAULT_PROXY_ROTATE_STATUSES, resolveProxyRotateStatuses };
+
+function isRotatingCandidate(candidate) {
+  return Boolean(
+    candidate?.rotateLink ||
+    candidate?.proxyPool?.rotateLink ||
+    candidate?.proxyPool?.rotateUrl
+  );
+}
+
+/**
+ * Build the ordered candidate list for one request.
+ *
+ * Ordering is resolved upstream (buildCandidateProxies puts rotating pools
+ * first for `proxySource === "both"`), so this function must NOT re-sort —
+ * re-sorting here would silently override the operator's "rotating first" rule
+ * and also override the bad-range demotion applied by the caller.
+ */
+function buildProxyCandidateList(proxyOptions, proxyUrl) {
+  if (Array.isArray(proxyOptions?.candidateProxies) && proxyOptions.candidateProxies.length > 0) {
+    return proxyOptions.candidateProxies.filter(
+      (p) => p && (p.proxyUrl || p.vercelRelayUrl) && p.id !== "direct" && p.proxyUrl !== "direct"
+    );
+  }
+  if (proxyUrl && proxyUrl !== "direct") {
+    return [{
+      proxyUrl,
+      rotateLink: proxyOptions?.proxyPool?.rotateLink || proxyOptions?.proxyPool?.rotateUrl || proxyOptions?.rotateLink || "",
+      noProxy: proxyOptions?.noProxy || proxyOptions?.connectionNoProxy || "",
+      strictProxy: proxyOptions?.strictProxy === true,
+      proxyPool: proxyOptions?.proxyPool || null,
+      vercelRelayUrl: proxyOptions?.vercelRelayUrl || "",
+    }];
+  }
+  return [];
+}
+
+/**
+ * Restart the rotation cycle after a second-pass success.
+ *
+ * The cursor lives in src/lib/network/connectionProxy.js, on the app side of the
+ * boundary, so this is a soft call: if the module cannot be resolved (open-sse
+ * bundled without it, a test harness, an older install) the request has still
+ * succeeded and the only cost is that the next request may not start at the
+ * head of the pool. Never throws.
+ */
+function resetRotationCycle(providerId) {
+  if (!providerId) return;
+  import(/* webpackIgnore: true */ "../../src/lib/network/connectionProxy.js")
+    .then((m) => { try { m.resetProxyRotation?.(providerId); } catch { /* fail-open */ } })
+    .catch(() => { /* fail-open */ });
+}
+
 export async function proxyAwareFetch(url, options = {}, proxyOptions = null) {
   // Keep the spoofed Claude Code version current (new models require a minimum CLI version).
   // Refresh in the background: the request uses the version already known, so an
@@ -575,7 +666,15 @@ export async function proxyAwareFetch(url, options = {}, proxyOptions = null) {
       "x-relay-target": `${parsed.protocol}//${parsed.host}`,
       "x-relay-path": `${parsed.pathname}${parsed.search}`,
     };
-    return resolveBaseFetch()(vercelRelayUrl, { ...options, headers: relayHeaders });
+    const relayRes = await resolveBaseFetch()(vercelRelayUrl, { ...options, headers: relayHeaders });
+    return tagProxyUsed(relayRes, {
+      proxied: true,
+      poolId: normalizeString(proxyOptions?.proxyPoolId) || null,
+      poolName: normalizeString(proxyOptions?.proxyPool?.name) || null,
+      host: safeProxyHost(vercelRelayUrl),
+      type: proxyOptions?.proxyPool?.type || "relay",
+      rotateLink: Boolean(proxyOptions?.proxyPool?.rotateLink || proxyOptions?.proxyPool?.rotateUrl),
+    });
   }
 
   const connectionProxyUrl = resolveConnectionProxyUrl(targetUrl, proxyOptions);
@@ -588,75 +687,84 @@ export async function proxyAwareFetch(url, options = {}, proxyOptions = null) {
   // Only adapters that declare `proxyCapable` opt in — any other adapter
   // ignores the proxy URL and would leave over the direct interface, so they
   // keep the undici path below.
-  if (proxyUrl && options?.directFetch?.proxyCapable === true) {
-    try {
-      const res = await options.directFetch(url, { ...options, proxyUrl }, proxyUrl);
-      // Reported only after the adapter that holds the tunnel returned.
-      const via = res?.headers?.get?.("x-9r-proxy-via");
-      dbg("PROXY", `PROXY ROUTING VERIFIED | ${safeTargetHost(targetUrl)} | transport=adapter | proxy=${via || safeProxyHost(proxyUrl)} | status=${res?.status}`);
-      return res;
-    } catch (err) {
-      if (proxyOptions?.strictProxy === true) {
-        throw new Error(`[ProxyFetch] Proxy required but failed (strictProxy=true): ${err.message}`);
-      }
-      throw err;
-    }
-  }
+  //
+  // The adapter is dispatched PER CANDIDATE inside the rotation loop below, not
+  // once here. Returning after a single attempt was the reason a rotating pool
+  // behind such an adapter never advanced: the first proxy answered 429, the
+  // adapter path returned that 429 straight to the caller, and no other proxy
+  // in the pool was ever tried.
+  const adapterCapable = options?.directFetch?.proxyCapable === true;
 
   const isProxyActive = isProxyActiveForProvider(proxyOptions);
 
-  // MITM DNS bypass: for known MITM-intercepted hosts, resolve real IP to avoid DNS spoof
-  if (shouldBypassMitmDns(targetUrl)) {
+  // MITM DNS bypass: for known MITM-intercepted hosts, resolve real IP to avoid DNS spoof.
+  // Adapters with a resolved proxy skip it: they own the tunnel, so the undici
+  // dispatcher path here is not what carries their bytes.
+  if (shouldBypassMitmDns(targetUrl) && !(proxyUrl && adapterCapable)) {
+    let mitmFallbackReason = null;
     if (proxyUrl) {
       // Proxy resolves DNS externally (not affected by /etc/hosts) — use proxy directly
       try {
-        return await fetchWithTlsFallback(url, options, proxyUrl, forceFreshSocket);
+        const viaProxy = await fetchWithTlsFallback(url, options, proxyUrl, forceFreshSocket);
+        return tagProxyUsed(viaProxy, describeProxyCandidate(
+          { proxyUrl, proxyPool: proxyOptions?.proxyPool || null, id: proxyOptions?.proxyPoolId },
+          proxyOptions,
+          { type: "mitm-bypass" }
+        ));
       } catch (proxyError) {
         if (proxyOptions?.strictProxy === true) {
-          throw new Error(`[ProxyFetch] Proxy required but failed (strictProxy=true): ${proxyError.message}`);
+          throw tagProxyFailure(
+            new Error(`[ProxyFetch] Proxy required but failed (strictProxy=true): ${proxyError.message}`),
+            { strictProxy: true, reason: proxyError.message },
+          );
         }
         if (isProxyActive && proxyOptions?.directActive === false) {
-          throw new Error(`[ProxyFetch] Proxy failed and Direct connection is disabled in Proxy Pools. Refusing direct bypass to prevent IP leak: ${proxyError.message}`);
+          throw tagProxyFailure(
+            new Error(`[ProxyFetch] Proxy failed and Direct connection is disabled in Proxy Pools. Refusing direct bypass to prevent IP leak: ${proxyError.message}`),
+            { directDisabled: true, reason: proxyError.message },
+          );
         }
         console.warn(`[ProxyFetch] Proxy failed, falling back to direct bypass: ${proxyError.message}`);
+        mitmFallbackReason = proxyError.message || "proxy failed";
       }
     }
     // No proxy resolved
     if (isProxyActive && proxyOptions?.directActive === false) {
-      throw new Error(`[ProxyFetch] Proxy is enabled for provider but none resolved, and Direct connection is disabled in Proxy Pools. Refusing direct MITM bypass to prevent IP leak.`);
+      throw tagProxyFailure(
+        new Error(`[ProxyFetch] Proxy is enabled for provider but none resolved, and Direct connection is disabled in Proxy Pools. Refusing direct MITM bypass to prevent IP leak.`),
+        { directDisabled: true, reason: "proxy enabled but none resolved" },
+      );
     }
     // No proxy configured, or Direct fallback allowed — manually resolve real IP to bypass DNS spoof
     try {
       const parsedUrl = new URL(targetUrl);
       const realIP = await resolveRealIP(parsedUrl.hostname);
-      if (realIP) return await createBypassRequest(parsedUrl, realIP, options);
+      if (realIP) {
+        const bypassRes = await createBypassRequest(parsedUrl, realIP, options);
+        return tagProxyUsed(
+          bypassRes,
+          mitmFallbackReason
+            ? { proxied: false, fallbackDirect: true, reason: mitmFallbackReason }
+            : { proxied: false, direct: true, type: "mitm-bypass" },
+        );
+      }
     } catch (error) {
       console.warn(`[ProxyFetch] MITM bypass failed: ${error.message}`);
     }
   }
 
-  // Extract candidate proxies if available, otherwise construct from current single proxy
-  let candidateList = [];
-  if (Array.isArray(proxyOptions?.candidateProxies) && proxyOptions.candidateProxies.length > 0) {
-    candidateList = proxyOptions.candidateProxies.filter(
-      (p) => p && (p.proxyUrl || p.vercelRelayUrl) && p.id !== "direct" && p.proxyUrl !== "direct"
-    );
-  } else if (proxyUrl && proxyUrl !== "direct") {
-    candidateList = [{
-      proxyUrl,
-      rotateLink: proxyOptions?.proxyPool?.rotateLink || proxyOptions?.proxyPool?.rotateUrl || proxyOptions?.rotateLink || "",
-      noProxy: proxyOptions?.noProxy || proxyOptions?.connectionNoProxy || "",
-      strictProxy: proxyOptions?.strictProxy === true,
-      proxyPool: proxyOptions?.proxyPool || null,
-      vercelRelayUrl: proxyOptions?.vercelRelayUrl || "",
-    }];
-  }
-
-  // Sort candidate proxies: non-refreshing & non-bad exit ranges first
+  // Ordered candidate pool for this request.
+  //
+  // buildProxyCandidateList preserves upstream ordering: buildCandidateProxies
+  // already put rotating pools first for `proxySource === "both"`. The only
+  // reordering applied here is a stable demotion of proxies whose exit range is
+  // known-bad or currently mid-rotation — healthy candidates keep their
+  // relative order, so the operator's "rotating first" rule survives.
+  const candidateList = buildProxyCandidateList(proxyOptions, proxyUrl);
   if (candidateList.length > 1) {
     candidateList.sort((a, b) => {
-      const aBad = isProxyBadOrRefreshing(a.proxyUrl);
-      const bBad = isProxyBadOrRefreshing(b.proxyUrl);
+      const aBad = isProxyBadOrRefreshing(a.proxyUrl || a.vercelRelayUrl);
+      const bBad = isProxyBadOrRefreshing(b.proxyUrl || b.vercelRelayUrl);
       if (!aBad && bBad) return -1;
       if (aBad && !bBad) return 1;
       return 0;
@@ -664,127 +772,203 @@ export async function proxyAwareFetch(url, options = {}, proxyOptions = null) {
   }
 
   if (candidateList.length > 0) {
+    // Which statuses mean "this exit is spent, move on". Operator-configurable
+    // per provider; the default set is 429/403/502/503.
+    const rotateStatuses = resolveProxyRotateStatuses(proxyOptions?.proxyRotateStatuses);
+    const providerId = normalizeString(proxyOptions?.providerId) || normalizeString(options?.providerId);
+
     let lastError = null;
     let lastResponse = null;
+    // Only proxies that actually had a rotate link were asked to change their
+    // exit IP, so only those have new state worth a second look. A static
+    // proxy failed for its reason; retrying it unchanged would just burn the
+    // same timeout twice.
+    const rotatedCandidates = [];
 
-    // One budget for the whole proxy phase, sliced per candidate. Sharing the
-    // caller's single connect signal made every candidate after the first
-    // abort instantly (the pool never actually rotated); a fresh full 60s per
-    // candidate would instead cost N×60s for one attempt. Split the same
-    // budget so live candidates get a real chance and the phase as a whole
-    // still ends inside the caller's connect timeout.
+    // One budget per pass, sliced per candidate. Sharing the caller's single
+    // connect signal made every candidate after the first abort instantly (the
+    // pool never actually rotated); a fresh full 60s per candidate would
+    // instead cost N×60s for one attempt. Split the same budget so live
+    // candidates get a real chance and the phase as a whole still ends inside
+    // the caller's connect timeout.
     // base.js passes the provider's own connect timeout in options; keep the
     // proxyOptions spelling for callers that set it there.
     const declaredConnectMs = Number.isFinite(options?.connectTimeoutMs)
       ? options.connectTimeoutMs
       : proxyOptions?.connectTimeoutMs;
     const phaseBudgetMs = Number.isFinite(declaredConnectMs) ? declaredConnectMs : FETCH_CONNECT_TIMEOUT_MS;
-    const phaseDeadline = Date.now() + phaseBudgetMs;
 
-    for (let i = 0; i < candidateList.length; i++) {
-      const candidate = candidateList[i];
-      const curProxyUrl = candidate.proxyUrl;
-      const curRotateLink = candidate.rotateLink || candidate.proxyPool?.rotateLink || candidate.proxyPool?.rotateUrl || "";
+    const runPass = async (candidates, pass) => {
+      const phaseDeadline = Date.now() + phaseBudgetMs;
 
-      // Check noProxy for this candidate
-      if (candidate.noProxy && shouldBypassByNoProxy(targetUrl, candidate.noProxy)) {
-        continue;
-      }
-
-      // Per-candidate controller: one abort cannot poison the rest of the
-      // pool, yet it stays chained to the caller's signal so a client abort
-      // or the outer connect timeout still cancels the whole phase.
-      const candidateCtrl = new AbortController();
-      const onOuterAbort = () => { try { candidateCtrl.abort(new Error("aborted")); } catch { /* already */ } };
-      if (options.signal) {
-        if (options.signal.aborted) { try { candidateCtrl.abort(new Error("aborted")); } catch { /* already */ } }
-        else { try { options.signal.addEventListener("abort", onOuterAbort, { once: true }); } catch { /* noop */ } }
-      }
-      // Slice what is left across the candidates that remain: handing the
-      // first one the whole budget starves the rest and makes rotation a
-      // no-op again, which is the bug this phase budget exists to avoid.
-      const remaining = phaseDeadline - Date.now();
-      const leftCandidates = Math.max(1, candidateList.length - i);
-      const sliceMs = Math.max(5000, Math.floor(remaining / leftCandidates));
-      const candidateBudgetMs = Math.min(remaining, sliceMs);
-      const candidateTimer = setTimeout(() => {
-        try { candidateCtrl.abort(new Error("fetch connect timeout")); } catch { /* already */ }
-      }, Math.max(0, candidateBudgetMs));
-      const candidateOptions = { ...options, signal: candidateCtrl.signal };
-      // keepAbort=true keeps the outer-signal listener alive for a response we
-      // are about to hand back: a client abort while the body is still
-      // streaming must still cancel the upstream request (undici aborts the
-      // body through this controller). Every other exit removes it so an
-      // abandoned candidate cannot leak a listener for the whole request.
-      const releaseCandidate = (keepAbort = false) => {
-        clearTimeout(candidateTimer);
-        if (!keepAbort) {
-          try { options.signal?.removeEventListener?.("abort", onOuterAbort); } catch { /* noop */ }
+      for (let i = 0; i < candidates.length; i++) {
+        if (options.signal?.aborted) {
+          throw options.signal.reason instanceof Error
+            ? options.signal.reason
+            : Object.assign(new Error("aborted"), { name: "AbortError" });
         }
-      };
-      try {
-        let res;
-        if (candidate.vercelRelayUrl) {
-          const parsed = new URL(targetUrl);
-          const baseHeaders = options.headers instanceof Headers
-            ? Object.fromEntries(options.headers.entries())
-            : { ...(options.headers || {}) };
-          const relayHeaders = {
-            ...baseHeaders,
-            "x-relay-target": `${parsed.protocol}//${parsed.host}`,
-            "x-relay-path": `${parsed.pathname}${parsed.search}`,
-          };
-          res = await resolveBaseFetch()(candidate.vercelRelayUrl, { ...candidateOptions, headers: relayHeaders });
-        } else {
-          res = await fetchWithTlsFallback(url, candidateOptions, curProxyUrl, forceFreshSocket);
-        }
-        releaseCandidate(true);
+        const candidate = candidates[i];
+        const curProxyUrl = normalizeString(candidate.proxyUrl);
+        const curRotateLink = candidate.rotateLink || candidate.proxyPool?.rotateLink || candidate.proxyPool?.rotateUrl || "";
 
-        // If upstream or proxy rejected with 429/403/502/503 and has rotateLink
-        if (res && (res.status === 429 || res.status === 403 || res.status === 502 || res.status === 503)) {
-          if (curRotateLink) {
-            triggerBackgroundRotate(curRotateLink, curProxyUrl, candidate.proxyPool || candidate);
+        // Check noProxy for this candidate
+        if (candidate.noProxy && shouldBypassByNoProxy(targetUrl, candidate.noProxy)) {
+          continue;
+        }
+
+        // Per-candidate controller: one abort cannot poison the rest of the
+        // pool, yet it stays chained to the caller's signal so a client abort
+        // or the outer connect timeout still cancels the whole phase.
+        const candidateCtrl = new AbortController();
+        const onOuterAbort = () => { try { candidateCtrl.abort(new Error("aborted")); } catch { /* already */ } };
+        if (options.signal) {
+          if (options.signal.aborted) { try { candidateCtrl.abort(new Error("aborted")); } catch { /* already */ } }
+          else { try { options.signal.addEventListener("abort", onOuterAbort, { once: true }); } catch { /* noop */ } }
+        }
+        // Slice what is left across the candidates that remain: handing the
+        // first one the whole budget starves the rest and makes rotation a
+        // no-op again, which is the bug this phase budget exists to avoid.
+        const remaining = phaseDeadline - Date.now();
+        const leftCandidates = Math.max(1, candidates.length - i);
+        const sliceMs = Math.max(5000, Math.floor(remaining / leftCandidates));
+        const candidateBudgetMs = Math.min(remaining, sliceMs);
+        const candidateTimer = setTimeout(() => {
+          try { candidateCtrl.abort(new Error("fetch connect timeout")); } catch { /* already */ }
+        }, Math.max(0, candidateBudgetMs));
+        const candidateOptions = { ...options, signal: candidateCtrl.signal };
+        // keepAbort=true keeps the outer-signal listener alive for a response we
+        // are about to hand back: a client abort while the body is still
+        // streaming must still cancel the upstream request (undici aborts the
+        // body through this controller). Every other exit removes it so an
+        // abandoned candidate cannot leak a listener for the whole request.
+        const releaseCandidate = (keepAbort = false) => {
+          clearTimeout(candidateTimer);
+          if (!keepAbort) {
+            try { options.signal?.removeEventListener?.("abort", onOuterAbort); } catch { /* noop */ }
           }
-          // If there is another active candidate proxy in the pool, fallback to it!
-          if (i + 1 < candidateList.length) {
-            console.warn(`[ProxyFetch] Proxy HTTP ${res.status} on ${curProxyUrl}, falling back to next candidate proxy (${i + 2}/${candidateList.length})`);
+        };
+
+        const rememberRotated = () => {
+          if (pass !== 0) return;
+          if (!isRotatingCandidate(candidate)) return;
+          if (rotatedCandidates.some((c) => (c.id && c.id === candidate.id) || c.proxyUrl === candidate.proxyUrl)) return;
+          rotatedCandidates.push(candidate);
+        };
+
+        try {
+          let res;
+          if (candidate.vercelRelayUrl) {
+            const parsed = new URL(targetUrl);
+            const baseHeaders = options.headers instanceof Headers
+              ? Object.fromEntries(options.headers.entries())
+              : { ...(options.headers || {}) };
+            const relayHeaders = {
+              ...baseHeaders,
+              "x-relay-target": `${parsed.protocol}//${parsed.host}`,
+              "x-relay-path": `${parsed.pathname}${parsed.search}`,
+            };
+            res = await resolveBaseFetch()(candidate.vercelRelayUrl, { ...candidateOptions, headers: relayHeaders });
+          } else if (adapterCapable) {
+            // Transport-owning adapter (wreq-js TLS impersonation): it must
+            // drive the proxy itself, so hand it THIS candidate's URL.
+            res = await options.directFetch(url, { ...candidateOptions, proxyUrl: curProxyUrl }, curProxyUrl);
+          } else {
+            res = await fetchWithTlsFallback(url, candidateOptions, curProxyUrl, forceFreshSocket);
+          }
+          releaseCandidate(true);
+
+          // A status in the rotate list means the exit is spent, not that the
+          // request was malformed: rotate that proxy's IP and try the next one.
+          if (res && rotateStatuses.includes(res.status)) {
+            if (curRotateLink) {
+              triggerBackgroundRotate(curRotateLink, curProxyUrl, candidate.proxyPool || candidate);
+            }
+            rememberRotated();
             lastResponse = res;
             // This response is abandoned, not returned: cancel its body and
             // detach the outer abort chain before moving to the next proxy.
             try { candidateCtrl.abort(); } catch { /* already */ }
             releaseCandidate();
+            const nextIdx = i + 2;
+            console.warn(`[ProxyFetch] Proxy HTTP ${res.status} on ${curProxyUrl}${curRotateLink ? " (rotate triggered)" : ""}, ${nextIdx <= candidates.length ? `moving to next candidate proxy (${nextIdx}/${candidates.length})` : `no candidate left in pass ${pass + 1}`}`);
             continue;
           }
-        }
 
-        return res;
-      } catch (proxyError) {
-        releaseCandidate();
-        lastError = proxyError;
-        if (curRotateLink) {
-          triggerBackgroundRotate(curRotateLink, curProxyUrl, candidate.proxyPool || candidate);
-        }
+          const via = res?.headers?.get?.("x-9r-proxy-via");
+          dbg("PROXY", `PROXY ROUTING VERIFIED | ${safeTargetHost(targetUrl)} | transport=${adapterCapable && !candidate.vercelRelayUrl ? "adapter" : "undici"} | proxy=${via || safeProxyHost(curProxyUrl)} | status=${res?.status}`);
+          return {
+            res: tagProxyUsed(res, describeProxyCandidate(candidate, proxyOptions, {
+              attempts: i + 1,
+              candidateCount: candidates.length,
+              pass: pass + 1,
+            })),
+          };
+        } catch (proxyError) {
+          releaseCandidate();
+          if (options.signal?.aborted) throw proxyError;
+          lastError = proxyError;
+          if (curRotateLink) {
+            triggerBackgroundRotate(curRotateLink, curProxyUrl, candidate.proxyPool || candidate);
+          }
+          rememberRotated();
 
-        // Fallback to next candidate proxy if available
-        if (i + 1 < candidateList.length && Date.now() < phaseDeadline) {
-          const nextCandidate = candidateList[i + 1];
-          const nextProxyUrl = nextCandidate.proxyUrl || nextCandidate.vercelRelayUrl;
-          console.warn(`[ProxyFetch] Proxy failed (${proxyError.message}) on ${curProxyUrl}, falling back to next active proxy ${nextProxyUrl} (${i + 2}/${candidateList.length})`);
+          if (i + 1 < candidates.length && Date.now() < phaseDeadline) {
+            const nextCandidate = candidates[i + 1];
+            const nextProxyUrl = nextCandidate.proxyUrl || nextCandidate.vercelRelayUrl;
+            console.warn(`[ProxyFetch] Proxy failed (${proxyError.message}) on ${curProxyUrl}, falling back to next active proxy ${nextProxyUrl} (${i + 2}/${candidates.length})`);
+          }
           continue;
         }
+      }
+      return null;
+    };
+
+    // Pass 1: the whole ordered pool.
+    const firstPass = await runPass(candidateList, 0);
+    if (firstPass) {
+      return firstPass.res;
+    }
+
+    // Pass 2: if every proxy failed, the rotating ones have since been asked
+    // for a new exit IP. Give exactly those one more full pass — a fresh exit
+    // is a genuinely different attempt, a static proxy is not.
+    if (rotatedCandidates.length > 0) {
+      console.warn(`[ProxyFetch] All ${candidateList.length} proxies failed; retrying ${rotatedCandidates.length} rotated proxy(ies) once more`);
+      const secondPass = await runPass(rotatedCandidates, 1);
+      if (secondPass) {
+        // Success on a re-tried proxy means the pool is healthy again. Restart
+        // the cycle so the next request starts at the head of the pool instead
+        // of inheriting the cursor position that led into the failed pass.
+        resetRotationCycle(providerId);
+        return secondPass.res;
       }
     }
 
     // All candidate proxies in the pool were attempted and failed
     if (proxyOptions?.strictProxy === true) {
-      throw new Error(`[ProxyFetch] All ${candidateList.length} proxies failed (strictProxy=true): ${lastError?.message || `HTTP ${lastResponse?.status}`}`);
+      throw tagProxyFailure(
+        new Error(`[ProxyFetch] All ${candidateList.length} proxies failed (strictProxy=true): ${lastError?.message || `HTTP ${lastResponse?.status}`}`),
+        { strictProxy: true, candidateCount: candidateList.length, reason: lastError?.message || (lastResponse?.status ? `HTTP ${lastResponse.status}` : "all proxies failed") },
+      );
     }
     if (isProxyActive && proxyOptions?.directActive === false) {
-      throw new Error(`[ProxyFetch] All ${candidateList.length} active proxies failed and Direct connection is disabled in Proxy Pools. Refusing direct fallback to prevent IP leak: ${lastError?.message || `HTTP ${lastResponse?.status}`}`);
+      throw tagProxyFailure(
+        new Error(`[ProxyFetch] All ${candidateList.length} active proxies failed and Direct connection is disabled in Proxy Pools. Refusing direct fallback to prevent IP leak: ${lastError?.message || `HTTP ${lastResponse?.status}`}`),
+        { directDisabled: true, candidateCount: candidateList.length, reason: lastError?.message || (lastResponse?.status ? `HTTP ${lastResponse.status}` : "all proxies failed") },
+      );
     }
 
     console.warn(`[ProxyFetch] All ${candidateList.length} active proxies failed, falling back to active Direct connection: ${lastError?.message || `HTTP ${lastResponse?.status}`}`);
-    return fetchWithTlsFallback(url, options, null, forceFreshSocket);
+    const directRes = await fetchWithTlsFallback(url, options, null, forceFreshSocket);
+    // Proxies were configured and every one failed, so this request left over
+    // the real IP. Record it as direct WITH the reason — the dashboard must not
+    // claim proxy coverage the request did not get.
+    return tagProxyUsed(directRes, {
+      proxied: false,
+      fallbackDirect: true,
+      candidateCount: candidateList.length,
+      reason: lastError?.message || (lastResponse?.status ? `HTTP ${lastResponse.status}` : "all proxies failed"),
+    });
   }
   // Strict mode means "never leave over the direct IP". Reaching here with a
   // proxy configured but unresolved is exactly that case — an inactive or
@@ -797,14 +981,21 @@ export async function proxyAwareFetch(url, options = {}, proxyOptions = null) {
   // fails" (a replayed COSY signature returns 403), not "a proxy is required".
   // With nothing configured they must keep working.
   if (proxyOptions?.strictProxy === true && isProxyActive) {
-    throw new Error("[ProxyFetch] Proxy required but none resolved (strictProxy=true)");
+    throw tagProxyFailure(
+      new Error("[ProxyFetch] Proxy required but none resolved (strictProxy=true)"),
+      { strictProxy: true, reason: "proxy required but none resolved" },
+    );
   }
   if (isProxyActive && proxyOptions?.directActive === false) {
-    throw new Error("[ProxyFetch] Proxy is enabled for provider but none resolved, and Direct connection is disabled in Proxy Pools. Refusing direct request to prevent IP leak.");
+    throw tagProxyFailure(
+      new Error("[ProxyFetch] Proxy is enabled for provider but none resolved, and Direct connection is disabled in Proxy Pools. Refusing direct request to prevent IP leak."),
+      { directDisabled: true, reason: "proxy enabled but none resolved" },
+    );
   }
 
   // Provider does not use proxy (or Direct connection is active) — use native fetch directly
-  return fetchWithTlsFallback(url, options, null, forceFreshSocket);
+  const directRes = await fetchWithTlsFallback(url, options, null, forceFreshSocket);
+  return tagProxyUsed(directRes, { proxied: false, direct: true });
 }
 
 /**

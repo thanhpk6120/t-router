@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
-import { getCombos, createCombo, getComboByName, normalizeRoutableMembers, getInjectVariants, getModelAliases } from "@/lib/localDb";
+import { getCombos, createCombo, getComboByName, normalizeRoutableMembers, getInjectVariants, getModelAliases, getSettings } from "@/lib/localDb";
+import { sortCombosByOrder } from "@/lib/comboOrder";
 
 export const dynamic = "force-dynamic";
 
@@ -14,7 +15,11 @@ const ALLOWED_KINDS = new Set([null, "llm", "embedding", "image", "imageToText",
 // GET /api/combos - Get all combos
 export async function GET() {
   try {
-    const combos = await getCombos();
+    const [rawCombos, settings] = await Promise.all([
+      getCombos(),
+      getSettings().catch(() => ({})),
+    ]);
+    const combos = sortCombosByOrder(rawCombos, settings?.comboOrder);
     return NextResponse.json({ combos });
   } catch (error) {
     console.log("Error fetching combos:", error);

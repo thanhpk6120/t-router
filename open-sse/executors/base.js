@@ -1,6 +1,8 @@
 import { HTTP_STATUS, RETRY_CONFIG, DEFAULT_RETRY_CONFIG, resolveRetryEntry, FETCH_CONNECT_TIMEOUT_MS } from "../config/runtimeConfig.js";
+import { effectiveTimeoutLadder, ladderToTimeoutsMs, ttftRetryDelayMs } from "../services/timeoutLadder.js";
 import { shouldRefreshCredentials } from "../services/oauthCredentialManager.js";
 import { proxyAwareFetch } from "../utils/proxyFetch.js";
+import { gateFirstToken } from "../utils/ttftGate.js";
 import { stableJsonStringify } from "../utils/stableJson.js";
 import { dbg } from "../utils/debugLog.js";
 import { ANTHROPIC_API_VERSION, OPENAI_COMPAT_BASE, ANTHROPIC_COMPAT_BASE } from "../providers/shared.js";
@@ -126,7 +128,15 @@ export class BaseExecutor {
       return true;
     };
 
-    for (let urlIndex = 0; urlIndex < fallbackCount; urlIndex++) {
+    // Per-provider TTFT ladder (seconds) — null means the feature is off and the
+    // single FETCH_CONNECT_TIMEOUT_MS wait is used, i.e. today's behaviour.
+    // See docs/resilience/per-provider-timeout-ladder.md.
+    const ladderMs = ladderToTimeoutsMs(effectiveTimeoutLadder(providerOverrides, log));
+    const ladderDelayMs = ttftRetryDelayMs();
+
+    // The ladder retries the SAME url/account, so it is the inner loop; urlIndex
+    // (fallback base URL) stays the outer loop and the ladder restarts per URL.
+    outer: for (let urlIndex = 0; urlIndex < fallbackCount; urlIndex++) {
       const url = this.buildUrl(model, stream, urlIndex, credentials);
       const transformedBody = this.transformRequest(model, body, stream, credentials);
       const headers = this.buildHeaders(credentials, stream, url, model, transformedBody);
@@ -135,9 +145,16 @@ export class BaseExecutor {
 
       if (!retryAttemptsByUrl[urlIndex]) retryAttemptsByUrl[urlIndex] = 0;
 
+      for (let step = 0; ; step++) {
       // Abort if upstream doesn't return response headers within connection timeout
       const connectCtrl = new AbortController();
-      const timeoutMs = this.config?.timeoutMs || FETCH_CONNECT_TIMEOUT_MS;
+      // Ladder rung for this attempt; past the last rung (only reachable when the
+      // ladder is off) fall back to the single configured connect timeout.
+      const timeoutMs = step < ladderMs.length ? ladderMs[step] : (this.config?.timeoutMs || FETCH_CONNECT_TIMEOUT_MS);
+      // The rung budget is measured from HERE and covers headers AND the first
+      // token. A streaming upstream answers headers in ~100ms and then thinks,
+      // so a header-only deadline never fires and the ladder is inert.
+      const attemptStart = Date.now();
       const connectTimer = setTimeout(() => connectCtrl.abort(new Error("fetch connect timeout")), timeoutMs);
       const mergedSignal = signal ? AbortSignal.any([signal, connectCtrl.signal]) : connectCtrl.signal;
 
@@ -173,23 +190,74 @@ export class BaseExecutor {
           // A 502 from an edge is typically a poisoned keep-alive socket — retry fresh.
           if (response.status === HTTP_STATUS.BAD_GATEWAY) forceFreshSocketByUrl[urlIndex] = true;
           urlIndex--;
-          continue;
+          continue outer;
         }
 
         if (this.shouldRetry(response.status, urlIndex)) {
           log?.debug?.("RETRY", `${response.status} on ${url}, trying fallback ${urlIndex + 1}`);
           lastStatus = response.status;
-          continue;
+          continue outer;
+        }
+
+        // Only a configured ladder gates the first token: with the feature off,
+        // "headers arrived" stays the whole success criterion (today's
+        // behaviour) and no body read is added to the hot path.
+        const isOkResponse = response.ok ?? (response.status >= 200 && response.status < 300);
+        if (ladderMs.length > 0 && isOkResponse) {
+          const remainingMs = timeoutMs - (Date.now() - attemptStart);
+          const gated = await gateFirstToken(response, remainingMs, {
+            provider: this.provider,
+            rung: step + 1,
+            totalRungs: ladderMs.length,
+            log,
+          });
+          return { response: gated, url, headers, transformedBody };
         }
 
         return { response, url, headers, transformedBody };
       } catch (error) {
         clearTimeout(connectTimer);
         lastError = error;
-        const isConnectTimeout = connectCtrl.signal.aborted && error.name === "AbortError";
+
+        // A rung that expired before the first token is a RETRY, not a failure:
+        // advance to the next rung, or hand over to the fallback URL when the
+        // ladder is spent. Nothing about the account changed, so no breaker or
+        // quota state is touched here.
+        if (error?.ttftRungExhausted) {
+          if (step + 1 < ladderMs.length) {
+            log?.debug?.("TTFT", `${this.provider} rung ${step + 1}/${ladderMs.length} expired (${timeoutMs}ms) — retrying same account with ${ladderMs[step + 1]}ms`);
+            forceFreshSocketByUrl[urlIndex] = true;
+            if (ladderDelayMs > 0) await new Promise((resolve) => setTimeout(resolve, ladderDelayMs));
+            continue;
+          }
+          if (urlIndex + 1 < fallbackCount) {
+            log?.debug?.("TTFT", `${this.provider} ladder exhausted at ${url}, trying fallback ${urlIndex + 1}`);
+            continue outer;
+          }
+          throw error;
+        }
+        // `connectCtrl.abort(new Error("fetch connect timeout"))` (and proxyFetch's
+        // candidateCtrl) surface a plain `Error` (name === "Error"), whereas some
+        // mocks reject with `AbortError`. Gate on the signal itself — unless the
+        // caller's own signal aborted, which means the client cancelled.
+        const isConnectTimeout = connectCtrl.signal.aborted && !signal?.aborted;
         dbg("FETCH", `${this.provider.toUpperCase()} ✖ ${error.name}: ${error.message}${isConnectTimeout ? " (connect timeout)" : ""}`);
-        // Connect timeout is internal — convert to retryable network error, don't propagate AbortError
-        if (error.name === "AbortError" && !isConnectTimeout) throw error;
+        // Caller abort must propagate immediately regardless of abort reason.
+        if (signal?.aborted || (error.name === "AbortError" && !isConnectTimeout)) throw error;
+
+        // Ladder branch: headers never arrived within this rung and a rung is
+        // left. Retry the SAME url with the SAME credentials — this is the
+        // whole point of the feature, and the reason the generic connect-
+        // timeout fast-fail below is gated on `!ladder retried`.
+        // Nothing here touches account state, the breaker, or quota: a slow
+        // account is not a dead account.
+        if (isConnectTimeout && step + 1 < ladderMs.length) {
+          log?.debug?.("TTFT", `${this.provider} connect timeout at rung ${step + 1}/${ladderMs.length} (${timeoutMs}ms) — retrying same account with ${ladderMs[step + 1]}ms`);
+          // The keep-alive socket that just timed out is very likely dead.
+          forceFreshSocketByUrl[urlIndex] = true;
+          if (ladderDelayMs > 0) await new Promise((resolve) => setTimeout(resolve, ladderDelayMs));
+          continue;
+        }
 
         // A connect timeout means NO headers arrived within the budget. The
         // abort reason carries the exact message (AbortSignal.any propagates
@@ -207,14 +275,15 @@ export class BaseExecutor {
         if (!isFetchConnectTimeout && await tryRetry(urlIndex, HTTP_STATUS.BAD_GATEWAY, `network "${error.message}"`)) {
           forceFreshSocketByUrl[urlIndex] = true;
           urlIndex--;
-          continue;
+          continue outer;
         }
 
         if (urlIndex + 1 < fallbackCount) {
           log?.debug?.("RETRY", `Error on ${url}, trying fallback ${urlIndex + 1}`);
-          continue;
+          continue outer;
         }
         throw error;
+      }
       }
     }
 

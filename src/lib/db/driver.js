@@ -114,3 +114,21 @@ export function getAdapterSync() {
   if (!state.instance) throw new Error("[DB] adapter not initialized — await getAdapter() first");
   return state.instance;
 }
+
+/**
+ * Close the live adapter and clear the singleton so the next getAdapter()
+ * re-opens it. Needed on Windows: an open SQLite handle keeps the data
+ * directory locked, so a test (or a shutdown path) that deletes its temp
+ * DATA_DIR gets EPERM from rm() even though nothing is logically in use.
+ * Safe to call when no adapter was ever opened.
+ */
+export function closeAdapter() {
+  const adapter = state.instance;
+  state.instance = null;
+  state.initPromise = null;
+  try {
+    adapter?.close?.();
+  } catch {
+    // A driver that already dropped its handle must not block the reset.
+  }
+}

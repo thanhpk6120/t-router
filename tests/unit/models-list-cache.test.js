@@ -22,6 +22,9 @@ beforeAll(async () => {
 });
 
 afterAll(() => {
+  // Close first: an open SQLite handle keeps DATA_DIR locked on Windows, so
+  // rm() would fail with EPERM while the adapter is still live.
+  db?.closeAdapter?.();
   if (tempDir) fs.rmSync(tempDir, { recursive: true, force: true });
   if (originalDataDir === undefined) delete process.env.DATA_DIR;
   else process.env.DATA_DIR = originalDataDir;

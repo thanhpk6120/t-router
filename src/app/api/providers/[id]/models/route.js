@@ -7,10 +7,11 @@ import { fetchCompatibleProviderModels } from "@/lib/compatibleModels";
 import { GEMINI_CONFIG, ANTIGRAVITY_CONFIG, ZED_HOSTED_CONFIG } from "@/lib/oauth/constants/oauth";
 import { refreshGoogleToken, refreshCodexToken, updateProviderCredentials } from "@/sse/services/tokenRefresh";
 import { ANTIGRAVITY_IDE_BASE_URL, ANTIGRAVITY_IDE_USER_AGENT } from "open-sse/providers/shared.js";
-import { resolveOllamaLocalHost } from "open-sse/config/providers.js";
+import { resolveOllamaLocalHost, PROVIDER_MEDIA } from "open-sse/config/providers.js";
 import { getModelsByProviderId } from "open-sse/config/providerModels.js";
 import { resolveKiroModels } from "open-sse/services/kiroModels.js";
 import { resolveKimchiModels } from "open-sse/services/kimchiModels.js";
+import { resolveCommandCodeModels } from "open-sse/services/commandcodeModels.js";
 import { resolveQoderModels } from "open-sse/services/qoderModels.js";
 import { resolveGrokCliModels } from "open-sse/services/grokCliModels.js";
 import { resolveConnectionProxyConfig } from "@/lib/network/connectionProxy";
@@ -457,6 +458,20 @@ const PROVIDER_MODELS_CONFIG = {
     },
   },
 
+  // CommandCode publishes the catalog its own CLI polls. The registry's `models`
+  // array is only the offline fallback, so prefer the live list and say so when
+  // it is unreachable (the service returns null rather than throwing).
+  commandcode: {
+    customResolver: async () => {
+      const result = await resolveCommandCodeModels();
+      if (result?.models?.length) return { models: result.models };
+      return {
+        models: getStaticProviderModels("commandcode"),
+        warning: "CommandCode returned no live models; falling back to static catalog.",
+      };
+    },
+  },
+
   // Custom resolvers (non-OpenAI-shaped APIs / token-refresh flows)
   kiro: {
     customResolver: async (connection) => {
@@ -646,14 +661,13 @@ export async function GET(request, { params }) {
     if (!connection) {
       // No-auth providers own no connection rows, so the dashboard cannot pass a
       // connection id. Serve their REAL catalog when the upstream exposes one —
-      // OpenCode Zen publishes /v1/models and accepts the anonymous "public"
-      // credential (same credential the opencode2api gateway uses) — and fall
-      // back to the built-in list only when that is unavailable.
-      const ZEN_MODELS = {
-        opencode: "https://opencode.ai/zen/v1/models",
-        "opencode-go": "https://opencode.ai/zen/go/v1/models",
-      };
-      const zenUrl = ZEN_MODELS[id];
+      // OpenCode publishes /models and accepts the anonymous "public" credential
+      // (same credential the opencode2api gateway uses) — and fall back to the
+      // built-in list only when that is unavailable. The URL comes from the registry
+      // (modelsFetcher) instead of a local literal: the zen/ → inference/ migration
+      // (f3bb7d1) left a stale URL here that pointed at a dead host.
+      const ANON_CATALOG_PROVIDERS = new Set(["opencode", "opencode-go", "opencode-zen"]);
+      const zenUrl = ANON_CATALOG_PROVIDERS.has(id) ? PROVIDER_MEDIA[id]?.modelsFetcher?.url : null;
       if (zenUrl) {
         try {
           const res = await fetch(zenUrl, {

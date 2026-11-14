@@ -428,7 +428,11 @@ export async function POST(request) {
         }
 
         case "opencode-go": {
-          const res = await fetch("https://opencode.ai/zen/go/v1/chat/completions", {
+          // Read from the registry: the zen/go → inference/go migration (f3bb7d1)
+          // left this literal pointing at a dead host, so every key test 404'd.
+          const probeUrl = PROVIDERS["opencode-go"]?.baseUrl
+            || "https://opencode.ai/inference/go/openai/v1/chat/completions";
+          const res = await fetch(probeUrl, {
             method: "POST",
             headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}` },
             body: JSON.stringify({

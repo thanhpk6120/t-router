@@ -25,6 +25,11 @@ describe("Kiro external_idp (CLIProxyAPI) import and refresh", () => {
   });
 
   it("refreshes Microsoft external_idp tokens with form-encoded OAuth body", async () => {
+    // Import before stubbing: tokenRefresh.js pulls in open-sse/index.js, which
+    // installs its proxy-patched fetch on globalThis as a module side-effect.
+    // Stubbing first let that install win and the refresh hit the real network
+    // (ECONNRESET on the synthetic tenant id).
+    const { refreshKiroToken } = await import("../../open-sse/services/tokenRefresh.js");
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
       json: () => Promise.resolve({
@@ -35,7 +40,6 @@ describe("Kiro external_idp (CLIProxyAPI) import and refresh", () => {
     });
     global.fetch = fetchMock;
 
-    const { refreshKiroToken } = await import("../../open-sse/services/tokenRefresh.js");
     const result = await refreshKiroToken("old-refresh-token", {
       authMethod: "external_idp",
       clientId: TEST_CLIENT_ID,

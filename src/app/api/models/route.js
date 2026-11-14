@@ -95,12 +95,17 @@ export async function GET(request) {
       const key = `${m.providerAlias}/${m.id}`;
       const target = byRouted.get(key) || byFull.get(key);
       if (target) {
+        // Precedence: detected caps < legacy row caps < editor override. The
+        // override is what the user last saved, so it must be merged last —
+        // merging it first let a stale legacy `caps.vision: true` overwrite an
+        // override of `vision: false`, and the false was silently dropped.
+        // (The survivor branch below already spreads in this order.)
+        if (m.caps && Object.keys(m.caps).length > 0) {
+          target.caps = { ...target.caps, ...m.caps };
+        }
         const override = sanitizeModelCapsOverride(m.capsOverride);
         if (override && Object.keys(override).length > 0) {
           target.caps = { ...target.caps, ...override };
-        }
-        if (m.caps && Object.keys(m.caps).length > 0) {
-          target.caps = { ...target.caps, ...m.caps };
         }
         continue;
       }

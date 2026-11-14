@@ -82,12 +82,17 @@ describe("model picker uses the provider's live catalog", () => {
   });
 
   it("reads the live catalog per provider", () => {
-    expect(modal).toMatch(/const liveModels = liveCatalogs\[providerId\] \|\| \[\]/);
+    // Both catalog branches go through one resolver, so "not read" and "read and
+    // empty" stay distinguishable (see selectableModels.catalogFor).
+    expect(modal).toMatch(/const liveModels = catalogForProvider\(providerId\);/);
+    expect(modal).toContain("catalogForProvider");
   });
 
   it("keys its fetch effect on a stable signature, not the array prop", () => {
     // Depending on the array identity re-ran the fetch on every parent render.
-    expect(modal).toMatch(/\}, \[isOpen, signature, firstConnectionByProvider\]\);/);
+    expect(modal).toMatch(/\}, \[isOpen, signature\]\);/);
+    // ...and the signature is the derived string, not `activeProviders`.
+    expect(modal).not.toMatch(/\}, \[isOpen, activeProviders\]\);/);
   });
 });
 

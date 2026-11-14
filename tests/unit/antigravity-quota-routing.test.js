@@ -20,6 +20,9 @@ vi.mock("@/lib/network/connectionProxy", () => ({
 }));
 vi.mock("@/shared/constants/providers.js", () => ({
   FREE_PROVIDERS: {},
+  // providerNormalization.js (pulled in transitively by auth.js) resolves ids
+  // through AI_PROVIDERS, so the partial mock has to expose it or the import throws.
+  AI_PROVIDERS: {},
   resolveProviderId: (provider) => provider,
 }));
 vi.mock("open-sse/services/usage/google.js", () => ({

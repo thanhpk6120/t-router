@@ -19,6 +19,9 @@ export function useProviderSummary() {
   // Per-provider overrides. No-auth free providers own no connection rows, so
   // this is the only place their enabled/disabled state is visible.
   const [providerStrategies, setProviderStrategies] = useState({});
+  // Provider → effective proxy descriptor. Keyed only by providers that have a
+  // proxy in play; a missing key means direct, and the UI renders nothing.
+  const [effectiveProxies, setEffectiveProxies] = useState({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
@@ -31,6 +34,7 @@ export function useProviderSummary() {
         setStatsMap(data.stats || {});
         setBreakers(data.breakers || {});
         setProviderStrategies(data.providerStrategies || {});
+        setEffectiveProxies(data.effectiveProxies || {});
         setError(null);
       } else {
         setError(data.error || `HTTP ${res.status}`);
@@ -46,5 +50,5 @@ export function useProviderSummary() {
     refresh();
   }, [refresh]);
 
-  return { statsMap, setStatsMap, breakers, providerStrategies, setProviderStrategies, loading, error, refresh };
+  return { statsMap, setStatsMap, breakers, providerStrategies, setProviderStrategies, effectiveProxies, loading, error, refresh };
 }

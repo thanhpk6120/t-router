@@ -194,7 +194,7 @@ describe("undici keep-alive dead-socket protection & fresh-socket retry", () => 
     expect(fetchMock.mock.calls[0][1].dispatcher).toBe(freshDispatcher);
   });
 
-  it("BaseExecutor.execute sets forceFreshSocket=true when retrying after connect timeout or 502", async () => {
+  it("BaseExecutor.execute retries the same url on the fresh-socket dispatcher when a ladder rung times out", async () => {
     const fetchMock = vi.fn();
     vi.doMock("../../open-sse/utils/proxyFetch.js", () => ({ proxyAwareFetch: (...args) => fetchMock(...args) }));
 
@@ -220,11 +220,74 @@ describe("undici keep-alive dead-socket protection & fresh-socket retry", () => 
       body: { messages: [] },
       stream: true,
       credentials: { apiKey: "nvapi-key" },
+      // Two rungs (1s each) => the first times out and the second is retried.
+      // Without a ladder a connect timeout fails the attempt fast, so the retry
+      // this test pins only exists on the ladder path.
+      providerOverrides: { timeoutLadder: [1, 1] },
     });
 
     expect(out.response.status).toBe(200);
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(fetchMock.mock.calls[0][2]).toBeNull();
+    expect(fetchMock.mock.calls[1][2]).toEqual({ forceFreshSocket: true });
+  }, 10_000);
+
+  it("BaseExecutor.execute fails an attempt fast on connect timeout when no ladder is configured", async () => {
+    // Deliberate: retrying the same url after a connect timeout would burn a
+    // full budget per attempt (the 2026-11-02 tokenjuice signature). The combo /
+    // client layers do the retrying; the executor throws instead.
+    const fetchMock = vi.fn().mockImplementation((_url, opts) => new Promise((_resolve, reject) => {
+      opts.signal.addEventListener("abort", () => {
+        const err = new Error("fetch connect timeout");
+        err.name = "AbortError";
+        reject(err);
+      });
+    }));
+    vi.doMock("../../open-sse/utils/proxyFetch.js", () => ({ proxyAwareFetch: (...args) => fetchMock(...args) }));
+
+    const { BaseExecutor } = await import("../../open-sse/executors/base.js");
+    const ex = new BaseExecutor("nvidia", {
+      baseUrl: "https://integrate.api.nvidia.com/v1/chat/completions",
+      timeoutMs: 15,
+      retry: { 502: { attempts: 3, delayMs: 0 } },
+    });
+
+    await expect(ex.execute({
+      model: "deepseek-ai/deepseek-v4-flash",
+      body: { messages: [] },
+      stream: true,
+      credentials: { apiKey: "nvapi-key" },
+    })).rejects.toThrow(/fetch connect timeout/);
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  }, 10_000);
+
+  it("BaseExecutor.execute retries a 502 on the fresh-socket dispatcher", async () => {
+    const fetchMock = vi.fn();
+    vi.doMock("../../open-sse/utils/proxyFetch.js", () => ({ proxyAwareFetch: (...args) => fetchMock(...args) }));
+
+    const { BaseExecutor } = await import("../../open-sse/executors/base.js");
+    const ex = new BaseExecutor("nvidia", {
+      baseUrl: "https://integrate.api.nvidia.com/v1/chat/completions",
+      timeoutMs: 5_000,
+      retry: { 502: { attempts: 1, delayMs: 0 } },
+    });
+
+    fetchMock
+      .mockResolvedValueOnce({ status: 502, headers: { get: () => "text/html" } })
+      .mockResolvedValueOnce({ status: 200, headers: { get: () => "application/json" } });
+
+    const out = await ex.execute({
+      model: "deepseek-ai/deepseek-v4-flash",
+      body: { messages: [] },
+      stream: true,
+      credentials: { apiKey: "nvapi-key" },
+    });
+
+    // A 502 from an edge is a poisoned keep-alive socket, so the retry must not
+    // reuse the pooled connection.
+    expect(out.response.status).toBe(200);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(fetchMock.mock.calls[1][2]).toEqual({ forceFreshSocket: true });
   });
 

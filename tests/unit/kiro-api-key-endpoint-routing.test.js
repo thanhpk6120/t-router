@@ -36,10 +36,24 @@ describe("Kiro auth-aware endpoint routing", () => {
     ]);
   });
 
-  it("regionalizes AWS endpoints for IDC with Q first", () => {
+  it("keeps us-east-1 hosts when the requested region has no service surface", () => {
+    // eu-west-1 is not a covered region for any of the three hosts. Splicing it
+    // into the hostname would send the bearer token to a host that does not run
+    // the service, so the hosts stay on us-east-1 (the hardcoded baseUrls).
     expect(executor.getOrderedBaseUrls(credentials("idc", "eu-west-1"))).toEqual([
-      "https://q.eu-west-1.amazonaws.com/generateAssistantResponse",
-      "https://codewhisperer.eu-west-1.amazonaws.com/generateAssistantResponse",
+      Q,
+      CODEWHISPERER,
+      RUNTIME,
+    ]);
+  });
+
+  it("regionalizes only the AWS hosts, in the regions they actually run in", () => {
+    // eu-central-1 is covered for q but not for codewhisperer, so only q moves.
+    // runtime.*.kiro.dev is not an AWS host (regionalize skips anything outside
+    // amazonaws.com), so it stays on the hardcoded us-east-1 URL.
+    expect(executor.getOrderedBaseUrls(credentials("idc", "eu-central-1"))).toEqual([
+      "https://q.eu-central-1.amazonaws.com/generateAssistantResponse",
+      CODEWHISPERER,
       RUNTIME,
     ]);
   });

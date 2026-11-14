@@ -27,6 +27,7 @@ const DEFAULT_SETTINGS = {
   comboStrategy: "auto",
   comboStickyRoundRobinLimit: 1,
   comboStrategies: {},
+  comboOrder: [],
   // Per-combo member pins (P3-28): { [comboName]: { [member]: { id, label } | id } }
   comboMemberPins: {},
   comboMemberAttemptCap: 10,

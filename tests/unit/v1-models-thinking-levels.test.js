@@ -6,6 +6,9 @@ const db = vi.hoisted(() => ({
   getCombos: vi.fn(async () => []),
   getCustomModels: vi.fn(async () => []),
   getModelAliases: vi.fn(async () => ({})),
+  // v1/models pulls system-inject variants to stamp `inject_variants` on each row.
+  // The partial mock has to expose it or the whole route import throws.
+  getInjectVariants: vi.fn(async () => ({})),
 }));
 
 vi.mock("@/lib/localDb", () => db);

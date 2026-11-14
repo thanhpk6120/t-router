@@ -42,6 +42,99 @@ export const ALL_PROVIDERS = { ...OAUTH_PROVIDERS, ...FREE_PROVIDERS, ...FREE_TI
 const asArray = (value) => (Array.isArray(value) ? value : []);
 
 /**
+ * Bare model id: strip any `alias/` or `provider/model` namespace.
+ *
+ * Allowlists and catalogs are not uniform — an older install can hold
+ * "alias/model" in `enabledModels`, and some upstream catalogs publish
+ * namespaced ids. Comparing on the tail lets both forms resolve to the same
+ * model instead of silently dropping the row.
+ */
+export function bareModelId(value) {
+  if (typeof value !== "string") return "";
+  const slash = value.lastIndexOf("/");
+  return slash === -1 ? value : value.slice(slash + 1);
+}
+
+/**
+ * The allowlist the picker must honour, per provider.
+ *
+ * Only the FIRST active connection of a provider counts. That is the row the
+ * provider page edits (`connections.find(c => c.isActive !== false)`) and the
+ * row /v1/models publishes from, so reading any other one makes the picker
+ * disagree with both.
+ *
+ * Unioning every connection — including deactivated ones, and second accounts
+ * on the same provider — is what made the combo picker offer models the
+ * provider does not have active: those rows kept an old, wider list.
+ *
+ * A provider with no explicit selection yields no entry at all, which callers
+ * read as "publish everything", matching `/v1/models`.
+ *
+ * @param {Array} connections active connections (isActive !== false)
+ * @returns {Map<string, {ids: Set<string>}>}
+ */
+export function resolveAllowlistByProvider(connections) {
+  const primary = new Map();
+  for (const c of asArray(connections)) {
+    if (!c?.provider || c.isActive === false) continue;
+    if (!primary.has(c.provider)) primary.set(c.provider, c);
+  }
+  const out = new Map();
+  for (const [providerId, conn] of primary) {
+    const psd = conn.providerSpecificData || {};
+    const ids = Array.isArray(psd.enabledModels)
+      ? psd.enabledModels.filter((m) => typeof m === "string" && m)
+      : [];
+    // Flag first: an explicitly emptied allowlist stays authoritative.
+    const explicit = psd.enabledModelsExplicit === true || ids.length > 0;
+    if (!explicit) continue;
+    const set = new Set();
+    for (const id of ids) {
+      set.add(id);
+      const bare = bareModelId(id);
+      if (bare) set.add(bare);
+    }
+    out.set(providerId, { ids: set });
+  }
+  return out;
+}
+
+/**
+ * The set of model ids a provider was actually observed serving, or `null` when
+ * its catalog was never read.
+ *
+ * The distinction is load-bearing. "Asked and answered empty" is a fact — the
+ * provider serves nothing — and must not fall back to the static registry, or
+ * the registry's stale entries reappear in the picker. "Never read" (route in
+ * flight, request failed) is not a fact, and the fallback is correct there.
+ *
+ * @param {object} catalogs  providerId -> model rows (only non-empty answers)
+ * @param {Set<string>} resolved  providerIds the route answered for
+ * @param {string} providerId
+ * @returns {Set<string>|null}
+ */
+export function servedIdsFor(catalogs, resolved, providerId) {
+  if (!resolved || !resolved.has(providerId)) return null;
+  const set = new Set();
+  for (const m of asArray(catalogs?.[providerId])) {
+    if (!m?.id) continue;
+    set.add(m.id);
+    const bare = bareModelId(m.id);
+    if (bare) set.add(bare);
+  }
+  return set;
+}
+
+/**
+ * The provider's own catalog when it was read, else `null` so the caller can
+ * decide to fall back. See `servedIdsFor` for why empty != unknown.
+ */
+export function catalogFor(catalogs, resolved, providerId) {
+  if (!resolved || !resolved.has(providerId)) return null;
+  return asArray(catalogs?.[providerId]);
+}
+
+/**
  * Drop every model on a provider's denylist from the built groups.
  *
  * One implementation for the provider page and the model picker: the picker
@@ -88,6 +181,12 @@ export function filterDisabledModels(groups, disabledModels) {
  * @param {Array}  [input.customModels]   Rows from /api/models/custom
  * @param {object} [input.disabledModels] alias -> [modelId]
  * @param {object} [input.liveModels]     { cursor: [], cline: [], clinepass: [], zed: [] }
+ *   Also accepts any other providerId -> rows. A provider key present here has
+ *   been *read*: its list is authoritative even when empty.
+ * @param {Set<string>} [input.resolvedCatalogProviders] providerIds whose catalog
+ *   was successfully read. Defaults to the non-empty keys of `liveModels`, which
+ *   keeps older callers working. Pass it explicitly when an empty answer must be
+ *   distinguished from "never read" — see `servedIdsFor`.
  * @returns {Object<string, {name: string, alias: string, color: string, models: Array}>}
  */
 export function buildModelGroups({
@@ -99,6 +198,7 @@ export function buildModelGroups({
   customModels = [],
   disabledModels = {},
   liveModels = {},
+  resolvedCatalogProviders,
   providers = ALL_PROVIDERS,
 } = {}) {
   const filteredActiveProviders = asArray(connections);
@@ -116,6 +216,13 @@ export function buildModelGroups({
   const clineModels = asArray(live.cline);
   const clinepassModels = asArray(live.clinepass);
   const zedModels = asArray(live.zed);
+  // Providers whose catalog was actually read. A read that returned nothing is
+  // an answer ("serves nothing"), not a reason to fall back to the registry —
+  // that fallback is what put models the provider does not serve back into the
+  // picker.
+  const resolvedCatalogs = resolvedCatalogProviders instanceof Set
+    ? resolvedCatalogProviders
+    : new Set(Object.entries(live).filter(([, rows]) => asArray(rows).length > 0).map(([id]) => id));
 
   const groups = {};
 
@@ -167,6 +274,11 @@ export function buildModelGroups({
     ...noAuthIds,            // No-auth providers (kind-filtered)
     ...compatibleNodeIds,    // Compatible nodes with user-added models
   ].filter((id) => !deactivatedProviderIds.has(id)));
+
+  // What each provider actually serves = the allowlist on the primary active
+  // connection. Single source with the React picker (`resolveAllowlistByProvider`),
+  // so a change to the rule cannot land in one and not the other.
+  const allowByProvider = resolveAllowlistByProvider(filteredActiveProviders);
 
   // Sort by PROVIDER_ORDER
   const sortedProviderIds = [...providerIdsToShow].sort((a, b) => {
@@ -229,7 +341,10 @@ export function buildModelGroups({
         // LLM/null kind: merge hardcoded models (e.g. mimo-free → mimo-auto) with user-added models
         const registeredLlms = customRegisteredModels.filter((m) => !getModelKind(m) || getModelKind(m) === "llm");
         const seen = new Set([...aliasModels, ...registeredLlms].map((m) => m.value));
-        const hardcoded = getModelsByProviderId(providerId)
+        // The provider's own catalog when it was read; the registry only when it
+        // was not. `catalogFor` encodes that distinction.
+        const servedCatalog = catalogFor(live, resolvedCatalogs, providerId);
+        const hardcoded = (servedCatalog !== null ? servedCatalog : getModelsByProviderId(providerId))
           .filter((m) => !getModelKind(m) || getModelKind(m) === "llm")
           .map((m) => ({ id: m.id, name: m.name, value: `${alias}/${m.id}`, kind: getModelKind(m) }))
           .filter((m) => !seen.has(m.value));
@@ -278,7 +393,33 @@ export function buildModelGroups({
           isCustom: true,
         }));
       const seen = new Set(nodeModels.map((m) => m.value));
-      const mergedModels = [...nodeModels, ...registeredCustom.filter((m) => !seen.has(m.value))];
+      // The provider page renders the node's detected catalog; the picker must
+      // offer the same rows. `catalogFor` returns null only when the catalog was
+      // never read.
+      const servedNode = catalogFor(live, resolvedCatalogs, providerId);
+      const catalogRows = (servedNode || []).map((m) => ({
+        id: m.id,
+        name: m.name || m.id,
+        value: `${nodePrefix}/${m.id}`,
+      }));
+      const allowEntry = allowByProvider.get(providerId);
+      const servedSet = servedIdsFor(live, resolvedCatalogs, providerId);
+      // An allowlist entry is a selection, not proof the model exists: only ids
+      // the provider was seen serving become rows. A stale entry used to mint a
+      // chip the provider page did not show.
+      const allowModels = allowEntry && servedSet
+        ? [...allowEntry.ids].filter((id) => servedSet.has(id)).map((id) => ({
+          id,
+          name: id,
+          value: `${nodePrefix}/${id}`,
+        }))
+        : [];
+      const mergedModels = [...allowModels, ...catalogRows, ...nodeModels, ...registeredCustom]
+        .filter((m) => {
+          if (seen.has(m.value)) return false;
+          seen.add(m.value);
+          return !allowEntry || allowEntry.ids.has(m.id) || allowEntry.ids.has(bareModelId(m.value));
+        });
 
       // Always show compatible providers that are connected, even with no aliases.
       // When no aliases exist, show a placeholder so users know it's available.
@@ -298,9 +439,12 @@ export function buildModelGroups({
         hasModels: mergedModels.length > 0,
       };
     } else {
-      const liveModels = providerId === "cursor" ? cursorModels : providerId === "cline" ? clineModels : providerId === "clinepass" ? clinepassModels : providerId === "zed" ? zedModels : [];
-      const hardcodedModels = liveModels.length > 0
-        ? liveModels
+      // Any provider key in `liveModels` is a read catalog and wins, including
+      // an empty one. The four legacy keys stay for callers that still build
+      // that map by hand.
+      const liveForProvider = catalogFor(live, resolvedCatalogs, providerId);
+      const hardcodedModels = liveForProvider !== null
+        ? liveForProvider
         : getModelsByProviderId(providerId);
       const hardcodedIds = new Set(hardcodedModels.map((m) => m.id));
 
@@ -360,26 +504,19 @@ export function buildModelGroups({
   // Filter out disabled models per provider (disabled keyed by storage alias OR providerId)
   filterDisabledModels(groups, disabledModelsSafe);
 
-  // Filter by enabledModels if explicitly configured on any active connection for this provider
+  // Filter by enabledModels when explicitly configured on the primary active
+  // connection for this provider. `allowByProvider` above is the shared rule;
+  // this pass narrows to the selected ids so the picker always matches "Loaded
+  // models" on the provider page.
   Object.entries(groups).forEach(([providerId, group]) => {
-    const providerConns = filteredActiveProviders.filter((p) => p.provider === providerId);
-    const explicitEnabled = [];
-    for (const conn of providerConns) {
-      if (Array.isArray(conn.providerSpecificData?.enabledModels) && conn.providerSpecificData.enabledModels.length > 0) {
-        explicitEnabled.push(...conn.providerSpecificData.enabledModels);
-      }
-    }
-    if (explicitEnabled.length > 0) {
-      const enabledSet = new Set(explicitEnabled);
-      const alias = group.alias || getProviderAlias(providerId) || providerId;
-      group.models = group.models.filter((m) =>
-        enabledSet.has(m.id) ||
-        enabledSet.has(m.value) ||
-        enabledSet.has(`${alias}/${m.id}`) ||
-        (m.value && enabledSet.has(m.value.replace(`${alias}/`, "")))
-      );
-      if (group.models.length === 0) delete groups[providerId];
-    }
+    const allow = allowByProvider.get(providerId);
+    if (!allow) return;
+    group.models = group.models.filter((m) =>
+      allow.ids.has(m.id) ||
+      allow.ids.has(m.value) ||
+      allow.ids.has(bareModelId(m.value))
+    );
+    if (group.models.length === 0) delete groups[providerId];
   });
 
   return groups;

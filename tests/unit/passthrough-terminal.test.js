@@ -48,6 +48,25 @@ describe("passthrough flush terminal synthesis (t.11)", () => {
     expect(deltas).toBe(1);
   });
 
+  it("C4: Claude JSON with spaces around colons still detects tool_use", async () => {
+    const spaced = 'event: content_block_start\ndata: {"type": "content_block_start", "index": 0, "content_block": {"type": "tool_use", "id": "tu_2", "name": "read", "input": {}}}\n\n';
+    const out = await run([spaced], FORMATS.CLAUDE, FORMATS.CLAUDE);
+    expect(out).toContain('"stop_reason":"tool_use"');
+    expect(out).toContain("event: message_stop");
+  });
+
+  it("C5: Claude upstream sent message_delta before drop -> synthesize only message_stop", async () => {
+    const out = await run([
+      claudeEvent({ type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "hi" } }),
+      claudeEvent({ type: "message_delta", delta: { stop_reason: "end_turn" }, usage: { output_tokens: 42 } }),
+    ], FORMATS.CLAUDE, FORMATS.CLAUDE);
+    const deltas = (out.match(/event: message_delta/g) || []).length;
+    const stops = (out.match(/event: message_stop/g) || []).length;
+    expect(deltas).toBe(1);
+    expect(stops).toBe(1);
+    expect(out).toContain('"output_tokens":42');
+  });
+
   it("D: OpenAI upstream sends finish_reason normally -> untouched", async () => {
     const out = await run([
       openaiChunk({ tool_calls: [{ index: 0, id: "call_1", type: "function", function: { name: "read", arguments: "{}" } }] }),

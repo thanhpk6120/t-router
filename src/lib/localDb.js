@@ -7,7 +7,7 @@ export {
   createProviderConnection, updateProviderConnection,
   deleteProviderConnection, deleteProviderConnectionsByProvider,
   reorderProviderConnections, cleanupProviderConnections,
-  getApikeyConnectionNames,
+  getApikeyConnectionNames, getProviderConnectionProxyBindings,
   getProviderNodes, getProviderNodeById,
   createProviderNode, updateProviderNode, deleteProviderNode,
   normalizeRoutableMembers,
@@ -38,5 +38,5 @@ export {
   getKeyLimits, getAllKeyLimits, setKeyLimits, deleteKeyLimits, cleanKeyLimits,
   getMitmAlias, setMitmAliasAll,
   getPricing, getPricingForModel, updatePricing, resetPricing, resetAllPricing,
-  exportDb, importDb,
+  exportDb, importDb, closeAdapter,
 } from "@/lib/db/index.js";

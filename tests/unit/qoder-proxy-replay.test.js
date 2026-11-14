@@ -29,9 +29,13 @@ async function loadExecutor(fetchMock, useProxy = true) {
     vi.stubEnv(key, "");
   }
   if (useProxy) vi.stubEnv("HTTPS_PROXY", "http://proxy.test:3128");
+  // Import BEFORE stubbing: the executor pulls in open-sse/index.js, which
+  // installs its proxy-patched fetch on globalThis as a module side-effect.
+  // Stubbing first let that install overwrite the mock, so the request went to
+  // the real network and failed with "[ProxyFetch] All 1 proxies failed".
+  const { QoderExecutor } = await import("../../open-sse/executors/qoder.js");
   // Exercise the real proxyAwareFetch: it captures fetch when imported.
   vi.stubGlobal("fetch", fetchMock);
-  const { QoderExecutor } = await import("../../open-sse/executors/qoder.js");
   return new QoderExecutor();
 }
 
@@ -81,7 +85,14 @@ describe("Qoder signed inference transport", () => {
     expect(result.response.ok).toBe(true);
     await result.response.text();
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(!!fetchMock.mock.calls[0][1].dispatcher).toBe(useProxy);
+    const options = fetchMock.mock.calls[0][1];
+    // Both paths carry a dispatcher now: the direct path uses a keep-alive
+    // undici Agent (getDirectDispatcher) instead of undefined, so its sockets
+    // survive across requests and autoSelectFamily applies. The meaningful
+    // distinction is where the request was routed, i.e. _proxyUrl — the proxy
+    // URL when proxying, null on the direct path.
+    expect(options.dispatcher).toBeDefined();
+    expect(options._proxyUrl ?? null).toBe(useProxy ? "http://proxy.test:3128" : null);
   });
 
   it("preserves caller cancellation without replaying the request", async () => {

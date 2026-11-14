@@ -111,16 +111,19 @@ describe("buildStreamErrorBytes", () => {
 
 // The wiring, not just the frame builder: the watchdog must hand its reason to
 // onAbortTerminal and the bytes must reach a real consumer.
+//
+// Policy split (operator requirement): a stall BEFORE any output is a failure
+// and must deliver the error frame; a stall AFTER output already streamed is a
+// truncation and closes cleanly — the client keeps the tokens it rendered and
+// never sees a timeout error for a response that was in fact being produced.
 describe("stall abort through pipeWithDisconnect", () => {
-  it("delivers the error frame and closes the stream", async () => {
-    // Real controller: the stub above never fires its signal, and the abort
-    // must reach the upstream body for the pipe to end.
+  it("delivers the error frame when no output ever arrived", async () => {
     const ctrl = createStreamController({ provider: "ollama", model: "test" });
 
-    // Emits one chunk then goes silent; errors on abort like a real fetch body.
+    // Heartbeats only: the model never produced a token, so the request failed.
     const upstream = new ReadableStream({
       start(controller) {
-        controller.enqueue(new TextEncoder().encode("data: hi\n\n"));
+        controller.enqueue(new TextEncoder().encode(": keep-alive\n\n"));
         ctrl.signal.addEventListener("abort", () => controller.error(new Error("aborted")), { once: true });
       },
     });
@@ -138,5 +141,32 @@ describe("stall abort through pipeWithDisconnect", () => {
     expect(seen).toBe("stream stall timeout");
     expect(text).toContain('"stream stall timeout"');
     expect(text).toContain("data: [DONE]");
+  });
+
+  it("closes cleanly with no error frame once output has streamed", async () => {
+    const ctrl = createStreamController({ provider: "ollama", model: "test" });
+
+    const upstream = new ReadableStream({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode("data: hi\n\n"));
+        ctrl.signal.addEventListener("abort", () => controller.error(new Error("aborted")), { once: true });
+      },
+    });
+
+    let seen = null;
+    const out = pipeWithDisconnect(
+      { body: upstream },
+      new TransformStream(),
+      ctrl,
+      (message) => { seen = message; return buildStreamErrorBytes(504, message, FORMATS.OPENAI); },
+      50
+    );
+
+    const text = await readAll(out);
+    expect(text).toContain("data: hi");
+    // Success: no timeout frame, no [DONE] injected by the abort path.
+    expect(seen).toBe(null);
+    expect(text).not.toContain("stream stall timeout");
+    expect(ctrl.wasAborted?.() ?? true).toBeTruthy();
   });
 });

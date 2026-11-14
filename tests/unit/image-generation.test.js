@@ -317,7 +317,9 @@ describe("handleImageGenerationCore", () => {
     expect(responseBody.data[0].b64_json).toBeTruthy();
   });
 
-  it.each(["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"])("generates image with Codex %s-image using current Codex version header", async (model) => {
+  // f3bb7d1 dropped gpt-5.6-{sol,terra,luna}-image from the Codex registry: they are
+  // superseded by gpt-6-sol-image, which the shim maps onto the gpt-6-sol Responses host.
+  it("generates image with Codex gpt-6-sol-image using current Codex version header", async () => {
     global.fetch.mockResolvedValueOnce(
       new Response(
         [
@@ -340,7 +342,7 @@ describe("handleImageGenerationCore", () => {
         size: "1024x1024",
         output_format: "png",
       },
-      modelInfo: { provider: "codex", model: `${model}-image` },
+      modelInfo: { provider: "codex", model: "gpt-6-sol-image" },
       credentials: {
         accessToken: "codex-token",
         providerSpecificData: { chatgptAccountId: "account-123" },
@@ -414,7 +416,9 @@ describe("handleImageGenerationCore", () => {
       { type: "image_generation", output_format: "png", size: "1024x1024", action: "generate", model: "gpt-image-2.5" },
     ]);
     expect(requestBody.tool_choice).toEqual({ type: "image_generation" });
-    expect(requestBody.reasoning).toEqual({ effort: "medium", summary: "auto" });
+    // Codex sends reasoning: null so the Responses host picks its default instead of
+    // a Chat-shaped { effort, summary } pair the native Images path rejects.
+    expect(requestBody.reasoning).toBeNull();
 
     const responseBody = await result.response.json();
     expect(responseBody.data[0].b64_json).toBe("base64codeximage");

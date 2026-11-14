@@ -306,6 +306,9 @@ async function handleChatImpl(request, clientRawRequest = null, requestId = null
   // in comboDispatch.js (P4-33) — the same module the nested branch uses.
   const comboModels = await getComboModels(modelStr);
   if (comboModels) {
+    const comboClientRawRequest = clientRawRequest?.comboName
+      ? clientRawRequest
+      : { ...(clientRawRequest || {}), comboName: modelStr };
     return dispatchCombo({
       body,
       comboName: modelStr,
@@ -315,7 +318,7 @@ async function handleChatImpl(request, clientRawRequest = null, requestId = null
       keyAccess,
       requiredCapabilities,
       variants: await getInjectVariants().catch(() => ({})),
-      clientRawRequest,
+      clientRawRequest: comboClientRawRequest,
       request,
       log,
       sessionId,
@@ -437,7 +440,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
         requiredCapabilities: detectRequiredCapabilities(body),
         variants: await getInjectVariants().catch(() => ({})),
         variantFallbackName: injectModelName || modelStr,
-        clientRawRequest,
+        clientRawRequest: clientRawRequest?.comboName ? clientRawRequest : { ...(clientRawRequest || {}), comboName: modelStr },
         request,
         log,
         sessionId: nestedSession?.sessionId || null,

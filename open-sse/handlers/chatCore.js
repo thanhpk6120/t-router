@@ -16,6 +16,7 @@ import { trackPendingRequest, appendRequestLog, saveRequestDetail } from "@/lib/
 import { getExecutor } from "../executors/index.js";
 import { supportsGrokCliReasoningEffort } from "../config/grokCli.js";
 import { buildRequestDetail, extractRequestConfig } from "./chatCore/requestDetail.js";
+import { getResponseProxyInfo, getProxyFailureInfo } from "../utils/proxyProvenance.js";
 import { handleForcedSSEToJson } from "./chatCore/sseToJsonHandler.js";
 import { handleNonStreamingResponse } from "./chatCore/nonStreamingHandler.js";
 import { handleStreamingResponse, buildOnStreamComplete } from "./chatCore/streamingHandler.js";
@@ -406,6 +407,13 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
     proxyPool: credentials?.providerSpecificData?.proxyPool || null,
     proxyIntended: credentials?.providerSpecificData?.proxyIntended === true,
     candidateProxies: credentials?.providerSpecificData?.candidateProxies || null,
+    // Which upstream statuses rotate the pool (resolveProxyRotateStatuses owns
+    // the parsing + defaults). Also carried on the credential root by auth.js.
+    proxyRotateStatuses:
+      credentials?.providerSpecificData?.proxyRotateStatuses ||
+      credentials?.proxyRotateStatuses ||
+      null,
+    providerId: credentials?.providerId || provider,
   };
 
   if (proxyOptions.vercelRelayUrl) {
@@ -472,6 +480,10 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
       providerRequest: translatedBody || null,
       response: { error: error.message || String(error), status: error.name === "AbortError" ? 499 : 502, thinking: null },
       pxpipe: pxpipeSummary,
+      // Died inside the proxy layer itself (strict mode, or direct disabled):
+      // the fetch layer tagged the thrown Error, so this failure still says
+      // which path it never completed instead of reading "unknown".
+      proxy: getProxyFailureInfo(error),
       status: "error"
     })).catch(() => { });
 
@@ -539,6 +551,14 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
     }
   }
 
+  // Proxy provenance for this attempt, read off the upstream response that
+  // proxyAwareFetch tagged. Read here, before the error branches below, because
+  // a failed response still travelled over *some* path — an operator debugging a
+  // 502 needs to know whether it left via the proxy or over the real IP.
+  // Absent for executors that bypass proxyAwareFetch — in which case the detail
+  // record simply has no `proxy` field (unknown, not "direct").
+  const proxyInfo = getResponseProxyInfo(providerResponse) || null;
+
   // Provider returned error
   if (!providerResponse.ok) {
     trackPendingRequest(model, provider, connectionId, false, true);
@@ -552,6 +572,7 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
       providerRequest: finalBody || translatedBody || null,
       response: { error: message, status: statusCode, thinking: null },
       pxpipe: pxpipeSummary,
+      proxy: proxyInfo,
       status: "error"
     })).catch(() => { });
 
@@ -570,6 +591,7 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
   }
 
   const sharedCtx = { provider, model, body, stream, translatedBody, finalBody, requestStartTime, connectionId, apiKey, clientRawRequest, onRequestSuccess, pxpipe: pxpipeSummary, reqTag, log, requestId };
+  if (proxyInfo) sharedCtx.proxyInfo = proxyInfo;
   const appendLog = (extra) => appendRequestLog({ model, provider, connectionId, ...extra }).catch(() => { });
   const trackDone = () => trackPendingRequest(model, provider, connectionId, false);
 

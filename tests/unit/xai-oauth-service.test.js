@@ -64,7 +64,15 @@ describe("xai/oauth service", () => {
   });
 
   it("generates dashboard auth data with CLIProxyAPI PKCE size and discovered endpoints", async () => {
-    fetch.mockResolvedValueOnce({
+    // Import before stubbing: providers.js pulls in open-sse/index.js, which installs
+    // its proxy-patched fetch on globalThis as an import side-effect. Stubbing first
+    // would let that install overwrite the mock, and the discovery call would go to
+    // the real network (swallowed by discoverXaiEndpoints, silently falling back to
+    // the static authorizeUrl). Import first, then replace the global.
+    const { generateAuthData } = await import("../../src/lib/oauth/providers.js");
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    fetchMock.mockResolvedValueOnce({
       ok: true,
       json: async () => ({
         authorization_endpoint: "https://auth.x.ai/oauth2/authorize-from-discovery",
@@ -72,10 +80,10 @@ describe("xai/oauth service", () => {
       }),
     });
 
-    const { generateAuthData } = await import("../../src/lib/oauth/providers.js");
     const data = await generateAuthData("xai", "http://127.0.0.1:56121/callback");
     const parsed = new URL(data.authUrl);
 
+    expect(fetchMock.mock.calls[0][0]).toBe("https://auth.x.ai/.well-known/openid-configuration");
     expect(data.codeVerifier).toHaveLength(128);
     expect(parsed.origin + parsed.pathname).toBe("https://auth.x.ai/oauth2/authorize-from-discovery");
     expect(parsed.searchParams.get("redirect_uri")).toBe("http://127.0.0.1:56121/callback");
@@ -85,7 +93,10 @@ describe("xai/oauth service", () => {
   });
 
   it("exchanges dashboard codes against the discovered xAI token endpoint", async () => {
-    const fetchMock = fetch;
+    const { exchangeTokens } = await import("../../src/lib/oauth/providers.js");
+    // Same ordering rule as above: stub after the import side-effects have run.
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
     fetchMock
       .mockResolvedValueOnce({
         ok: true,
@@ -103,7 +114,6 @@ describe("xai/oauth service", () => {
         }),
       });
 
-    const { exchangeTokens } = await import("../../src/lib/oauth/providers.js");
     const tokens = await exchangeTokens(
       "xai",
       "auth-code",

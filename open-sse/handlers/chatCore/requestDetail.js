@@ -92,6 +92,11 @@ export function buildRequestDetail(base, overrides = {}) {
     providerResponse: base.providerResponse || null,
     response: base.response || {},
     pxpipe: base.pxpipe || undefined,
+    // Which proxy actually carried this request, resolved at the fetch layer
+    // (see getResponseProxyInfo) — not the configured intent. Omitted (absent,
+    // never `proxied: false`) when the response did not come through
+    // proxyAwareFetch, so a missing field reads "unknown", not "direct".
+    ...(base.proxy ? { proxy: base.proxy } : {}),
     status: base.status || "success",
     ...overrides
   };
@@ -120,7 +125,7 @@ export function formatDoneLine({ usage, latency }) {
   return parts.join(" · ");
 }
 
-export function saveUsageStats({ provider, model, tokens, connectionId, apiKey, endpoint, label = "USAGE", silent = false, requestId = null, latencyMs = null }) {
+export function saveUsageStats({ provider, model, tokens, connectionId, apiKey, endpoint, label = "USAGE", silent = false, requestId = null, latencyMs = null, proxy = null, combo = null }) {
   if (!tokens || typeof tokens !== "object") return;
 
   const inTokens = tokens.input_tokens ?? tokens.prompt_tokens ?? 0;
@@ -151,5 +156,7 @@ export function saveUsageStats({ provider, model, tokens, connectionId, apiKey, 
     endpoint: endpoint || null,
     requestId: requestId || undefined,
     latencyMs: Number.isFinite(latencyMs) ? Math.round(latencyMs) : undefined,
+    ...(proxy ? { proxy } : {}),
+    ...(combo ? { combo } : {}),
   }).catch(() => {});
 }

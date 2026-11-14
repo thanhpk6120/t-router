@@ -311,6 +311,61 @@ export async function bulkAssignProxyPool(provider, poolIds) {
   return rows.length;
 }
 
+// Per-provider proxy bindings, aggregated in SQL.
+//
+// The providers list needs to know, per provider, which proxy the *connections*
+// are pinned to — a connection-level `providerSpecificData.proxyPoolId` wins
+// over both the provider override and the rotation strategy (see auth.js:
+// `if (!connPoolId) { …provider override… }`), so a card that reported only
+// rotation would be lying about traffic that is actually pinned.
+//
+// Grouped in SQL rather than in JS on purpose: an install with tens of
+// thousands of connections must not ship 7MB of rows to the dashboard just to
+// read one field. `json_extract` on this exact path is already the established
+// pattern (see getBoundProxyPoolIds), and the proxyPoolId field is not one of
+// the encrypted ones, so the JSON is readable in place.
+//
+// Returns Map<provider, { active, byPool: Map<poolId|null, count>, legacy }>
+// where poolId null counts connections with no pool binding, and `legacy`
+// counts connections using the old connectionProxyUrl mechanism instead.
+export async function getProviderConnectionProxyBindings() {
+  const db = await getAdapter();
+  const rows = db.all(
+    `SELECT provider,
+            json_extract(data, '$.providerSpecificData.proxyPoolId') AS pid,
+            json_extract(data, '$.providerSpecificData.connectionProxyEnabled') AS legacyEnabled,
+            json_extract(data, '$.providerSpecificData.connectionProxyUrl') AS legacyUrl,
+            COUNT(*) AS n
+       FROM providerConnections
+      WHERE isActive = 1
+      GROUP BY provider, pid, legacyEnabled, legacyUrl`,
+  );
+
+  const out = new Map();
+  for (const row of rows) {
+    const provider = row.provider;
+    if (!provider) continue;
+    const entry = out.get(provider) || { active: 0, byPool: new Map(), legacy: 0 };
+    const n = Number(row.n) || 0;
+    entry.active += n;
+    // "__none__" is the explicit "no proxy" marker the UI writes when the
+    // operator unbinds a connection — treat it as unbound, not as a pool id.
+    // "direct" is kept verbatim: it is a real pool id, and the descriptor has to
+    // tell an explicit Direct pin apart from a pin to a pool that was deleted.
+    const pid = row.pid && row.pid !== "__none__" ? String(row.pid) : null;
+    if (pid) {
+      entry.byPool.set(pid, (entry.byPool.get(pid) || 0) + n);
+    } else if (row.legacyEnabled === 1 || row.legacyEnabled === true) {
+      if (row.legacyUrl) entry.legacy += n;
+      else entry.byPool.set(null, (entry.byPool.get(null) || 0) + n);
+    } else {
+      entry.byPool.set(null, (entry.byPool.get(null) || 0) + n);
+    }
+    out.set(provider, entry);
+  }
+  return out;
+}
+
 // Distinct proxy pool ids currently bound to any connection.
 export async function getBoundProxyPoolIds() {
   const db = await getAdapter();

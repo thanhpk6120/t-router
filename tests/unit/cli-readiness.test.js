@@ -117,7 +117,9 @@ describe("waitServerReady", () => {
 
 describe("serverNotReadyLines", () => {
   it("names the port, the wait, and the next steps", () => {
-    const text = serverNotReadyLines(20126, { timeoutMs: 15000 }).join("\n");
+    // Pin the platform: the default is os-specific, and the sibling test below
+    // covers win32. Without pinning, this asserted fuser on a Windows host.
+    const text = serverNotReadyLines(20126, { timeoutMs: 15000, platform: "linux" }).join("\n");
     expect(text).toContain("20126");
     expect(text).toContain("15s");
     expect(text).toContain("doctor --port 20126");
@@ -344,8 +346,13 @@ describe("createRestartBudget", () => {
 });
 
 // --- portCleanup -----------------------------------------------------------
+// The Linux assertions below drive real /proc + lsof + process.kill against a
+// spawned listener. On win32 those paths do not exist (isPortListeningLinux
+// always false, no /proc, PATH has no lsof), so the whole block is skipped
+// there rather than failing on a platform it was never written for.
+const linuxOnly = describe.skipIf(process.platform === "win32");
 
-describe("findListenerPidsLinux + isPortListeningLinux", () => {
+linuxOnly("findListenerPidsLinux + isPortListeningLinux", () => {
   it("finds a foreign listener PID and reports the port busy, then free", async () => {
     const port = await ephemeralPort();
     expect(isPortListeningLinux(port)).toBe(false);
@@ -357,7 +364,7 @@ describe("findListenerPidsLinux + isPortListeningLinux", () => {
   });
 });
 
-describe("killProcessOnPort", () => {
+linuxOnly("killProcessOnPort", () => {
   it("kills the listener via lsof when lsof exists", async () => {
     const port = await ephemeralPort();
     const child = spawnListener(port);
@@ -422,7 +429,7 @@ describe("killProcessOnPort", () => {
   });
 });
 
-describe("waitPortFree", () => {
+linuxOnly("waitPortFree", () => {
   it("returns true immediately for a free port, false for a busy one", async () => {
     const port = await ephemeralPort();
     expect(waitPortFree(port, 500)).toBe(true);

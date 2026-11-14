@@ -5,6 +5,7 @@ import Card from "@/shared/components/Card";
 import Button from "@/shared/components/Button";
 import Drawer from "@/shared/components/Drawer";
 import Pagination from "@/shared/components/Pagination";
+import ProxyBadge, { ProxyFallbackBadge, ProxyBlockedBadge } from "@/shared/components/ProxyBadge";
 import { cn } from "@/shared/utils/cn";
 import { AI_PROVIDERS, getProviderByAlias } from "@/shared/constants/providers";
 import { getInputTokens, getOutputTokens, getCachedTokens, getCacheCreationTokens } from "./tokenDisplay";
@@ -151,6 +152,14 @@ export default function RequestDetailsTab() {
     setIsDrawerOpen(true);
   };
 
+  // The Proxy column only earns its width when at least one row on this page
+  // is proxied (or was blocked by proxy policy). An always-present column of
+  // blanks trains the eye to ignore it, which is exactly what the per-row
+  // badge rule exists to avoid.
+  const showProxyColumn = details.some(
+    (d) => d.proxy && (d.proxy.proxied || d.proxy.fallbackDirect || d.proxy.strictProxy || d.proxy.directDisabled),
+  );
+
   const handlePageChange = (newPage) => {
     setPagination(prev => ({ ...prev, page: newPage }));
   };
@@ -233,12 +242,15 @@ export default function RequestDetailsTab() {
 
       <Card padding="none">
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[880px]">
+          <table className={`w-full ${showProxyColumn ? "min-w-[1040px]" : "min-w-[880px]"}`}>
             <thead>
               <tr className="border-b border-black/5 dark:border-white/5">
                 <th className="text-left p-4 text-sm font-semibold text-text-main">Timestamp</th>
                 <th className="text-left p-4 text-sm font-semibold text-text-main">Model</th>
                 <th className="text-left p-4 text-sm font-semibold text-text-main">Provider</th>
+                {showProxyColumn && (
+                  <th className="text-left p-4 text-sm font-semibold text-text-main">Proxy</th>
+                )}
                 <th className="text-right p-4 text-sm font-semibold text-text-main">Input Tokens</th>
                 <th className="text-right p-4 text-sm font-semibold text-text-main">Cached</th>
                 <th className="text-right p-4 text-sm font-semibold text-text-main">Cache Creation</th>
@@ -250,7 +262,7 @@ export default function RequestDetailsTab() {
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan="7" className="p-8 text-center text-text-muted">
+                  <td colSpan={showProxyColumn ? 10 : 9} className="p-8 text-center text-text-muted">
                     <div className="flex items-center justify-center gap-2">
                       <span className="material-symbols-outlined animate-spin text-[20px]">progress_activity</span>
                       Loading...
@@ -259,7 +271,7 @@ export default function RequestDetailsTab() {
                 </tr>
               ) : details.length === 0 ? (
                 <tr>
-                  <td colSpan="7" className="p-8 text-center text-text-muted">
+                  <td colSpan={showProxyColumn ? 10 : 9} className="p-8 text-center text-text-muted">
                     No request details found
                   </td>
                 </tr>
@@ -280,6 +292,16 @@ export default function RequestDetailsTab() {
                          {getProviderName(detail.provider, providerNameCache)}
                        </span>
                      </td>
+                    {showProxyColumn && (
+                      <td className="max-w-[200px] p-4 text-sm text-text-main">
+                        {/* Nothing at all when the request went direct — an
+                            always-present "direct" chip makes a real proxy
+                            indistinguishable from the default. */}
+                        <ProxyBadge descriptor={detail.proxy} />
+                        <ProxyFallbackBadge descriptor={detail.proxy} />
+                        <ProxyBlockedBadge descriptor={detail.proxy} />
+                      </td>
+                    )}
                     <td className="p-4 text-sm text-text-main text-right font-mono">
                       {getInputTokens(detail.tokens).toLocaleString()}
                     </td>
@@ -395,6 +417,38 @@ export default function RequestDetailsTab() {
                   {getOutputTokens(selectedDetail.tokens).toLocaleString()}
                 </span>
               </div>
+              {selectedDetail.proxy
+                && (selectedDetail.proxy.proxied
+                  || selectedDetail.proxy.fallbackDirect
+                  || selectedDetail.proxy.strictProxy
+                  || selectedDetail.proxy.directDisabled) && (
+                <div className="sm:col-span-2">
+                  <span className="text-text-muted">Proxy:</span>{" "}
+                  {selectedDetail.proxy.proxied ? (
+                    <span className="text-text-main font-medium">
+                      {selectedDetail.proxy.poolName || selectedDetail.proxy.poolId || "proxy"}
+                      {selectedDetail.proxy.host ? (
+                        <span className="font-mono text-text-muted"> — {selectedDetail.proxy.host}</span>
+                      ) : null}
+                      {selectedDetail.proxy.rotateLink ? (
+                        <span className="text-text-muted"> · rotating exit IP</span>
+                      ) : null}
+                      {selectedDetail.proxy.attempts > 1 ? (
+                        <span className="text-text-muted"> · attempt {selectedDetail.proxy.attempts} (earlier proxies failed)</span>
+                      ) : null}
+                    </span>
+                  ) : (
+                    <span className="text-amber-600 dark:text-amber-400 font-medium">
+                      {selectedDetail.proxy.strictProxy || selectedDetail.proxy.directDisabled
+                        ? "blocked — request refused by proxy policy"
+                        : "direct — proxy failed"}
+                      {selectedDetail.proxy.reason ? (
+                        <span className="font-mono text-text-muted"> ({selectedDetail.proxy.reason})</span>
+                      ) : null}
+                    </span>
+                  )}
+                </div>
+              )}
             </div>
 
             {selectedDetail.pxpipe && (

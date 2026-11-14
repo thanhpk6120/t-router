@@ -15,21 +15,22 @@ const rotateState = new Map(); // providerId → { index }
  * random:      uniform random pick
  * none/single: return first entry
  */
-export function pickProxyPoolId(poolIds, strategy, providerId, allPools = null) {
-  if (!poolIds || poolIds.length === 0) return null;
-  if (poolIds.length === 1) return poolIds[0];
+function rotationTargetIds(poolIds, allPools = null) {
+  if (!poolIds || poolIds.length === 0) return [];
+  if (!Array.isArray(allPools) || allPools.length === 0) return poolIds;
 
   // In mixed mode: prioritize picking rotating proxies first
-  let targetIds = poolIds;
-  if (Array.isArray(allPools) && allPools.length > 0) {
-    const rotatingIds = poolIds.filter((id) => {
-      const p = allPools.find((item) => item?.id === id);
-      return Boolean(p?.rotateLink || p?.rotateUrl);
-    });
-    if (rotatingIds.length > 0) {
-      targetIds = rotatingIds;
-    }
-  }
+  const rotatingIds = poolIds.filter((id) => {
+    const p = allPools.find((item) => item?.id === id);
+    return Boolean(p?.rotateLink || p?.rotateUrl);
+  });
+  return rotatingIds.length > 0 ? rotatingIds : poolIds;
+}
+
+export function pickProxyPoolId(poolIds, strategy, providerId, allPools = null) {
+  const targetIds = rotationTargetIds(poolIds, allPools);
+  if (targetIds.length === 0) return null;
+  if (targetIds.length === 1) return targetIds[0];
 
   if (strategy === "round-robin") {
     const state = rotateState.get(providerId) || { index: -1 };
@@ -46,6 +47,37 @@ export function pickProxyPoolId(poolIds, strategy, providerId, allPools = null) 
     return targetIds[0];
   }
   return targetIds[0]; // "none" or unknown
+}
+
+/**
+ * Restart this provider's rotation cycle: the next pick starts again at the
+ * head of the pool.
+ *
+ * Called when a request that had failed on every proxy succeeded on the
+ * second pass — the pool is healthy, so the cursor must not stay parked on the
+ * position that walked into the failure.
+ */
+export function resetProxyRotation(providerId) {
+  if (!providerId) return;
+  rotateState.delete(providerId);
+}
+
+/**
+ * Same ordering as pickProxyPoolId, but non-mutating: it reports the pool the
+ * NEXT request would go to without advancing the rotation cursor. Used by the
+ * dashboard preview — a read-only view must never shift live traffic.
+ */
+export function peekProxyPoolId(poolIds, strategy, providerId, allPools = null) {
+  const targetIds = rotationTargetIds(poolIds, allPools);
+  if (targetIds.length === 0) return null;
+  if (targetIds.length === 1) return targetIds[0];
+
+  if (strategy === "round-robin") {
+    const state = rotateState.get(providerId) || { index: -1 };
+    return targetIds[(state.index + 1) % targetIds.length];
+  }
+  // random: the next pick is genuinely unknown — report the head of the list
+  return targetIds[0];
 }
 
 function buildCandidateProxies(primaryPool, otherPools = [], proxySource = "both") {

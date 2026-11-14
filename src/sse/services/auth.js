@@ -187,11 +187,17 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
         providerProxyPoolIds: override.proxyPoolIds || null,
         proxySource: override.proxySource || "both",
       });
+      // Rotate-on-status policy rides along with the candidate pool: the status
+      // list is meaningless without the pool it applies to, and proxyFetch needs
+      // both to decide when to advance.
+      const proxyRotateStatuses = override.proxyRotateStatuses || null;
       return {
         id: "noauth",
         connectionName: "Public",
         isActive: true,
         accessToken: "public",
+        proxyRotateStatuses,
+        providerId,
         connectionProxyEnabled: resolvedProxy.connectionProxyEnabled,
         connectionProxyUrl: resolvedProxy.connectionProxyUrl,
         connectionNoProxy: resolvedProxy.connectionNoProxy,
@@ -218,6 +224,7 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
           proxyIntended: resolvedProxy.proxyIntended,
           candidateProxies: resolvedProxy.candidateProxies,
           rotateLink: resolvedProxy.proxyPool?.rotateLink || resolvedProxy.proxyPool?.rotateUrl || "",
+          proxyRotateStatuses,
         },
       };
     }
@@ -527,6 +534,10 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
       projectId: connection.projectId,
       connectionName: connection.displayName || connection.name || connection.email || connection.id,
       copilotToken: connection.providerSpecificData?.copilotToken,
+      // Rotate-on-status policy travels with the candidate pool (see the no-auth
+      // branch above): proxyFetch needs both to know when to advance.
+      proxyRotateStatuses: providerOverride.proxyRotateStatuses || null,
+      providerId,
       connectionProxyEnabled: resolvedProxy.connectionProxyEnabled,
       connectionProxyUrl: resolvedProxy.connectionProxyUrl,
       connectionNoProxy: resolvedProxy.connectionNoProxy,
@@ -554,6 +565,7 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
         proxyIntended: resolvedProxy.proxyIntended,
         candidateProxies: resolvedProxy.candidateProxies,
         rotateLink: resolvedProxy.proxyPool?.rotateLink || resolvedProxy.proxyPool?.rotateUrl || "",
+        proxyRotateStatuses: providerOverride.proxyRotateStatuses || null,
       },
       connectionId: connection.id,
       // Include current status for optimization check

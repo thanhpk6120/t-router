@@ -6,6 +6,7 @@ import Card from "./Card";
 import Select from "./Select";
 import Badge from "./Badge";
 import Toggle from "./Toggle";
+import { DEFAULT_PROXY_ROTATE_STATUSES, resolveProxyRotateStatuses } from "open-sse/config/proxyRotateStatuses.js";
 const NONE_PROXY_POOL_VALUE = "__none__";
 const STRATEGIES = [
   { value: "none", label: "None (single pool)" },
@@ -37,6 +38,9 @@ export default function NoAuthProxyCard({ providerId, isNoAuth = false }) {
   const [rotateStrategy, setRotateStrategy] = useState("none");
   const [selectedPoolIds, setSelectedPoolIds] = useState([]);
   const [proxySource, setProxySource] = useState("both");
+  const [rotateStatusesInput, setRotateStatusesInput] = useState(
+    DEFAULT_PROXY_ROTATE_STATUSES.join(", ")
+  );
   const [poolSearch, setPoolSearch] = useState("");
   const [pickerOpen, setPickerOpen] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -59,12 +63,18 @@ export default function NoAuthProxyCard({ providerId, isNoAuth = false }) {
       setRotateStrategy(override.rotateStrategy || "none");
       setSelectedPoolIds(Array.isArray(override.proxyPoolIds) ? override.proxyPoolIds : []);
       setProxySource(override.proxySource || "both");
+      setRotateStatusesInput(
+        (Array.isArray(override.proxyRotateStatuses) && override.proxyRotateStatuses.length > 0
+          ? override.proxyRotateStatuses
+          : DEFAULT_PROXY_ROTATE_STATUSES
+        ).join(", ")
+      );
       setProviderActive(override.isActive !== false && override.disabled !== true);
     }).catch(() => {});
     return () => { cancelled = true; };
   }, [providerId]);
 
-  const save = useCallback(async (poolId, strategy, poolIds, source = proxySource) => {
+  const save = useCallback(async (poolId, strategy, poolIds, source = proxySource, statusesInput = rotateStatusesInput) => {
     setSaving(true);
     try {
       const res = await fetch("/api/settings", { cache: "no-store" });
@@ -79,6 +89,15 @@ export default function NoAuthProxyCard({ providerId, isNoAuth = false }) {
       else delete override.proxyPoolIds;
       if (source && source !== "both") override.proxySource = source;
       else delete override.proxySource;
+      // Store the normalized list only when it differs from the default, so an
+      // untouched control leaves no key behind and a future default change
+      // reaches this provider automatically.
+      const normalizedStatuses = resolveProxyRotateStatuses(statusesInput);
+      const isDefaultStatuses =
+        normalizedStatuses.length === DEFAULT_PROXY_ROTATE_STATUSES.length &&
+        normalizedStatuses.every((s, i) => s === DEFAULT_PROXY_ROTATE_STATUSES[i]);
+      if (isDefaultStatuses) delete override.proxyRotateStatuses;
+      else override.proxyRotateStatuses = normalizedStatuses;
       const updated = { ...current };
       if (Object.keys(override).length === 0) delete updated[providerId];
       else updated[providerId] = override;
@@ -94,7 +113,7 @@ export default function NoAuthProxyCard({ providerId, isNoAuth = false }) {
     } finally {
       setSaving(false);
     }
-  }, [providerId, proxySource]);
+  }, [providerId, proxySource, rotateStatusesInput]);
 
   const handleToggleActive = async (val) => {
     setProviderActive(val);
@@ -138,6 +157,14 @@ export default function NoAuthProxyCard({ providerId, isNoAuth = false }) {
     setRotateStrategy(newStrategy);
     if (newStrategy !== "none") setPickerOpen(true);
     save(proxyPoolId, newStrategy, selectedPoolIds, proxySource);
+  };
+
+  // Commit on blur, not on every keystroke: "429," is a transient state that
+  // would otherwise normalize to [429] and save a half-typed list.
+  const handleStatusesCommit = () => {
+    const normalized = resolveProxyRotateStatuses(rotateStatusesInput);
+    setRotateStatusesInput(normalized.join(", "));
+    save(proxyPoolId, rotateStrategy, selectedPoolIds, proxySource, normalized);
   };
 
   const applySelection = (ids) => {
@@ -199,13 +226,42 @@ export default function NoAuthProxyCard({ providerId, isNoAuth = false }) {
   // Which proxy this provider actually uses right now, and what the outside
   // world sees through it. A per-connection pool overrides this setting, so the
   // summary is explicit about the level it describes.
+  //
+  // Precedence mirrors getProviderCredentials (src/sse/services/auth.js): an
+  // explicit pool in the selector wins, and rotation is only consulted when the
+  // selector is empty. Getting this backwards paints a rotating badge over a
+  // request that is in fact pinned to one pool.
   const activePools = proxyPools.filter((p) => p && p.id !== "direct" && p.proxyUrl && p.proxyUrl !== "direct");
+  const sourceFilteredPools = activePools.filter((p) => {
+    const hasRotate = Boolean(p.rotateLink || p.rotateUrl);
+    if (proxySource === "rotating") return hasRotate;
+    if (proxySource === "static") return !hasRotate;
+    return true;
+  });
   const rotationPools = (selectedPoolIds.length > 0
-    ? activePools.filter((p) => selectedPoolIds.includes(p.id))
-    : activePools);
-  const effectivePool = isRotation ? (rotationPools[0] || null) : (selectedPool || null);
-  const effectiveLabel = isRotation
-    ? `Rotation (${rotateStrategy}) over ${rotationPools.length} pool${rotationPools.length === 1 ? "" : "s"}: ${rotationPools.map((p) => p.name).join(", ") || "none"}`
+    ? sourceFilteredPools.filter((p) => selectedPoolIds.includes(p.id))
+    : sourceFilteredPools);
+  const explicitPool = proxyPoolId && proxyPoolId !== NONE_PROXY_POOL_VALUE ? selectedPool : null;
+  const isExplicitDirect = Boolean(explicitPool && (explicitPool.id === "direct" || explicitPool.proxyUrl === "direct"));
+  const effectivePool = isExplicitDirect ? null : (explicitPool || (isRotation ? (rotationPools[0] || null) : null));
+  const usesRotation = !explicitPool && isRotation;
+  // Rotation supersedes the pool selector: the Select below still reads
+  // "None (direct)" while every request is in fact proxied, which is exactly
+  // the misreading this line exists to prevent. Name the pools the rotation
+  // actually covers, not the ones the list happens to start with.
+  const rotatingFirst = (() => {
+    const list = [...rotationPools];
+    return list.sort((a, b) => {
+      const aRot = Boolean(a.rotateLink || a.rotateUrl);
+      const bRot = Boolean(b.rotateLink || b.rotateUrl);
+      if (aRot && !bRot) return -1;
+      if (!aRot && bRot) return 1;
+      return 0;
+    });
+  })();
+  const isProxied = Boolean(effectivePool);
+  const effectiveLabel = usesRotation
+    ? `Rotation (${rotateStrategy}) over ${rotatingFirst.length} pool${rotatingFirst.length === 1 ? "" : "s"}: ${rotatingFirst.map((p) => p.name).join(", ") || "none"}`
     : effectivePool
       ? `${effectivePool.name} — ${maskProxyUrl(effectivePool.proxyUrl)}`
       : "Direct (no proxy)";
@@ -235,11 +291,16 @@ export default function NoAuthProxyCard({ providerId, isNoAuth = false }) {
 
       {/* Effective proxy: what this provider will actually use, and the exit IP
           that proves it. Per-connection pools (Connections → Proxy) override it. */}
-      <div className="mb-4 rounded-lg border border-border-subtle bg-black/[0.02] p-2.5 dark:bg-white/[0.02]">
+      <div className={`mb-4 rounded-lg border p-2.5 ${isProxied ? "border-sky-500/30 bg-sky-500/5" : "border-border-subtle bg-black/[0.02] dark:bg-white/[0.02]"}`}>
         <div className="flex min-w-0 flex-wrap items-center gap-2">
-          <span className="material-symbols-outlined text-[16px] text-text-muted">route</span>
+          <span className={`material-symbols-outlined text-[16px] ${isProxied ? "text-sky-500" : "text-text-muted"}`}>route</span>
           <span className="text-[11px] font-medium uppercase tracking-wide text-text-muted">Effective</span>
           <span className="min-w-0 flex-1 truncate text-xs text-text-main" title={effectiveLabel}>{effectiveLabel}</span>
+          {isProxied && (
+            <span className="shrink-0 rounded bg-sky-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-sky-600 dark:text-sky-400">
+              PROXIED
+            </span>
+          )}
           {effectivePool && (
             <button
               type="button"
@@ -268,7 +329,7 @@ export default function NoAuthProxyCard({ providerId, isNoAuth = false }) {
         label="Proxy Pool"
         value={proxyPoolId}
         onChange={(e) => handlePoolChange(e.target.value)}
-        disabled={saving || isRotation}
+        disabled={saving}
         options={[
           { value: NONE_PROXY_POOL_VALUE, label: "None (direct)" },
           ...proxyPools.map((pool) => ({
@@ -276,7 +337,13 @@ export default function NoAuthProxyCard({ providerId, isNoAuth = false }) {
             label: `${pool.name}${pool.id === "direct" ? " [Direct / No Proxy]" : ""}${pool.rotateLink || pool.rotateUrl ? " [🔄 Rotating IP]" : ""}`,
           })),
         ]}
-        hint={isRotation ? (selectedPoolIds.length > 0 ? "Rotating through the selected pools." : "Pool selector is ignored when rotation is active — all active pools are used.") : undefined}
+        hint={explicitPool && !isExplicitDirect
+          ? `This pool is pinned — requests go through it, not through the rotation. Clear the selector (None) to let "Rotation Strategy" take over.`
+          : isExplicitDirect
+            ? `Pinned to Direct — requests bypass proxy pools and rotation. Clear the selector (None) to let "Rotation Strategy" take over.`
+            : isRotation
+              ? `Ignored while rotation is active — requests go through ${rotationPools.length > 0 ? `${rotationPools.length} rotation pool${rotationPools.length === 1 ? "" : "s"}` : "no pool (rotation has no usable pool selected)"}, not "Direct". Set Rotation Strategy back to "None (single pool)" to use this selector.`
+              : undefined}
       />
       {selectedPool && (selectedPool.rotateLink || selectedPool.rotateUrl) && !isRotation && (
         <div className="flex items-center justify-between gap-2 mt-2 p-2 rounded-lg bg-sky-500/5 border border-sky-500/20 text-xs">
@@ -331,6 +398,28 @@ export default function NoAuthProxyCard({ providerId, isNoAuth = false }) {
                 : "Uses the selected pool above. Set to Round-robin, Random, or Fallback to rotate across active pools."}
         </p>
       </div>
+      {isRotation && (
+        <div className="flex flex-col gap-2 mt-4">
+          <label className="text-sm font-medium text-text-main">Rotate on status</label>
+          <input
+            value={rotateStatusesInput}
+            onChange={(e) => setRotateStatusesInput(e.target.value)}
+            onBlur={handleStatusesCommit}
+            onKeyDown={(e) => { if (e.key === "Enter") { e.currentTarget.blur(); } }}
+            disabled={saving}
+            placeholder={DEFAULT_PROXY_ROTATE_STATUSES.join(", ")}
+            spellCheck={false}
+            className="py-2 px-3 text-sm text-text-main bg-white dark:bg-white/5 border border-black/10 dark:border-white/10 rounded-md focus:ring-1 focus:ring-primary/30 focus:border-primary/50 focus:outline-none transition-all disabled:opacity-50 font-mono"
+          />
+          <p className="text-xs text-text-muted">
+            HTTP statuses that rotate the proxy and move to the next one. Comma-separated.
+            Defaults to {DEFAULT_PROXY_ROTATE_STATUSES.join(", ")} — those describe a spent exit IP.
+            A 400/404/422 is the request being wrong, so rotating on it only burns healthy proxies.
+            After every proxy fails, the rotated ones get one more pass; only then is the last error returned.
+          </p>
+        </div>
+      )}
+
       {isRotation && (
         <div className="flex flex-col gap-2 mt-4">
           <label className="text-sm font-medium text-text-main">Proxy Source</label>

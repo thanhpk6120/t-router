@@ -90,10 +90,13 @@ describe("opencodeTlsClient", () => {
     const fetchMock = vi.fn().mockImplementation(async () => new Response("ok", { status: 200 }));
     createSessionMock.mockResolvedValue({ fetch: fetchMock, close: vi.fn() });
 
+    // The option is `proxyUrl` (wreq-js pins one proxy per session, so the cache
+    // is keyed by it). An old `proxy` key would be ignored and every call would
+    // land on the direct session.
     const { opencodeTlsFetch } = await import("../../open-sse/services/opencodeTlsClient.js");
-    await opencodeTlsFetch("https://opencode.ai/a", {}, { proxy: "http://127.0.0.1:8080" });
-    await opencodeTlsFetch("https://opencode.ai/b", {}, { proxy: "http://127.0.0.1:8080" });
-    await opencodeTlsFetch("https://opencode.ai/c", {}, { proxy: "http://127.0.0.1:9090" });
+    await opencodeTlsFetch("https://opencode.ai/a", {}, { proxyUrl: "http://127.0.0.1:8080" });
+    await opencodeTlsFetch("https://opencode.ai/b", {}, { proxyUrl: "http://127.0.0.1:8080" });
+    await opencodeTlsFetch("https://opencode.ai/c", {}, { proxyUrl: "http://127.0.0.1:9090" });
 
     // 2 sessions: one for port 8080, one for port 9090
     expect(createSessionMock).toHaveBeenCalledTimes(2);

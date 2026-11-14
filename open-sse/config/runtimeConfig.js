@@ -104,6 +104,25 @@ export const FETCH_CONNECT_TIMEOUT_MS = envMs("FETCH_CONNECT_TIMEOUT_MS", 60 * 1
 // (headers only). Env: TOTAL_REQUEST_TIMEOUT_MS.
 export const TOTAL_REQUEST_TIMEOUT_MS = envMs("TOTAL_REQUEST_TIMEOUT_MS", 30 * 60 * 1000);
 
+// Per-provider TTFT timeout ladder (docs/resilience/per-provider-timeout-ladder.md).
+// The ladder replaces the single FETCH_CONNECT_TIMEOUT_MS wait with a sequence of
+// shorter waits against the SAME account/URL: each rung that expires is retried
+// immediately with the next rung. It bounds headers only — never a flowing stream.
+//
+// Hard cap per rung. Equal to FETCH_CONNECT_TIMEOUT_MS on purpose: a rung longer
+// than COMBO_FIRST_RESPONSE_TIMEOUT_MS (also 60s) would be aborted by the combo's
+// own member budget before the ladder could climb, so the setting would silently
+// do nothing. Env: TTFT_TIMEOUT_MAX_MS.
+export const TTFT_TIMEOUT_MAX_MS = envMs("TTFT_TIMEOUT_MAX_MS", 60 * 1000);
+
+// Hard cap on rung count. 6 rungs x 60s worst case = 360s pre-stream, which sits
+// under STREAM_STALL_TIMEOUT_MS and far under TOTAL_REQUEST_TIMEOUT_MS.
+export const TTFT_LADDER_MAX_LEN = 6;
+
+// Pause between ladder attempts. Deliberately not a UI field: a new socket is
+// opened each time, so a long pause only adds latency. Env: TTFT_RETRY_DELAY_MS.
+export const TTFT_RETRY_DELAY_MS = envMsAllowZero("TTFT_RETRY_DELAY_MS", 250);
+
 // Gemini native TTS fetch timeout: abort if Google does not return response headers in time.
 export const GEMINI_NATIVE_TTS_FETCH_TIMEOUT_MS = envMs("GEMINI_NATIVE_TTS_FETCH_TIMEOUT_MS", 45 * 1000);
 
