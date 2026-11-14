@@ -228,6 +228,7 @@ export async function handleForcedSSEToJson({ providerResponse, sourceFormat, ta
     provider, model, connectionId,
     request: extractRequestConfig(body, stream),
     providerRequest: finalBody || translatedBody || null,
+    combo: clientRawRequest?.comboName || null,
     proxy: proxyInfo
   };
 

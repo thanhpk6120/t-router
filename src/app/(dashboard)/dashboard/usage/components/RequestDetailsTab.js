@@ -284,8 +284,16 @@ export default function RequestDetailsTab() {
                     <td className="whitespace-nowrap p-4 text-sm text-text-main">
                       {new Date(detail.timestamp).toLocaleString()}
                     </td>
-                    <td className="max-w-[260px] truncate p-4 font-mono text-sm text-text-main">
-                      {detail.model}
+                    <td className="max-w-[260px] p-4 text-sm text-text-main">
+                      <div className="truncate font-mono" title={detail.model}>{detail.model}</div>
+                      {detail.combo && (
+                        <span
+                          className="mt-0.5 inline-flex max-w-[160px] items-center truncate rounded bg-brand-500/10 px-1.5 py-px font-mono text-[10px] font-medium leading-tight text-brand-600 dark:text-brand-300"
+                          title={`Combo: ${detail.combo}`}
+                        >
+                          {detail.combo}
+                        </span>
+                      )}
                     </td>
                     <td className="max-w-[180px] truncate p-4 text-sm text-text-main">
                        <span className="font-medium">
@@ -297,9 +305,9 @@ export default function RequestDetailsTab() {
                         {/* Nothing at all when the request went direct — an
                             always-present "direct" chip makes a real proxy
                             indistinguishable from the default. */}
-                        <ProxyBadge descriptor={detail.proxy} />
-                        <ProxyFallbackBadge descriptor={detail.proxy} />
-                        <ProxyBlockedBadge descriptor={detail.proxy} />
+                        <ProxyBadge descriptor={detail.proxy} compact />
+                        <ProxyFallbackBadge descriptor={detail.proxy} compact />
+                        <ProxyBlockedBadge descriptor={detail.proxy} compact />
                       </td>
                     )}
                     <td className="p-4 text-sm text-text-main text-right font-mono">
@@ -374,6 +382,12 @@ export default function RequestDetailsTab() {
                 <span className="text-text-muted">Model:</span>{" "}
                 <span className="text-text-main font-mono">{selectedDetail.model}</span>
               </div>
+              {selectedDetail.combo && (
+                <div>
+                  <span className="text-text-muted">Combo:</span>{" "}
+                  <span className="font-mono text-text-main">{selectedDetail.combo}</span>
+                </div>
+              )}
               <div>
                 <span className="text-text-muted">Status:</span>{" "}
                 <span className={cn(

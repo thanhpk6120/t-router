@@ -483,6 +483,7 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
       // Died inside the proxy layer itself (strict mode, or direct disabled):
       // the fetch layer tagged the thrown Error, so this failure still says
       // which path it never completed instead of reading "unknown".
+      combo: clientRawRequest?.comboName || null,
       proxy: getProxyFailureInfo(error),
       status: "error"
     })).catch(() => { });
@@ -572,6 +573,7 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
       providerRequest: finalBody || translatedBody || null,
       response: { error: message, status: statusCode, thinking: null },
       pxpipe: pxpipeSummary,
+      combo: clientRawRequest?.comboName || null,
       proxy: proxyInfo,
       status: "error"
     })).catch(() => { });

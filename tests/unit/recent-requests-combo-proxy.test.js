@@ -99,17 +99,26 @@ describe("Recent Requests combo & proxy persistence", () => {
     assertRows(afterRestart.recentRequests);
   });
 
-  it("chatCore handlers and UsageStats UI wire proxy + combo cleanly", () => {
+  it("chatCore handlers, requestDetails, and UsageStats/ProxyBadge UI wire proxy + combo compactly without icons", () => {
     const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
     const usageStatsSrc = fs.readFileSync(path.join(repoRoot, "src/shared/components/UsageStats.js"), "utf8");
+    const proxyBadgeSrc = fs.readFileSync(path.join(repoRoot, "src/shared/components/ProxyBadge.js"), "utf8");
+    const requestDetailsTabSrc = fs.readFileSync(path.join(repoRoot, "src/app/(dashboard)/dashboard/usage/components/RequestDetailsTab.js"), "utf8");
     const chatSrc = fs.readFileSync(path.join(repoRoot, "src/sse/handlers/chat.js"), "utf8");
     const reqDetailSrc = fs.readFileSync(path.join(repoRoot, "open-sse/handlers/chatCore/requestDetail.js"), "utf8");
+    const reqDetailRepoSrc = fs.readFileSync(path.join(repoRoot, "src/lib/db/repos/requestDetailsRepo.js"), "utf8");
 
-    expect(usageStatsSrc).toContain("ProxyBadge");
-    expect(usageStatsSrc).toContain("ProxyFallbackBadge");
-    expect(usageStatsSrc).toContain("ProxyBlockedBadge");
+    expect(usageStatsSrc).toContain("ProxyBadge descriptor={r.proxy} compact");
+    expect(usageStatsSrc).toContain("ProxyFallbackBadge descriptor={r.proxy} compact");
+    expect(usageStatsSrc).toContain("ProxyBlockedBadge descriptor={r.proxy} compact");
     expect(usageStatsSrc).toContain("r.combo");
+    expect(usageStatsSrc).not.toContain(">layers<");
+    expect(proxyBadgeSrc).not.toContain("material-symbols-outlined");
+    expect(requestDetailsTabSrc).toContain("detail.combo");
+    expect(requestDetailsTabSrc).toContain("ProxyBadge descriptor={detail.proxy} compact");
     expect(chatSrc).toContain("comboName: modelStr");
     expect(reqDetailSrc).toContain("proxy = null, combo = null");
+    expect(reqDetailSrc).toContain("...(base.combo ? { combo: base.combo } : {})");
+    expect(reqDetailRepoSrc).toContain("...(item.combo ? { combo: item.combo } : {})");
   });
 });

@@ -22,7 +22,7 @@ function shortHost(host) {
     .replace(/^socks[45]?:\/\//, "");
 }
 
-export default function ProxyBadge({ descriptor, size = "sm", showHost = true, className = "" }) {
+export default function ProxyBadge({ descriptor, size = "sm", showHost = true, compact = false, className = "" }) {
   if (!descriptor?.proxied) return null;
 
   const label = descriptor.poolName || descriptor.poolId || "proxy";
@@ -47,16 +47,24 @@ export default function ProxyBadge({ descriptor, size = "sm", showHost = true, c
     if (descriptor.unboundCount) titleParts.push(`${descriptor.unboundCount} unbound`);
   }
 
+  const text = host && showHost ? host : label;
+  const title = titleParts.join(" · ");
+
+  if (compact) {
+    return (
+      <span
+        className={`inline-flex max-w-[160px] min-w-0 items-center truncate rounded bg-blue-500/10 px-1.5 py-px font-mono text-[10px] font-medium leading-tight text-blue-600 dark:text-blue-400 ${className}`.trim()}
+        title={title}
+      >
+        {text}
+      </span>
+    );
+  }
+
   return (
-    <span className={className} title={titleParts.join(" · ")}>
+    <span className={className} title={title}>
       <Badge variant="info" size={size}>
-        <span className="flex items-center gap-1">
-          <span className="material-symbols-outlined text-[12px]">lan</span>
-          {host && showHost ? host : label}
-          {descriptor.rotateLink && (
-            <span className="material-symbols-outlined text-[12px]">sync</span>
-          )}
-        </span>
+        <span className="truncate font-mono">{text}</span>
       </Badge>
     </span>
   );
@@ -80,6 +88,7 @@ ProxyBadge.propTypes = {
   }),
   size: PropTypes.oneOf(["sm", "md", "lg"]),
   showHost: PropTypes.bool,
+  compact: PropTypes.bool,
   className: PropTypes.string,
 };
 
@@ -88,15 +97,23 @@ ProxyBadge.propTypes = {
  * purpose: this is the one case the operator must see even though no proxy was
  * used, because it means a configured proxy did NOT protect the request.
  */
-export function ProxyFallbackBadge({ descriptor, className = "" }) {
+export function ProxyFallbackBadge({ descriptor, compact = false, className = "" }) {
   if (!descriptor?.fallbackDirect) return null;
+  const title = descriptor.reason ? `All proxies failed: ${descriptor.reason}` : "All proxies failed";
+  if (compact) {
+    return (
+      <span
+        className={`inline-flex max-w-full min-w-0 items-center truncate rounded bg-yellow-500/10 px-1.5 py-px text-[10px] font-medium leading-tight text-yellow-600 dark:text-yellow-400 ${className}`.trim()}
+        title={title}
+      >
+        direct (proxy failed)
+      </span>
+    );
+  }
   return (
-    <span className={className} title={descriptor.reason ? `All proxies failed: ${descriptor.reason}` : "All proxies failed"}>
+    <span className={className} title={title}>
       <Badge variant="warning" size="sm">
-        <span className="flex items-center gap-1">
-          <span className="material-symbols-outlined text-[12px]">warning</span>
-          direct (proxy failed)
-        </span>
+        direct (proxy failed)
       </Badge>
     </span>
   );
@@ -107,6 +124,7 @@ ProxyFallbackBadge.propTypes = {
     fallbackDirect: PropTypes.bool,
     reason: PropTypes.string,
   }),
+  compact: PropTypes.bool,
   className: PropTypes.string,
 };
 
@@ -116,17 +134,25 @@ ProxyFallbackBadge.propTypes = {
  * ProxyFallbackBadge this is a request the operator configured to be *blocked*,
  * and seeing it here is how they learn their proxy pool is down.
  */
-export function ProxyBlockedBadge({ descriptor, className = "" }) {
+export function ProxyBlockedBadge({ descriptor, compact = false, className = "" }) {
   if (!descriptor || descriptor.proxied) return null;
   if (!descriptor.strictProxy && !descriptor.directDisabled) return null;
   const why = descriptor.strictProxy ? "strict proxy" : "direct disabled";
+  const title = descriptor.reason ? `Request blocked (${why}): ${descriptor.reason}` : `Request blocked (${why})`;
+  if (compact) {
+    return (
+      <span
+        className={`inline-flex max-w-full min-w-0 items-center truncate rounded bg-red-500/10 px-1.5 py-px text-[10px] font-medium leading-tight text-red-600 dark:text-red-400 ${className}`.trim()}
+        title={title}
+      >
+        blocked (proxy failed)
+      </span>
+    );
+  }
   return (
-    <span className={className} title={descriptor.reason ? `Request blocked (${why}): ${descriptor.reason}` : `Request blocked (${why})`}>
+    <span className={className} title={title}>
       <Badge variant="error" size="sm">
-        <span className="flex items-center gap-1">
-          <span className="material-symbols-outlined text-[12px]">block</span>
-          blocked (proxy failed)
-        </span>
+        blocked (proxy failed)
       </Badge>
     </span>
   );
@@ -139,6 +165,7 @@ ProxyBlockedBadge.propTypes = {
     directDisabled: PropTypes.bool,
     reason: PropTypes.string,
   }),
+  compact: PropTypes.bool,
   className: PropTypes.string,
 };
 
@@ -151,20 +178,26 @@ ProxyBlockedBadge.propTypes = {
  * operator believes it is proxied. Silent IP leak is exactly the failure a proxy
  * badge exists to surface, so this renders even though `proxied` is false.
  */
-export function ProxyMissingBadge({ descriptor, className = "" }) {
+export function ProxyMissingBadge({ descriptor, compact = false, className = "" }) {
   if (!descriptor?.poolMissing) return null;
+  const title = descriptor.reason
+    ? `Not proxied: ${descriptor.reason}`
+    : "Connections are pinned to a proxy pool that is missing or inactive";
+  const label = descriptor.poolName ? `${descriptor.poolName} (missing)` : "proxy missing";
+  if (compact) {
+    return (
+      <span
+        className={`inline-flex max-w-full min-w-0 items-center truncate rounded bg-red-500/10 px-1.5 py-px text-[10px] font-medium leading-tight text-red-600 dark:text-red-400 ${className}`.trim()}
+        title={title}
+      >
+        {label}
+      </span>
+    );
+  }
   return (
-    <span
-      className={className}
-      title={descriptor.reason
-        ? `Not proxied: ${descriptor.reason}`
-        : "Connections are pinned to a proxy pool that is missing or inactive"}
-    >
+    <span className={className} title={title}>
       <Badge variant="error" size="sm">
-        <span className="flex items-center gap-1">
-          <span className="material-symbols-outlined text-[12px]">link_off</span>
-          {descriptor.poolName ? `${descriptor.poolName} (missing)` : "proxy missing"}
-        </span>
+        {label}
       </Badge>
     </span>
   );
@@ -176,5 +209,6 @@ ProxyMissingBadge.propTypes = {
     poolName: PropTypes.string,
     reason: PropTypes.string,
   }),
+  compact: PropTypes.bool,
   className: PropTypes.string,
 };

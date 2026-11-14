@@ -110,6 +110,7 @@ export async function handleStreamingResponse({ providerResponse, provider, mode
     providerResponse: "[Streaming - raw response not captured]",
     response: { content: "[Streaming in progress...]", thinking: null, type: "streaming" },
     pxpipe,
+    combo: clientRawRequest?.comboName || null,
     proxy: proxyInfo,
     status: "success"
   }, { id: streamDetailId })).catch(err => {
@@ -148,6 +149,7 @@ export function buildOnStreamComplete({ provider, model, connectionId, apiKey, r
       providerResponse: safeContent,
       response: { content: safeContent, thinking: safeThinking, type: "streaming" },
       pxpipe,
+      combo: clientRawRequest?.comboName || null,
       proxy: proxyInfo,
       status: "success"
     }, { id: streamDetailId })).catch(err => {

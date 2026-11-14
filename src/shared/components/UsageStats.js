@@ -122,35 +122,33 @@ function RecentRequests({ requests = [], providerNames = {} }) {
                 const providerName = resolveRecentProvider(r.provider, providerNames);
                 return (
                   <tr key={i} className="hover:bg-bg-subtle transition-colors">
-                    <td className="py-1.5">
+                    <td className="py-1">
                       <span className={`block w-1.5 h-1.5 rounded-full ${ok ? "bg-success" : "bg-error"}`} />
                     </td>
-                    <td className="py-1.5 max-w-0 w-full">
+                    <td className="py-1 max-w-0 w-full">
                       <div className="font-mono truncate" title={r.model}>{r.model}</div>
-                      <div className="mt-0.5 flex flex-wrap items-center gap-1.5 text-[11px] leading-tight text-text-muted min-w-0">
+                      <div className="mt-0.5 flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[11px] leading-tight text-text-muted min-w-0">
                         <span className="truncate" title={providerName}>{providerName}</span>
                         {r.combo && (
-                          <span className="inline-flex max-w-full min-w-0 shrink-0" title={`Combo: ${r.combo}`}>
-                            <Badge variant="primary" size="sm">
-                              <span className="flex items-center gap-1 max-w-[140px]">
-                                <span className="material-symbols-outlined text-[12px] shrink-0">layers</span>
-                                <span className="truncate font-mono">{r.combo}</span>
-                              </span>
-                            </Badge>
+                          <span
+                            className="inline-flex max-w-[140px] min-w-0 items-center truncate rounded bg-brand-500/10 px-1.5 py-px font-mono text-[10px] font-medium leading-tight text-brand-600 dark:text-brand-300"
+                            title={`Combo: ${r.combo}`}
+                          >
+                            {r.combo}
                           </span>
                         )}
-                        <ProxyBadge descriptor={r.proxy} />
-                        <ProxyFallbackBadge descriptor={r.proxy} />
-                        <ProxyBlockedBadge descriptor={r.proxy} />
+                        <ProxyBadge descriptor={r.proxy} compact />
+                        <ProxyFallbackBadge descriptor={r.proxy} compact />
+                        <ProxyBlockedBadge descriptor={r.proxy} compact />
                       </div>
                     </td>
-                    <td className="py-1.5 pr-2 text-right whitespace-nowrap">
+                    <td className="py-1 pr-2 text-right whitespace-nowrap">
                       <span className="text-primary">{fmt(r.promptTokens)}↑</span>
                       {" "}
                       <span className="text-success">{fmt(r.completionTokens)}↓</span>
                     </td>
-                    <td className="py-1.5 px-2 border-l border-border/50 text-right whitespace-nowrap font-mono">{r.latencyMs != null ? fmtMs(r.latencyMs) : "—"}</td>
-                    <td className="py-1.5 text-right text-text-muted whitespace-nowrap"><TimeAgo timestamp={r.timestamp} /></td>
+                    <td className="py-1 px-2 border-l border-border/50 text-right whitespace-nowrap font-mono">{r.latencyMs != null ? fmtMs(r.latencyMs) : "—"}</td>
+                    <td className="py-1 text-right text-text-muted whitespace-nowrap"><TimeAgo timestamp={r.timestamp} /></td>
                   </tr>
                 );
               })}

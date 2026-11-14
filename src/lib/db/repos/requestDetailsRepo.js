@@ -112,6 +112,7 @@ async function flushToDatabase() {
             // Proxy provenance is tiny and bounded (pool id/name + masked host),
             // so it is stored verbatim — never truncated, or the usage page
             // would lose the one field it exists to show.
+            ...(item.combo ? { combo: item.combo } : {}),
             ...(item.proxy ? { proxy: item.proxy } : {}),
             request: truncateField(item.request, config.maxJsonSize),
             providerRequest: truncateField(item.providerRequest, config.maxJsonSize),

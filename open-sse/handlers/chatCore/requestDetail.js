@@ -96,6 +96,7 @@ export function buildRequestDetail(base, overrides = {}) {
     // (see getResponseProxyInfo) — not the configured intent. Omitted (absent,
     // never `proxied: false`) when the response did not come through
     // proxyAwareFetch, so a missing field reads "unknown", not "direct".
+    ...(base.combo ? { combo: base.combo } : {}),
     ...(base.proxy ? { proxy: base.proxy } : {}),
     status: base.status || "success",
     ...overrides

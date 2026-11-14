@@ -5,6 +5,15 @@ Upstream changelogs (`CHANGELOG.md` and `CHANGELOG-PRO.md`) are kept intact for 
 
 ---
 
+## 0.5.119-pro.26-t.10 (2026-11-14)
+
+### Compact combo & proxy display in Usage views
+
+- **Icon-free compact badges** (`src/shared/components/ProxyBadge.js`, `src/shared/components/UsageStats.js`): removed `layers`, `lan`, `sync`, `warning`, `block`, and `link_off` icons from combo/proxy chips, added a `compact` mode for tight inline rendering so both `combo` and `proxy` fit cleanly on one sub-line in `Recent Requests`, and tightened row vertical padding.
+- **Combo & proxy in Request Details** (`open-sse/handlers/chatCore/requestDetail.js`, `open-sse/handlers/chatCore.js`, `open-sse/handlers/chatCore/streamingHandler.js`, `open-sse/handlers/chatCore/nonStreamingHandler.js`, `open-sse/handlers/chatCore/sseToJsonHandler.js`, `src/lib/db/repos/requestDetailsRepo.js`, `src/app/(dashboard)/dashboard/usage/components/RequestDetailsTab.js`): persisted `combo` alongside `proxy` in `requestDetails` and rendered both compactly in the Request Details table and drawer.
+
+---
+
 ## 0.5.119-pro.26-t.9 (2026-11-14)
 
 ### Combo & Vision Adapter reorder reliability

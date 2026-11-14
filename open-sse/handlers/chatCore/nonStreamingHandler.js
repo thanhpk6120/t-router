@@ -397,6 +397,7 @@ export async function handleNonStreamingResponse({ providerResponse, provider, m
       finish_reason: translatedResponse?.choices?.[0]?.finish_reason || "unknown"
     },
     pxpipe,
+    combo: clientRawRequest?.comboName || null,
     proxy: proxyInfo,
     status: "success"
   }, { endpoint: clientRawRequest?.endpoint || null, ...(requestId ? { id: requestId } : {}) })).catch(err => {
