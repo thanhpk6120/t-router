@@ -5,6 +5,16 @@ Upstream changelogs (`CHANGELOG.md` and `CHANGELOG-PRO.md`) are kept intact for 
 
 ---
 
+## 0.5.119-pro.26-t.8 (2026-11-14)
+
+### Combo & Vision Adapter reorder reliability
+
+- **Combo reorder queue & error reporting** (`src/app/(dashboard)/dashboard/combos/page.js`, `src/app/api/combos/reorder/route.js`): surfaced real HTTP/server error details instead of swallowing non-OK responses, reset per-attempt failure state across queued drags, kept the save lock held across `fetchData()` rollbacks while flushing any drags queued during revert, and returned `400` on malformed JSON bodies.
+- **Vision Adapter hidden-key preservation & rollback** (`src/app/(dashboard)/dashboard/combos/page.js`): preserved non-displayed `capacityAdapter` keys (`pdf`, `videoInput`) when normalizing and saving pool updates, and reverted client state via `fetchData()` when all queued saves fail.
+- **Delete cleanup & SQLite integration tests** (`src/app/api/combos/[id]/route.js`, `tests/unit/combo-reorder-integration.test.js`): pruned deleted combo IDs from `settings.comboOrder` on `DELETE /api/combos/[id]` and added end-to-end SQLite + `dashboardGuard` + UI contract tests.
+
+---
+
 ## 0.5.119-pro.26-t.7 (2026-11-14)
 
 ### Combos & Vision Adapter drag-and-drop ordering

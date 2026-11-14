@@ -3,7 +3,7 @@ import { updateSettings } from "@/lib/localDb";
 
 export async function POST(request) {
   try {
-    const body = await request.json();
+    const body = await request.json().catch(() => null);
     const { comboIds } = body || {};
     if (!Array.isArray(comboIds)) {
       return NextResponse.json({ error: "comboIds must be an array" }, { status: 400 });

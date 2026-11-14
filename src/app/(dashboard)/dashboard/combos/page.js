@@ -183,7 +183,7 @@ export default function CombosPage() {
       setComboStrategies(settingsData.comboStrategies || {});
       setComboMemberPins(settingsData.comboMemberPins || {});
       const rawAdapter = settingsData.capacityAdapter || {};
-      const normalized = {};
+      const normalized = { ...rawAdapter };
       for (const cap of CAPACITY_ADAPTER_CAPS) {
         normalized[cap.key] = normalizeCapEntry(rawAdapter[cap.key]);
       }
@@ -205,25 +205,39 @@ export default function CombosPage() {
     if (ref.busy) return;
     ref.busy = true;
     (async () => {
-      while (ref.pending) {
-        const payload = ref.pending;
-        ref.pending = null;
-        setAdapterSaveState("saving");
-        try {
-          const res = await fetch("/api/settings", {
-            method: "PATCH",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ capacityAdapter: payload }),
-          });
-          if (!res.ok) throw new Error("save failed");
-          setAdapterSaveState("saved");
-        } catch (error) {
-          console.log("Error updating capacity adapter:", error);
-          setAdapterSaveState("error");
-          notify.error("Failed to save Vision Adapter settings");
+      try {
+        while (ref.pending) {
+          let lastError = null;
+          while (ref.pending) {
+            const payload = ref.pending;
+            ref.pending = null;
+            lastError = null;
+            setAdapterSaveState("saving");
+            try {
+              const res = await fetch("/api/settings", {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ capacityAdapter: payload }),
+              });
+              if (!res.ok) {
+                const errData = await res.json().catch(() => ({}));
+                throw new Error(errData.error || `HTTP ${res.status}`);
+              }
+              setAdapterSaveState("saved");
+            } catch (error) {
+              console.log("Error updating capacity adapter:", error);
+              lastError = error?.message || "save failed";
+              setAdapterSaveState("error");
+            }
+          }
+          if (lastError && !ref.pending) {
+            notify.error(`Failed to save Vision Adapter settings (${lastError})`);
+            await fetchData();
+          }
         }
+      } finally {
+        ref.busy = false;
       }
-      ref.busy = false;
     })();
   };
 
@@ -242,26 +256,35 @@ export default function CombosPage() {
     if (ref.busy) return;
     ref.busy = true;
     (async () => {
-      let failed = false;
-      while (ref.pending) {
-        const comboIds = ref.pending;
-        ref.pending = null;
-        try {
-          const res = await fetch("/api/combos/reorder", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ comboIds }),
-          });
-          if (!res.ok) throw new Error("reorder failed");
-        } catch (error) {
-          console.log("Error reordering combos:", error);
-          failed = true;
+      try {
+        while (ref.pending) {
+          let lastError = null;
+          while (ref.pending) {
+            const comboIds = ref.pending;
+            ref.pending = null;
+            lastError = null;
+            try {
+              const res = await fetch("/api/combos/reorder", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ comboIds }),
+              });
+              if (!res.ok) {
+                const errData = await res.json().catch(() => ({}));
+                throw new Error(errData.error || `HTTP ${res.status}`);
+              }
+            } catch (error) {
+              console.log("Error reordering combos:", error);
+              lastError = error?.message || "reorder failed";
+            }
+          }
+          if (lastError && !ref.pending) {
+            notify.error(`Failed to save combo order (${lastError})`);
+            await fetchData();
+          }
         }
-      }
-      ref.busy = false;
-      if (failed) {
-        notify.error("Failed to save combo order");
-        await fetchData();
+      } finally {
+        ref.busy = false;
       }
     })();
   };

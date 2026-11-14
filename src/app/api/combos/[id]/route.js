@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getComboById, updateCombo, deleteCombo, getComboByName, normalizeRoutableMembers, getInjectVariants, getModelAliases } from "@/lib/localDb";
+import { getComboById, updateCombo, deleteCombo, getComboByName, normalizeRoutableMembers, getInjectVariants, getModelAliases, getSettings, updateSettings } from "@/lib/localDb";
 import { resetComboRotation } from "open-sse/services/combo.js";
 
 // Validate combo name: only a-z, A-Z, 0-9, -, _
@@ -112,6 +112,12 @@ export async function DELETE(request, { params }) {
     }
 
     if (prev?.name) resetComboRotation(prev.name);
+    try {
+      const settings = await getSettings();
+      if (Array.isArray(settings?.comboOrder) && settings.comboOrder.includes(id)) {
+        await updateSettings({ comboOrder: settings.comboOrder.filter((entry) => entry !== id) });
+      }
+    } catch {}
     
     return NextResponse.json({ success: true });
   } catch (error) {
