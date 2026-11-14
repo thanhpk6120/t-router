@@ -5,7 +5,7 @@ Upstream changelogs (`CHANGELOG.md` and `CHANGELOG-PRO.md`) are kept intact for 
 
 ---
 
-## 0.5.119-pro.26-t.8 (2026-11-14)
+## 0.5.119-pro.26-t.9 (2026-11-14)
 
 ### Combo & Vision Adapter reorder reliability
 
